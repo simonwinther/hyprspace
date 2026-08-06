@@ -29,6 +29,7 @@ namespace hyprspace::config {
             SP<Config::Values::CColorValue>  overviewTileBorderColor;
             SP<Config::Values::CColorValue>  overviewTitleBgColor;
             SP<Config::Values::CStringValue> overviewFont;
+            SP<Config::Values::CColorValue>  overviewFullscreenBorder;
 
             SP<Config::Values::CIntValue>    switcherIconSize;
             SP<Config::Values::CIntValue>    switcherPadding;
@@ -82,6 +83,8 @@ namespace hyprspace::config {
         g_values.overviewTileBorderColor = reg<CColorValue>("plugin:hyprspace:overview:tile_border_color", "hairline drawn around every workspace tile", 0x1affffff);
         g_values.overviewTitleBgColor   = reg<CColorValue>("plugin:hyprspace:overview:title_bg_color", "window title backdrop colour", 0xe61e1e2e);
         g_values.overviewFont           = reg<CStringValue>("plugin:hyprspace:overview:font", "pango font description used in the overview", "Sans 12");
+        g_values.overviewFullscreenBorder =
+            reg<CColorValue>("plugin:hyprspace:overview:fullscreen_border", "outline and badge marking the window that is fullscreen", 0xff89b4fa);
 
         // ---- switcher ----
         g_values.switcherIconSize = reg<CIntValue>("plugin:hyprspace:switcher:icon_size", "app icon size in the alt-tab switcher, in px", 96, SIntValueOptions{.min = 24, .max = 256});
@@ -154,6 +157,9 @@ namespace hyprspace::config {
     }
     std::string overviewFont() {
         return g_values.overviewFont ? g_values.overviewFont->value() : "Sans 12";
+    }
+    CHyprColor overviewFullscreenBorder() {
+        return colorOf(g_values.overviewFullscreenBorder, 0xff89b4fa);
     }
 
     int switcherIconSize() {

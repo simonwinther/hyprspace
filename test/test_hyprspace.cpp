@@ -231,6 +231,31 @@ static void testHitTest() {
 
 // ------------------------------------------------------------- workspaces ----
 
+static void testFullscreenMode() {
+    section("overview: fullscreen inset fallback geometry");
+
+    const SBoxF CELL{100, 100, 400, 225};
+
+    // A shrink of 1 (or nonsense) leaves the box alone.
+    for (double k : {1.0, 0.0, -0.5, 1.5}) {
+        const auto b = insetBox(CELL, k);
+        CHECK_NEAR(b.x, CELL.x, 1e-9);
+        CHECK_NEAR(b.w, CELL.w, 1e-9);
+    }
+
+    // A real shrink stays centred, inside the box, and keeps the aspect.
+    {
+        const auto b = insetBox(CELL, 0.62);
+        CHECK(b.w < CELL.w && b.h < CELL.h);
+        CHECK(b.x > CELL.x && b.y > CELL.y);
+        CHECK(b.x + b.w < CELL.x + CELL.w);
+        CHECK(b.y + b.h < CELL.y + CELL.h);
+        CHECK_NEAR(b.cx(), CELL.cx(), 1e-9);
+        CHECK_NEAR(b.cy(), CELL.cy(), 1e-9);
+        CHECK_NEAR(b.w / b.h, CELL.w / CELL.h, 1e-9);
+    }
+}
+
 static void testWorkspaceLabels() {
     section("workspace: tile labels");
 
@@ -539,6 +564,7 @@ int main() {
     testGridEdgeCases();
     testNavigation();
     testHitTest();
+    testFullscreenMode();
     testWorkspaceLabels();
     testWorkspaceForDigit();
     testDesktopParsing();

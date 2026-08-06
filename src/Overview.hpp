@@ -108,6 +108,9 @@ namespace hyprspace {
         void      commitSelection();
         void      settleWorkspaceAnimations() const;
 
+        // Where a window is drawn; fullscreen windows use their restored box.
+        SBoxF     boxFor(const PHLWINDOW& w) const;
+
         SBoxF     interpolate(const SEntry& e) const;
 
         // Where a window at monitor-local logical `r` lands inside cell `cell`.

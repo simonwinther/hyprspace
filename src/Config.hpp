@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Geometry.hpp"
 #include "globals.hpp"
 
 #include <hyprland/src/helpers/Color.hpp>
@@ -29,6 +30,9 @@ namespace hyprspace::config {
     CHyprColor  overviewTileBorderColor();
     CHyprColor  overviewTitleBgColor();
     std::string overviewFont();
+
+    // Outline and badge marking the window that is fullscreen.
+    CHyprColor  overviewFullscreenBorder();
 
     // --- switcher ---
     int         switcherIconSize();

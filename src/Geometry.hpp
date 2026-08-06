@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -186,6 +187,19 @@ namespace hyprspace {
         }
 
         return best == -1 ? current : best;
+    }
+
+    // Shrink a box concentrically inside itself, keeping its aspect.
+    inline SBoxF insetBox(const SBoxF& b, double shrink) {
+        if (shrink <= 0.0 || shrink > 1.0)
+            return b;
+
+        return SBoxF{
+            b.x + b.w * (1 - shrink) / 2.0,
+            b.y + b.h * (1 - shrink) / 2.0,
+            b.w * shrink,
+            b.h * shrink,
+        };
     }
 
     // The label under a workspace tile.

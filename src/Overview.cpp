@@ -79,6 +79,40 @@ namespace hyprspace {
         g_pCompositor->updateSuspendedStates();
     }
 
+    // Where a window is drawn inside its workspace.
+    //
+    // Normally that is simply where it is. A fullscreen window is the exception:
+    // it covers the entire output, so drawing it truthfully collapses the tile
+    // to one window and hides everything else on that workspace. Hyprland keeps
+    // the layout's bounding box in m_position/m_size and only overrides
+    // m_realPosition/m_realSize while fullscreen, so the box the window returns
+    // to on un-fullscreening is still there to read — draw it there instead.
+    SBoxF COverview::boxFor(const PHLWINDOW& w) const {
+        const auto MONITOR = m_monitor.lock();
+        if (!w || !MONITOR)
+            return m_usable;
+
+        if (w->isFullscreen()) {
+            const auto POS = w->m_position - MONITOR->m_position;
+            const auto SZ  = w->m_size;
+
+            if (SZ.x >= 1.0 && SZ.y >= 1.0)
+                return SBoxF{POS.x, POS.y, SZ.x, SZ.y};
+
+            // No usable layout box — a window that came up fullscreen may never
+            // have had one. Centre it rather than let it fill the tile.
+            return insetBox(m_usable, 0.62);
+        }
+
+        const auto POS = w->m_realPosition->value() - MONITOR->m_position;
+        const auto SZ  = w->m_realSize->value();
+
+        if (SZ.x < 1.0 || SZ.y < 1.0)
+            return m_usable;
+
+        return SBoxF{POS.x, POS.y, SZ.x, SZ.y};
+    }
+
     void COverview::collect() {
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR)
@@ -121,12 +155,7 @@ namespace hyprspace {
             // the bar reserved. Tiles map the usable area, so its real geometry
             // would be drawn hanging outside the tile it belongs to. It fills
             // the screen, so let it fill the tile.
-            if (w->isFullscreen())
-                slot.rect = m_usable;
-            else {
-                const auto POS = w->m_realPosition->value() - MONITOR->m_position;
-                slot.rect      = SBoxF{POS.x, POS.y, SIZE.x, SIZE.y};
-            }
+            slot.rect = boxFor(w);
 
             it->windows.push_back(slot);
 
@@ -740,10 +769,7 @@ namespace hyprspace {
                 // Track live geometry, so a Super+right-drag resize and the
                 // relayout that follows a drag between workspaces are both
                 // visible in the grid as they happen.
-                const auto POS = W->m_realPosition->value() - MONITOR->m_position;
-                const auto SZ  = W->m_realSize->value();
-                if (SZ.x >= 1.0 && SZ.y >= 1.0)
-                    slot.rect = SBoxF{POS.x, POS.y, SZ.x, SZ.y};
+                slot.rect = boxFor(W);
 
                 m_capture.capture(W, MONITOR);
             }
@@ -790,6 +816,18 @@ namespace hyprspace {
         // clipped by the tile it is being dragged out of.
         const PHLWINDOW DRAGGED = (m_drag.mode == EDrag::MOVE && m_drag.moved) ? m_drag.window.lock() : nullptr;
 
+        // Stroke a box. rect() fills, and the tile border trick of drawing a
+        // larger rect underneath cannot work over content already drawn.
+        auto outline = [&](const SBoxF& b, const CHyprColor& col, double width) {
+            if (b.w < 1 || b.h < 1 || width <= 0)
+                return;
+
+            rect(SBoxF{b.x, b.y, b.w, width}, col);                       // top
+            rect(SBoxF{b.x, b.y + b.h - width, b.w, width}, col);         // bottom
+            rect(SBoxF{b.x, b.y + width, width, b.h - width * 2.0}, col); // left
+            rect(SBoxF{b.x + b.w - width, b.y + width, width, b.h - width * 2.0}, col);
+        };
+
         // --- backdrop -----------------------------------------------------------
         // The real windows are alpha-0 while the overview is up, so what sits
         // underneath is the wallpaper and the bar. Dimming those rather than
@@ -835,6 +873,19 @@ namespace hyprspace {
             const auto TILEBG = config::overviewTileBgColor();
             rect(cell, TILEBG.modifyA(TILEBG.a * FADE), round);
 
+            // A fullscreen window is drawn where it will land when it stops
+            // being fullscreen, not where it actually is. Drawn literally it
+            // covers the whole tile and the overview stops answering the one
+            // question it exists to answer: where is everything. Its restored
+            // box is still readable while it is fullscreen, so use that and
+            // mark it, rather than fading it out or hiding what it covers.
+            const SWindowSlot* fsSlot = nullptr;
+            for (const auto& slot : entry.windows) {
+                const auto W = slot.window.lock();
+                if (W && W != DRAGGED && W->isFullscreen())
+                    fsSlot = &slot;
+            }
+
             for (const auto& slot : entry.windows) {
                 const auto W = slot.window.lock();
                 if (!W || W == DRAGGED)
@@ -848,9 +899,42 @@ namespace hyprspace {
                 if (b.w < 1 || b.h < 1)
                     continue;
 
-                // Clip to the cell: a fullscreen window covers the reserved area
-                // too, and would otherwise spill past the tile's edges.
+                // Clip to the cell: a window can reach past the usable area, and
+                // would otherwise spill over the tile's edges.
                 tex(t, b, ALPHA, round, cell);
+            }
+
+            // Say which window is the fullscreen one, since it is no longer
+            // drawn fullscreen and nothing else would give it away.
+            if (fsSlot) {
+                const SBoxF FSBOX = windowBoxInCell(fsSlot->rect, cell);
+
+                if (FSBOX.w >= 1 && FSBOX.h >= 1) {
+                    const double MARK = std::max(2.0, static_cast<double>(config::overviewBorderSize()));
+                    const auto   COL  = config::overviewFullscreenBorder();
+
+                    outline(FSBOX, COL.modifyA(COL.a * FADE), MARK);
+
+                    if (PROGRESS > 0.35F) {
+                        const float BADGE_A = (PROGRESS - 0.35F) / 0.65F * FADE;
+
+                        if (auto tb = textures().text("fullscreen", FONT, COL, static_cast<int>(cell.w), SCALE)) {
+                            const auto       SZ    = logicalSize(tb);
+                            constexpr double PAD_X = 10, PAD_Y = 4, INSET = 8;
+
+                            const SBoxF      badge{
+                                     FSBOX.x + INSET + MARK,
+                                     FSBOX.y + INSET + MARK,
+                                     SZ.x + PAD_X * 2,
+                                     SZ.y + PAD_Y * 2,
+                            };
+
+                            const auto BGCOL = config::overviewTitleBgColor();
+                            rect(badge, BGCOL.modifyA(BGCOL.a * BADGE_A), badge.h / 2.0);
+                            tex(tb, SBoxF{badge.x + PAD_X, badge.y + PAD_Y, SZ.x, SZ.y}, BADGE_A);
+                        }
+                    }
+                }
             }
 
             // --- workspace label ------------------------------------------------

@@ -209,6 +209,11 @@ The overview binding toggles: pressing it again closes. Super-modified keys are
 passed through to Hyprland while the overview is up, so the rest of your Super
 shortcuts still work — and so the second `Super+A` reaches the dispatcher.
 
+A fullscreen window is drawn at the geometry it returns to when you
+un-fullscreen it, rather than covering its whole tile — otherwise the workspace
+collapses to a single window and the overview stops showing where anything is.
+It gets an outline and a "fullscreen" badge so it is still identifiable.
+
 Workspace 10's tile is labelled **0**, because `0` is the key that goes there,
 both here and in Hyprland's own `workspace` binds.
 
