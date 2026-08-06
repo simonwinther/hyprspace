@@ -22,12 +22,10 @@ namespace hyprspace::config {
             SP<Config::Values::CColorValue>  overviewActiveBorder;
             SP<Config::Values::CColorValue>  overviewHoverBorder;
             SP<Config::Values::CBoolValue>   overviewShowLabels;
-            SP<Config::Values::CIntValue>    overviewLabelGutter;
-            SP<Config::Values::CBoolValue>   overviewShowTitles;
             SP<Config::Values::CBoolValue>   overviewIncludeSpecial;
             SP<Config::Values::CBoolValue>   overviewAllWorkspaces;
             SP<Config::Values::CColorValue>  overviewLabelColor;
-            SP<Config::Values::CColorValue>  overviewTitleColor;
+            SP<Config::Values::CColorValue>  overviewTileBgColor;
             SP<Config::Values::CColorValue>  overviewTitleBgColor;
             SP<Config::Values::CStringValue> overviewFont;
 
@@ -68,21 +66,18 @@ namespace hyprspace::config {
                                                   SFloatValueOptions{.min = 0.F, .max = 1.F});
         g_values.overviewBgColor =
             reg<CColorValue>("plugin:hyprspace:overview:bg_color", "colour mixed over the desktop behind the overview", 0xff11111b);
-        g_values.overviewPadding    = reg<CIntValue>("plugin:hyprspace:overview:padding", "outer padding of the overview, in px", 40, SIntValueOptions{.min = 0, .max = 512});
-        g_values.overviewGap        = reg<CIntValue>("plugin:hyprspace:overview:gap", "gap between window tiles, in px", 24, SIntValueOptions{.min = 0, .max = 256});
+        g_values.overviewPadding    = reg<CIntValue>("plugin:hyprspace:overview:padding", "outer padding of the overview, in px", 56, SIntValueOptions{.min = 0, .max = 512});
+        g_values.overviewGap        = reg<CIntValue>("plugin:hyprspace:overview:gap", "gap between workspace tiles, in px", 28, SIntValueOptions{.min = 0, .max = 256});
         g_values.overviewBandGap    = reg<CIntValue>("plugin:hyprspace:overview:band_gap", "gap between workspace rows, in px", 28, SIntValueOptions{.min = 0, .max = 256});
-        g_values.overviewRounding   = reg<CIntValue>("plugin:hyprspace:overview:rounding", "corner radius of window tiles, in px", 12, SIntValueOptions{.min = 0, .max = 64});
+        g_values.overviewRounding   = reg<CIntValue>("plugin:hyprspace:overview:rounding", "corner radius of workspace tiles, in px", 14, SIntValueOptions{.min = 0, .max = 64});
         g_values.overviewBorderSize = reg<CIntValue>("plugin:hyprspace:overview:border_size", "selection border thickness, in px", 3, SIntValueOptions{.min = 0, .max = 16});
         g_values.overviewActiveBorder = reg<CColorValue>("plugin:hyprspace:overview:active_border", "border colour of the selected tile", 0xff89b4fa);
         g_values.overviewHoverBorder  = reg<CColorValue>("plugin:hyprspace:overview:hover_border", "border colour of the hovered tile", 0x8089b4fa);
-        g_values.overviewShowLabels   = reg<CBoolValue>("plugin:hyprspace:overview:workspace_labels", "show a label above each workspace row", true);
-        g_values.overviewLabelGutter  = reg<CIntValue>("plugin:hyprspace:overview:label_gutter", "width of the left gutter holding workspace labels, in px", 56,
-                                                       SIntValueOptions{.min = 0, .max = 400});
-        g_values.overviewShowTitles   = reg<CBoolValue>("plugin:hyprspace:overview:window_titles", "show the window title on the selected tile", true);
+        g_values.overviewShowLabels   = reg<CBoolValue>("plugin:hyprspace:overview:workspace_labels", "show the workspace name under each tile", true);
         g_values.overviewIncludeSpecial = reg<CBoolValue>("plugin:hyprspace:overview:include_special", "include special (scratchpad) workspaces", true);
         g_values.overviewAllWorkspaces  = reg<CBoolValue>("plugin:hyprspace:overview:all_workspaces", "show every workspace on the monitor, not just the active one", true);
         g_values.overviewLabelColor     = reg<CColorValue>("plugin:hyprspace:overview:label_color", "workspace label colour", 0xffcdd6f4);
-        g_values.overviewTitleColor     = reg<CColorValue>("plugin:hyprspace:overview:title_color", "window title colour", 0xffcdd6f4);
+        g_values.overviewTileBgColor    = reg<CColorValue>("plugin:hyprspace:overview:tile_bg_color", "backing plate drawn behind each workspace tile", 0xd91e1e2e);
         g_values.overviewTitleBgColor   = reg<CColorValue>("plugin:hyprspace:overview:title_bg_color", "window title backdrop colour", 0xe61e1e2e);
         g_values.overviewFont           = reg<CStringValue>("plugin:hyprspace:overview:font", "pango font description used in the overview", "Sans 12");
 
@@ -114,16 +109,16 @@ namespace hyprspace::config {
         return colorOf(g_values.overviewBgColor, 0xff11111b);
     }
     int overviewPadding() {
-        return g_values.overviewPadding ? g_values.overviewPadding->value() : 40;
+        return g_values.overviewPadding ? g_values.overviewPadding->value() : 56;
     }
     int overviewGap() {
-        return g_values.overviewGap ? g_values.overviewGap->value() : 24;
+        return g_values.overviewGap ? g_values.overviewGap->value() : 28;
     }
     int overviewBandGap() {
         return g_values.overviewBandGap ? g_values.overviewBandGap->value() : 28;
     }
     int overviewRounding() {
-        return g_values.overviewRounding ? g_values.overviewRounding->value() : 12;
+        return g_values.overviewRounding ? g_values.overviewRounding->value() : 14;
     }
     int overviewBorderSize() {
         return g_values.overviewBorderSize ? g_values.overviewBorderSize->value() : 3;
@@ -137,12 +132,6 @@ namespace hyprspace::config {
     bool overviewShowLabels() {
         return g_values.overviewShowLabels ? g_values.overviewShowLabels->value() : true;
     }
-    int overviewLabelGutter() {
-        return g_values.overviewLabelGutter ? g_values.overviewLabelGutter->value() : 56;
-    }
-    bool overviewShowTitles() {
-        return g_values.overviewShowTitles ? g_values.overviewShowTitles->value() : true;
-    }
     bool overviewIncludeSpecial() {
         return g_values.overviewIncludeSpecial ? g_values.overviewIncludeSpecial->value() : true;
     }
@@ -152,8 +141,8 @@ namespace hyprspace::config {
     CHyprColor overviewLabelColor() {
         return colorOf(g_values.overviewLabelColor, 0xffcdd6f4);
     }
-    CHyprColor overviewTitleColor() {
-        return colorOf(g_values.overviewTitleColor, 0xffcdd6f4);
+    CHyprColor overviewTileBgColor() {
+        return colorOf(g_values.overviewTileBgColor, 0xd91e1e2e);
     }
     CHyprColor overviewTitleBgColor() {
         return colorOf(g_values.overviewTitleBgColor, 0xe61e1e2e);

@@ -1,4 +1,8 @@
 // hyprspace - the full-screen workspace overview.
+//
+// One tile per non-empty workspace, every tile at the monitor's aspect ratio,
+// each showing that workspace's real live windows laid out exactly as they sit
+// on screen.
 
 #pragma once
 
@@ -30,13 +34,15 @@ namespace hyprspace {
         bool closing() const {
             return m_closing;
         }
+        bool empty() const {
+            return m_entries.empty();
+        }
 
         PHLMONITOR monitor() const {
             return m_monitor.lock();
         }
 
         // --- input ---
-        // Returns true when the key was consumed.
         bool onKey(xkb_keysym_t sym, uint32_t mods, bool pressed);
         void onMouseMove(const Vector2D& globalPos);
         bool onMouseButton(uint32_t button, bool pressed);
@@ -46,45 +52,53 @@ namespace hyprspace {
         std::vector<UP<IPassElement>> buildPass();    // called from the pass element
         void                          damage();
 
-
-
       private:
-        struct SEntry {
+        // A window as it sits inside its workspace, in monitor-local logical px.
+        struct SWindowSlot {
             PHLWINDOWREF window;
-            SBoxF        target;    // final tile box, monitor-local logical px
-            SBoxF        start;     // where it animates from
-            long         workspace = 0;
-            std::string  title;
-            bool         fromVisibleWorkspace = false;
-            float        savedAlpha           = 1.F;
-            bool         alphaHidden          = false;
+            SBoxF        rect;
+            float        savedAlpha  = 1.F;
+            bool         alphaHidden = false;
         };
 
-        void collectWindows();
-        void hideRealWindows();
-        void restoreRealWindows();
-        void computeLayout();
-        void selectIndex(int idx);
-        void commit();
+        // One workspace tile.
+        struct SEntry {
+            long                     workspaceId = 0;
+            std::string              name;
+            std::vector<SWindowSlot> windows;
+            bool                     isActive = false;
+            SBoxF                    target   = {}; // final cell
+            SBoxF                    start    = {}; // where it animates from
+        };
 
-        SBoxF interpolate(const SEntry& e) const;
+        void      collect();
+        void      computeLayout();
+        void      hideRealWindows();
+        void      restoreRealWindows();
+        void      selectIndex(int idx);
+        void      commit();
 
-        PHLMONITORREF        m_monitor;
-        std::vector<SEntry>  m_entries;
-        std::vector<STile>   m_tiles;
-        std::vector<SBand>   m_bands;
+        SBoxF     interpolate(const SEntry& e) const;
 
-        CWindowCapture       m_capture;
+        // Hit test: which tile, and which window inside it.
+        int       tileAtLocal(const Vector2D& local) const;
+        PHLWINDOW windowAtLocal(const Vector2D& local) const;
 
-        int                  m_selected = -1;
-        int                  m_hovered  = -1;
-        bool                 m_closing  = false;
-        bool                 m_commit   = false;
+        PHLMONITORREF       m_monitor;
+        std::vector<SEntry> m_entries;
+        std::vector<STile>  m_tiles;
 
-        PHLWINDOWREF         m_originalFocus;
-        PHLWORKSPACEREF      m_originalWorkspace;
+        CWindowCapture      m_capture;
 
-        PHLANIMVAR<float>    m_progress; // 0 = desktop, 1 = overview
+        int                 m_selected = -1;
+        int                 m_hovered  = -1;
+        bool                m_closing  = false;
+
+        PHLWINDOWREF        m_originalFocus;
+        PHLWORKSPACEREF     m_originalWorkspace;
+        PHLWINDOWREF        m_clickedWindow;
+
+        PHLANIMVAR<float>   m_progress; // 0 = desktop, 1 = overview
 
         friend class COverviewPassElement;
     };

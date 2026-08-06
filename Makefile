@@ -60,7 +60,14 @@ install: check
 	install -m 0755 $(TARGET) $(PLUGIN_DIR)/hyprspace.so
 	@echo ""
 	@echo "Installed to $(PLUGIN_DIR)/hyprspace.so"
-	@echo "Add to your Hyprland config:  plugin = $(PLUGIN_DIR)/hyprspace.so"
+	@echo ""
+	@echo "Add these two lines to the END of ~/.config/hypr/hyprland.conf:"
+	@echo ""
+	@echo "  plugin = $(abspath $(PLUGIN_DIR))/hyprspace.so"
+	@echo "  source = $(abspath .)/contrib/hyprspace.conf"
+	@echo ""
+	@echo "The plugin path must be absolute — Hyprland does not expand ~ for it."
+	@echo "Then: hyprctl reload"
 
 uninstall:
 	rm -f $(PLUGIN_DIR)/hyprspace.so

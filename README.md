@@ -2,8 +2,8 @@
 
 A Hyprland plugin with exactly two things in it:
 
-* **Super** → a full-screen overview showing the live contents of every window on
-  every workspace, grouped and labelled per workspace.
+* **Super + `** → a full-screen grid of your workspaces, each tile showing that
+  workspace's real live windows exactly where they sit.
 * **Alt+Tab** → a GNOME-style switcher: app icons, the window title, forward and
   backward cycling, commit on Alt release, cancel on Escape.
 
@@ -15,9 +15,9 @@ Built and tested against **Hyprland 0.55.2** on Arch Linux with Omarchy.
 
 ## Why a plugin
 
-Showing the *real* contents of windows — including windows on workspaces that
-are not currently visible — requires access to window textures, which only
-exists inside the compositor. An out-of-process client (the approach
+Showing the *real* contents of workspaces — including workspaces that are not
+currently visible — requires access to window textures, which only exists inside
+the compositor. An out-of-process client (the approach
 [hyprshell](https://github.com/H3rmt/hyprshell) takes) can show icons and
 titles, but not live window content.
 
@@ -68,24 +68,22 @@ with `PREFIX=/some/where make install`.
 
 ### Enable it
 
-Add to `~/.config/hypr/hyprland.conf`:
+Add these two lines to the **end** of `~/.config/hypr/hyprland.conf` — `make
+install` prints them with the right paths filled in:
 
 ```ini
+plugin = /home/YOU/.local/share/hyprspace/hyprspace.so
 source = ~/dev/hyprspace/contrib/hyprspace.conf
 ```
 
-That file sets the plugin path, both keybindings and every configuration option
-at its default value. Or, minimally:
+Two things about that, both of which will silently half-work otherwise:
 
-```ini
-plugin = ~/.local/share/hyprspace/hyprspace.so
+* **The `plugin` path must be absolute.** Hyprland expands `~` for `source` but
+  not for `plugin`, and a `~` there fails without an error message.
+* **It has to come last.** `contrib/hyprspace.conf` unbinds `ALT+Tab` and
+  `ALT+SHIFT+Tab`, and Omarchy's defaults would re-claim them if sourced after.
 
-bindr = SUPER, SUPER_L, hyprspace:overview
-bind  = ALT, TAB, hyprspace:switch
-bind  = ALT SHIFT, TAB, hyprspace:switch, prev
-```
-
-Then `hyprctl reload`, or to load without restarting:
+Then `hyprctl reload`, or to load without touching your config:
 
 ```bash
 hyprctl plugin load ~/.local/share/hyprspace/hyprspace.so
@@ -109,32 +107,40 @@ it creates its state store under `/root`.
 ### Hyprland
 
 ```ini
-# Tap Super on its own -> overview.
-# `bindr` fires on release, so Super held as a modifier for another shortcut
-# does not open the overview.
-bindr = SUPER, SUPER_L, hyprspace:overview
+# The plugin path must be absolute — Hyprland does not expand `~` here.
+plugin = /home/YOU/.local/share/hyprspace/hyprspace.so
 
-# Alt+Tab -> switcher.
+bind = SUPER, GRAVE, hyprspace:overview      # Super + `
 bind = ALT, TAB, hyprspace:switch
 bind = ALT SHIFT, TAB, hyprspace:switch, prev
 ```
 
+`SUPER + \`` (the key above Tab) is the default because nothing on a stock
+Omarchy claims it. If you would rather tap Super on its own, uncomment the
+`bindr` line in `contrib/hyprspace.conf` — `bindr` fires on key release, so Super
+held as a modifier for another shortcut will not open the overview.
+
 ### Omarchy
 
-Omarchy already frees Alt+Tab in its default `bindings.conf`:
+Omarchy keeps `ALT+SHIFT+Tab` on `changegroupactive`, and an `unbind` in your own
+`bindings.conf` will not stick if Omarchy's defaults are sourced after it.
+`contrib/hyprspace.conf` therefore does the unbinds itself:
 
 ```ini
 unbind = ALT, TAB
 unbind = ALT SHIFT, TAB
 ```
 
-If yours does not, add those two lines before the `bind` lines. Put the
-hyprspace bindings in `~/.config/hypr/bindings.conf` (Omarchy's per-user
-overrides file), not in the files under `~/.local/share/omarchy/`, which are
-replaced on update.
+so it only needs to be sourced **after** every other bindings file. Put the two
+lines at the very end of `~/.config/hypr/hyprland.conf`:
 
-Omarchy binds `SUPER` combinations heavily but leaves a bare Super tap free, so
-`bindr = SUPER, SUPER_L` does not collide with anything.
+```ini
+plugin = /home/YOU/.local/share/hyprspace/hyprspace.so
+source = ~/dev/hyprspace/contrib/hyprspace.conf
+```
+
+Never edit the files under `~/.local/share/omarchy/` — they are replaced on
+update.
 
 ### Dispatchers
 
@@ -156,14 +162,15 @@ keyboard grab, which makes it a reliable escape hatch.
 
 | Key | Action |
 |---|---|
-| `Esc` | Close, keep the current focus |
-| `Enter` / `Space` | Focus the selected window and close |
-| `Tab` / `Shift+Tab` | Next / previous window, across all workspaces |
+| `Esc` | Close, keep the current workspace |
+| `Enter` / `Space` | Switch to the selected workspace and close |
+| `Tab` / `Shift+Tab` | Next / previous workspace |
 | `←` `↓` `↑` `→` | Move to the nearest tile in that direction |
 | `Ctrl+h/j/k/l`, `h/j/k/l` | Same, vim style |
+| `1`–`9`, `0` | Jump straight to that workspace's tile (`0` = workspace 10) |
 | `Home` / `End` | First / last tile |
 | Mouse move | Hover highlights, and selects when `follow_mouse` is on |
-| Left click | Select and close; clicking empty space dismisses |
+| Left click | Go there. Clicking a *window* inside a tile focuses that window; clicking empty space dismisses |
 | Right click | Close without selecting |
 
 **Switcher**
@@ -196,9 +203,8 @@ plugin {
         warp_cursor  = true
 
         overview {
-            bg_dim           = 0.80
-            padding          = 40
-            all_workspaces   = true
+            bg_dim  = 0.80
+            padding = 56
         }
 
         switcher {
@@ -228,22 +234,20 @@ your selection silently does nothing. Warping is how Hyprland's own
 |---|---|---|---|
 | `overview:bg_dim` | float `0..1` | `0.80` | How strongly the desktop behind is dimmed |
 | `overview:bg_color` | color | `rgba(11111bff)` | Colour mixed over the desktop |
-| `overview:padding` | int | `40` | Outer padding |
-| `overview:gap` | int | `24` | Gap between tiles |
-| `overview:band_gap` | int | `28` | Gap between workspace rows |
-| `overview:rounding` | int | `12` | Tile corner radius |
+| `overview:tile_bg_color` | color | `rgba(1e1e2ed9)` | Plate drawn behind each workspace tile |
+| `overview:padding` | int | `56` | Outer padding |
+| `overview:gap` | int | `28` | Gap between workspace tiles |
+| `overview:rounding` | int | `14` | Tile corner radius |
 | `overview:border_size` | int | `3` | Selection border thickness |
 | `overview:active_border` | color | `rgba(89b4faff)` | Selected tile border |
 | `overview:hover_border` | color | `rgba(89b4fa80)` | Hovered tile border |
-| `overview:workspace_labels` | bool | `true` | Show the per-workspace label column |
-| `overview:label_gutter` | int | `56` | Width of that column |
+| `overview:workspace_labels` | bool | `true` | Workspace name under each tile |
 | `overview:label_color` | color | `rgba(cdd6f4ff)` | Label colour |
-| `overview:window_titles` | bool | `true` | Title overlay on the selected tile |
-| `overview:title_color` | color | `rgba(cdd6f4ff)` | Title colour |
-| `overview:title_bg_color` | color | `rgba(1e1e2ee6)` | Title backdrop |
+| `overview:title_bg_color` | color | `rgba(1e1e2ee6)` | Backdrop behind that label |
 | `overview:include_special` | bool | `true` | Include special/scratchpad workspaces |
-| `overview:all_workspaces` | bool | `true` | `false` restricts to the active workspace |
 | `overview:font` | string | `Sans 12` | Pango font description |
+
+Empty workspaces are never shown — there is nothing on them to look at.
 
 ### Switcher
 
@@ -295,17 +299,28 @@ Retune those in your `animations` block to change the feel.
 * **Drawing.** The overlay is a custom `IPassElement` that returns ordinary
   texture and rect pass elements. No raw GL calls, so it stays correct if
   Hyprland gains another renderer backend.
-* **Layout.** Windows are grouped into one row per workspace. Row heights are
-  proportional to the square root of the window count: sizing a row by the height
-  it would need to fill the width gives the busiest workspace the thinnest strip,
-  and sizing it by window count starves the single-window rows. Within a row,
-  every row count is tried and the one yielding the largest tiles wins; aspect
-  ratios are preserved exactly.
+* **Layout.** One tile per non-empty workspace, every tile at the monitor's own
+  aspect ratio so it reads as a small screen. Each window is then drawn inside
+  its tile at its real relative position, which is also what makes clicking a
+  specific window inside a tile work. Column counts are all tried and the one
+  producing the largest cell wins, so the grid stays close to square: 5
+  workspaces become 3 over 2, a single workspace fills the screen, and 10 still
+  come out readable. The trailing row is centred rather than left-aligned.
+* **The opening transition.** The workspace you are already on starts at full
+  screen and shrinks into its cell while the others fade up in place, so the
+  desktop appears to fold into the grid rather than being replaced by it.
 * **Icons.** Window class → `.desktop` entry → icon name → icon theme file, with
   Chromium/Edge web-app classes (`chrome-chatgpt.com__-Default`) decoded to their
   underlying site, which is how Omarchy's web apps report themselves. SVG goes
   through librsvg, everything else through gdk-pixbuf. Unresolvable apps get a
   tinted rounded square with their initial rather than a blank slot.
+
+Two load-order details worth knowing if you build on this: Hyprland parses the
+config *before* it finishes loading plugins, so `bind = ..., hyprspace:overview`
+in that same config is rejected as an invalid dispatcher — the plugin calls
+`HyprlandAPI::reloadConfig()` at the end of `pluginInit` so the second pass
+registers the bindings. And a plugin is never initialised twice, so that cannot
+loop.
 
 One deliberate implementation note: hyprspace needs `IHyprRenderer::renderWindow`,
 which is `protected`. It reaches it with the standard-blessed explicit-instantiation
@@ -320,7 +335,7 @@ compiles. See `src/Access.hpp`.
 ```bash
 make            # build the plugin
 make check      # verify the built .so matches the running Hyprland's ABI
-make test       # host-side unit tests (179 checks)
+make test       # host-side unit tests (1319 checks)
 make -C test asan   # same suite under AddressSanitizer + UBSan
 make clean
 ```
@@ -328,11 +343,13 @@ make clean
 `make test` builds the Hyprland-independent parts — the layout and navigation
 maths, `.desktop` parsing, window-class resolution and the cairo/pango
 rasteriser — and runs them on the host, no compositor required. It covers aspect
-ratio preservation, tiles staying inside the screen, tiles never overlapping,
-workspace grouping and ordering, directional navigation including edges and
-out-of-range input, pointer hit testing, localised/malformed `.desktop` files,
-Chromium web-app class decoding, icon size and format preference, text
-ellipsising and SVG/PNG icon loading.
+uniform monitor-shaped cells at every workspace count from 1 to 10, the grid
+staying inside the padded screen at four display widths, cells never overlapping,
+the expected grid shapes (1 fills the screen, 5 becomes 3 over 2, the last row
+centred), directional navigation including edges and out-of-range input, pointer
+hit testing, localised/malformed `.desktop` files, Chromium web-app class
+decoding, icon size and format preference, text ellipsising and SVG/PNG icon
+loading.
 
 `make check` parses `GIT_COMMIT_HASH` out of the installed Hyprland headers,
 compares it to what `hyprctl version` reports, and confirms every renderer symbol
@@ -344,8 +361,9 @@ What is *not* covered by automated tests: anything requiring a live compositor �
 rendering, input grabs, focus commits. Those were verified by hand against a
 running Hyprland 0.55.2 session (overview open/close/toggle, keyboard navigation,
 Enter and Escape in both overlays, workspace switching on commit, focus surviving
-`follow_mouse`, and a rapid-toggle stress run confirming no window is left
-hidden and the compositor stays up).
+`follow_mouse`, loading from a real config with bindings registered, and a
+rapid-toggle stress run confirming no window is left hidden and the compositor
+stays up).
 
 ---
 
@@ -401,11 +419,14 @@ during the overview is restored when the overview closes, and on plugin unload.
   physical pixels and scaled from a logical layout; that is correct for
   `transform = 0` (including all HiDPI scales, which are tested) but the
   transform maths for rotated outputs has not been exercised.
-* **The overlay is drawn on one monitor** — whichever holds the pointer. Other
-  monitors keep showing their normal desktop. There is no per-monitor overview.
+* **The overlay is drawn on one monitor** — whichever holds the pointer. Only
+  that monitor's workspaces are shown; other monitors keep their normal desktop.
 * **Windows on hidden workspaces show their last frame briefly.** They are
   un-suspended when the overview opens, but a client needs a frame or two to
   redraw, so the first moments can show stale content for those tiles.
+* **The grid is sized for up to about ten workspaces.** That is the practical
+  ceiling on Omarchy and the layout is tested at every count from 1 to 10; beyond
+  that the tiles keep shrinking rather than paginating.
 * **`.desktop` and icon-theme scanning happens once, on first use.** Apps
   installed while the session is running are not picked up until the plugin is
   reloaded. The scan walks the icon theme directories directly rather than

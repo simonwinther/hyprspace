@@ -2,17 +2,17 @@
 
 #include "Config.hpp"
 #include "Focus.hpp"
-#include "PassElements.hpp"
 #include "Texture.hpp"
 
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/config/shared/animation/AnimationTree.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
+#include <hyprland/src/config/shared/animation/AnimationTree.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/managers/animation/AnimationManager.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/pass/RectPassElement.hpp>
@@ -21,7 +21,7 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <algorithm>
-#include <format>
+#include <ranges>
 
 namespace hyprspace {
 
@@ -37,14 +37,14 @@ namespace hyprspace {
         m_originalFocus     = Desktop::focusState()->window();
         m_originalWorkspace = monitor->m_activeWorkspace;
 
-        collectWindows();
+        collect();
         computeLayout();
         hideRealWindows();
 
-        // Start on whatever was focused, else the first tile.
+        // Start on the workspace the user is already looking at.
         m_selected = 0;
-        for (size_t i = 0; i < m_tiles.size(); ++i) {
-            if (m_entries[m_tiles[i].key].window == m_originalFocus) {
+        for (size_t i = 0; i < m_entries.size(); ++i) {
+            if (m_entries[i].isActive) {
                 m_selected = static_cast<int>(i);
                 break;
             }
@@ -65,18 +65,19 @@ namespace hyprspace {
         textures().clear();
 
         // Windows on inactive workspaces were un-suspended for the overview; let
-        // the compositor restore the correct state.
+        // the compositor work out the correct state again.
         g_pCompositor->updateSuspendedStates();
     }
 
-    void COverview::collectWindows() {
+    void COverview::collect() {
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR)
             return;
 
-        const bool ALL     = config::overviewAllWorkspaces();
         const bool SPECIAL = config::overviewIncludeSpecial();
 
+        // Group this monitor's mapped windows by workspace. Empty workspaces are
+        // skipped entirely — there is nothing to look at on them.
         for (const auto& w : g_pCompositor->m_windows) {
             if (!w || !w->m_isMapped || w->m_fadingOut)
                 continue;
@@ -86,113 +87,112 @@ namespace hyprspace {
             const auto WS = w->m_workspace;
             if (!WS)
                 continue;
-
-            if (WS->m_isSpecialWorkspace) {
-                if (!SPECIAL)
-                    continue;
-            } else if (!ALL && WS != MONITOR->m_activeWorkspace)
+            if (WS->m_isSpecialWorkspace && !SPECIAL)
                 continue;
 
             const auto SIZE = w->m_realSize->value();
             if (SIZE.x < 1.0 || SIZE.y < 1.0)
                 continue;
 
-            SEntry e;
-            e.window               = w;
-            e.workspace            = WS->m_id;
-            e.title                = w->m_title;
-            e.fromVisibleWorkspace = WS->isVisible();
+            auto it = std::ranges::find_if(m_entries, [&](const SEntry& e) { return e.workspaceId == WS->m_id; });
+            if (it == m_entries.end()) {
+                SEntry e;
+                e.workspaceId = WS->m_id;
+                e.name        = WS->m_name.empty() ? std::to_string(WS->m_id) : WS->m_name;
+                e.isActive    = WS == MONITOR->m_activeWorkspace || WS == MONITOR->m_activeSpecialWorkspace;
+                m_entries.push_back(e);
+                it = std::prev(m_entries.end());
+            }
 
-            // Monitor-local logical coordinates.
+            SWindowSlot slot;
+            slot.window = w;
+
             const auto POS = w->m_realPosition->value() - MONITOR->m_position;
-            e.start        = SBoxF{POS.x, POS.y, SIZE.x, SIZE.y};
+            slot.rect      = SBoxF{POS.x, POS.y, SIZE.x, SIZE.y};
 
-            m_entries.push_back(e);
+            it->windows.push_back(slot);
 
             // Clients on hidden workspaces are suspended by the compositor and
-            // would otherwise render as a frozen last frame.
+            // would otherwise show a frozen last frame.
             w->setSuspended(false);
+        }
+
+        std::ranges::sort(m_entries, [](const SEntry& a, const SEntry& b) { return a.workspaceId < b.workspaceId; });
+    }
+
+    void COverview::computeLayout() {
+        const auto MONITOR = m_monitor.lock();
+        if (!MONITOR || m_entries.empty())
+            return;
+
+        std::vector<STileInput> input;
+        input.reserve(m_entries.size());
+        for (size_t i = 0; i < m_entries.size(); ++i)
+            input.push_back(STileInput{.key = i, .workspaceId = m_entries[i].workspaceId});
+
+        SLayoutParams params;
+        params.screenW = MONITOR->m_size.x;
+        params.screenH = MONITOR->m_size.y;
+        params.padding = config::overviewPadding();
+        params.gap     = config::overviewGap();
+        params.aspect  = MONITOR->m_size.y > 0 ? MONITOR->m_size.x / MONITOR->m_size.y : 16.0 / 9.0;
+
+        auto result = layout(input, params);
+        m_tiles     = std::move(result.tiles);
+
+        for (const auto& t : m_tiles)
+            m_entries[t.key].target = t.box;
+
+        // The workspace already on screen shrinks into its cell; the others grow
+        // in place, which reads as the desktop folding into the grid.
+        const SBoxF FULL{0, 0, MONITOR->m_size.x, MONITOR->m_size.y};
+
+        for (auto& e : m_entries) {
+            if (e.isActive) {
+                e.start = FULL;
+                continue;
+            }
+
+            constexpr double SHRINK = 0.88;
+            e.start                 = SBoxF{
+                                e.target.x + e.target.w * (1 - SHRINK) / 2,
+                                e.target.y + e.target.h * (1 - SHRINK) / 2,
+                                e.target.w * SHRINK,
+                                e.target.h * SHRINK,
+            };
         }
     }
 
-    // Warp every collected window to zero alpha: Hyprland's normal pass then
-    // skips them entirely (renderWindow bails on effectiveAlpha() == 0), so the
-    // wallpaper and bar are what shows through the dim. Offscreen captures are
-    // unaffected because standalone renders force alpha to 1.
+    // Warp every window to zero alpha so Hyprland's normal pass skips it
+    // (renderWindow bails on effectiveAlpha() == 0). What remains underneath is
+    // the wallpaper and the bar, which is what gets dimmed. Offscreen captures
+    // are unaffected: standalone renders force alpha to 1.
     void COverview::hideRealWindows() {
         for (auto& e : m_entries) {
-            const auto W = e.window.lock();
-            if (!W)
-                continue;
+            for (auto& slot : e.windows) {
+                const auto W = slot.window.lock();
+                if (!W)
+                    continue;
 
-            auto& av       = W->alpha(Desktop::View::WINDOW_ALPHA_FADE);
-            e.savedAlpha   = av->goal();
-            e.alphaHidden  = true;
-            av->setValueAndWarp(0.F);
+                auto& av         = W->alpha(Desktop::View::WINDOW_ALPHA_FADE);
+                slot.savedAlpha  = av->goal();
+                slot.alphaHidden = true;
+                av->setValueAndWarp(0.F);
+            }
         }
     }
 
     void COverview::restoreRealWindows() {
         for (auto& e : m_entries) {
-            if (!e.alphaHidden)
-                continue;
+            for (auto& slot : e.windows) {
+                if (!slot.alphaHidden)
+                    continue;
 
-            const auto W = e.window.lock();
-            if (!W)
-                continue;
+                if (const auto W = slot.window.lock())
+                    W->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(slot.savedAlpha);
 
-            W->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(e.savedAlpha);
-            e.alphaHidden = false;
-        }
-    }
-
-    void COverview::computeLayout() {
-        const auto MONITOR = m_monitor.lock();
-        if (!MONITOR)
-            return;
-
-        std::vector<STileInput> input;
-        input.reserve(m_entries.size());
-
-        for (size_t i = 0; i < m_entries.size(); ++i) {
-            const auto& e = m_entries[i];
-            input.push_back(STileInput{
-                .key         = i,
-                .aspect      = e.start.h > 0 ? e.start.w / e.start.h : 1.0,
-                .workspaceId = e.workspace,
-            });
-        }
-
-        SLayoutParams params;
-        params.screenW    = MONITOR->m_size.x;
-        params.screenH    = MONITOR->m_size.y;
-        params.padding    = config::overviewPadding();
-        params.gap        = config::overviewGap();
-        params.bandGap    = config::overviewBandGap();
-        params.labelGutter = config::overviewLabelGutter();
-        params.showLabels  = config::overviewShowLabels();
-
-        auto result = layout(input, params);
-        m_tiles     = std::move(result.tiles);
-        m_bands     = std::move(result.bands);
-
-        for (const auto& t : m_tiles)
-            m_entries[t.key].target = t.box;
-
-        // Windows that live on a hidden workspace have no meaningful on-screen
-        // origin, so grow them out of their own tile instead of flying in from
-        // an arbitrary position.
-        for (auto& e : m_entries) {
-            if (e.fromVisibleWorkspace)
-                continue;
-
-            const double shrink = 0.86;
-            e.start             = SBoxF{
-                            e.target.x + e.target.w * (1 - shrink) / 2,
-                            e.target.y + e.target.h * (1 - shrink) / 2,
-                            e.target.w * shrink,
-                            e.target.h * shrink,
-            };
+                slot.alphaHidden = false;
+            }
         }
     }
 
@@ -201,9 +201,7 @@ namespace hyprspace {
     }
 
     void COverview::selectIndex(int idx) {
-        if (idx < 0 || idx >= static_cast<int>(m_tiles.size()))
-            return;
-        if (idx == m_selected)
+        if (idx < 0 || idx >= static_cast<int>(m_tiles.size()) || idx == m_selected)
             return;
 
         m_selected = idx;
@@ -215,7 +213,6 @@ namespace hyprspace {
             return;
 
         m_closing = true;
-        m_commit  = commitSelection;
 
         if (commitSelection)
             commit();
@@ -228,7 +225,38 @@ namespace hyprspace {
         if (m_selected < 0 || m_selected >= static_cast<int>(m_tiles.size()))
             return;
 
-        focusSelection(m_entries[m_tiles[m_selected].key].window.lock(), config::warpCursor());
+        const auto& entry = m_entries[m_tiles[m_selected].key];
+
+        // Clicking a specific window inside a tile goes straight to it.
+        if (const auto W = m_clickedWindow.lock()) {
+            focusSelection(W, config::warpCursor());
+            return;
+        }
+
+        const auto WS = g_pCompositor->getWorkspaceByID(entry.workspaceId);
+        if (!WS)
+            return;
+
+        if (WS->m_isSpecialWorkspace)
+            (void)Config::Actions::toggleSpecial(WS);
+        else if (WS != m_monitor->m_activeWorkspace)
+            (void)Config::Actions::changeWorkspaceOnCurrentMonitor(WS);
+
+        // Focus a window on the target workspace, otherwise input:follow_mouse
+        // resolves the pointer's position and undoes the switch. Prefer the one
+        // that already had focus.
+        const auto PREV = m_originalFocus.lock();
+        for (const auto& slot : entry.windows) {
+            if (const auto W = slot.window.lock(); W && W == PREV) {
+                focusSelection(W, config::warpCursor());
+                return;
+            }
+        }
+
+        if (!entry.windows.empty()) {
+            if (const auto W = entry.windows.front().window.lock())
+                focusSelection(W, config::warpCursor());
+        }
     }
 
     // ---------------------------------------------------------------- input --
@@ -239,11 +267,15 @@ namespace hyprspace {
 
         const bool SHIFT = mods & HL_MODIFIER_SHIFT;
 
-        auto move = [&](EDirection dir) { selectIndex(navigate(m_tiles, m_selected, dir)); };
+        auto       move = [&](EDirection dir) {
+            m_clickedWindow.reset();
+            selectIndex(navigate(m_tiles, m_selected, dir));
+        };
 
         auto cycle = [&](int delta) {
             if (m_tiles.empty())
                 return;
+            m_clickedWindow.reset();
             const int n = static_cast<int>(m_tiles.size());
             selectIndex(((m_selected + delta) % n + n) % n);
         };
@@ -280,9 +312,52 @@ namespace hyprspace {
             default: break;
         }
 
+        // Number keys jump straight to that workspace's tile.
+        if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) {
+            const long WANT = sym == XKB_KEY_0 ? 10 : static_cast<long>(sym - XKB_KEY_0);
+
+            for (size_t i = 0; i < m_tiles.size(); ++i) {
+                if (m_entries[m_tiles[i].key].workspaceId == WANT) {
+                    m_clickedWindow.reset();
+                    selectIndex(static_cast<int>(i));
+                    break;
+                }
+            }
+            return true;
+        }
+
         // Everything else is swallowed: the overview owns the keyboard, and there
         // is deliberately no text entry anywhere in hyprspace.
         return true;
+    }
+
+    int COverview::tileAtLocal(const Vector2D& local) const {
+        return tileAt(m_tiles, local.x, local.y);
+    }
+
+    PHLWINDOW COverview::windowAtLocal(const Vector2D& local) const {
+        const auto MONITOR = m_monitor.lock();
+        if (!MONITOR)
+            return nullptr;
+
+        const int IDX = tileAtLocal(local);
+        if (IDX < 0)
+            return nullptr;
+
+        const auto&  entry = m_entries[m_tiles[IDX].key];
+        const SBoxF  cell  = m_tiles[IDX].box;
+        const double s     = MONITOR->m_size.x > 0 ? cell.w / MONITOR->m_size.x : 0.0;
+        if (s <= 0)
+            return nullptr;
+
+        // Topmost window wins, matching the order the tile is drawn in.
+        for (const auto& slot : entry.windows | std::views::reverse) {
+            const SBoxF b{cell.x + slot.rect.x * s, cell.y + slot.rect.y * s, slot.rect.w * s, slot.rect.h * s};
+            if (b.contains(local.x, local.y))
+                return slot.window.lock();
+        }
+
+        return nullptr;
     }
 
     void COverview::onMouseMove(const Vector2D& globalPos) {
@@ -291,7 +366,7 @@ namespace hyprspace {
             return;
 
         const auto LOCAL = globalPos - MONITOR->m_position;
-        const int  IDX   = tileAt(m_tiles, LOCAL.x, LOCAL.y);
+        const int  IDX   = tileAtLocal(LOCAL);
 
         if (IDX == m_hovered)
             return;
@@ -314,6 +389,10 @@ namespace hyprspace {
         if (button == MOUSE_LEFT) {
             if (m_hovered >= 0) {
                 selectIndex(m_hovered);
+
+                if (const auto MONITOR = m_monitor.lock())
+                    m_clickedWindow = windowAtLocal(g_pInputManager->getMouseCoordsInternal() - MONITOR->m_position);
+
                 close(true);
             } else
                 close(false); // click on empty space dismisses, like GNOME
@@ -343,20 +422,21 @@ namespace hyprspace {
         m_capture.beginFrame();
 
         for (auto& e : m_entries) {
-            const auto W = e.window.lock();
-            if (!W || !W->m_isMapped)
-                continue;
+            for (auto& slot : e.windows) {
+                const auto W = slot.window.lock();
+                if (!W || !W->m_isMapped)
+                    continue;
 
-            // Re-assert: a workspace change elsewhere can re-suspend these.
-            if (!e.fromVisibleWorkspace)
-                W->setSuspended(false);
+                // Re-assert: a workspace change elsewhere can re-suspend these.
+                if (!e.isActive)
+                    W->setSuspended(false);
 
-            m_capture.capture(W, MONITOR);
+                m_capture.capture(W, MONITOR);
+            }
         }
 
         m_capture.endFrame();
 
-        // Keep the animation running smoothly.
         damage();
     }
 
@@ -374,10 +454,10 @@ namespace hyprspace {
         const int    BORDER   = config::overviewBorderSize();
         const auto   FONT     = config::overviewFont();
 
-        // Everything above is laid out in logical coordinates; rect and texture
-        // pass elements are drawn in physical pixels, so scale on the way out.
-        // (boundingBox()/opaqueRegion() stay logical — the pass scales those.)
-        auto px = [&](const SBoxF& b) { return CBox{b.x * SCALE, b.y * SCALE, b.w * SCALE, b.h * SCALE}; };
+        // Layout is logical; rect and texture pass elements are drawn in physical
+        // pixels, so scale on the way out. (boundingBox()/opaqueRegion() stay
+        // logical — the render pass scales those itself.)
+        auto px   = [&](const SBoxF& b) { return CBox{b.x * SCALE, b.y * SCALE, b.w * SCALE, b.h * SCALE}; };
 
         auto rect = [&](const SBoxF& b, const CHyprColor& col, double round = 0) {
             out.emplace_back(makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = px(b), .color = col, .round = static_cast<int>(round * SCALE)}));
@@ -386,95 +466,84 @@ namespace hyprspace {
             out.emplace_back(
                 makeUnique<CTexPassElement>(CTexPassElement::SRenderData{.tex = t, .box = px(b), .a = a, .round = static_cast<int>(round * SCALE)}));
         };
-
-        // Text textures are rasterised at native resolution, so convert their
-        // pixel size back to logical for placement.
         auto logicalSize = [&](const SP<Render::ITexture>& t) { return Vector2D{t->m_size.x / SCALE, t->m_size.y / SCALE}; };
 
         const SBoxF MONBOX{0, 0, MONITOR->m_size.x, MONITOR->m_size.y};
 
         // --- backdrop -----------------------------------------------------------
         // The real windows are alpha-0 while the overview is up, so what sits
-        // underneath is the wallpaper and the bar. Dim those rather than painting
-        // over them, which is what makes this read like the GNOME overview.
+        // underneath is the wallpaper and the bar. Dimming those rather than
+        // painting over them is what makes this read like the GNOME overview.
         rect(MONBOX, config::overviewBgColor().modifyA(config::overviewBgDim() * PROGRESS));
 
-        // --- workspace labels --------------------------------------------------
-        if (config::overviewShowLabels() && PROGRESS > 0.3F) {
-            const float LABEL_A = (PROGRESS - 0.3F) / 0.7F;
-
-            for (const auto& band : m_bands) {
-                if (band.tileCount == 0)
-                    continue;
-
-                const auto  WS   = g_pCompositor->getWorkspaceByID(band.workspaceId);
-                std::string NAME = WS ? WS->m_name : "";
-                if (NAME.empty())
-                    NAME = std::format("Workspace {}", band.workspaceId);
-
-                auto t = textures().text(NAME, FONT, config::overviewLabelColor(), static_cast<int>(band.labelBox.w), SCALE);
-                if (!t)
-                    continue;
-
-                const auto SZ = logicalSize(t);
-                tex(t, SBoxF{band.labelBox.x, band.labelBox.y + (band.labelBox.h - SZ.y) / 2.0, SZ.x, SZ.y}, LABEL_A);
-            }
-        }
-
-        // --- tiles -------------------------------------------------------------
+        // --- workspace tiles ----------------------------------------------------
         for (size_t i = 0; i < m_tiles.size(); ++i) {
-            const auto& tile = m_tiles[i];
-            auto&       e    = m_entries[tile.key];
+            const auto& entry = m_entries[m_tiles[i].key];
 
-            const auto W = e.window.lock();
-            if (!W)
+            const SBoxF cell = interpolate(entry);
+            if (cell.w <= 1 || cell.h <= 1)
                 continue;
 
-            auto t = m_capture.textureFor(W);
-            if (!t)
-                continue;
+            const bool   SELECTED = static_cast<int>(i) == m_selected;
+            const bool   HOVERED  = static_cast<int>(i) == m_hovered;
 
-            const SBoxF box = interpolate(e);
-            const float A   = e.fromVisibleWorkspace ? 1.F : PROGRESS;
-
-            const bool  SELECTED = static_cast<int>(i) == m_selected;
-            const bool  HOVERED  = static_cast<int>(i) == m_hovered;
-
-            // Rounding ramps in so that a tile sitting exactly on top of its real
-            // window at progress 0 is pixel-identical to the real thing.
+            // The active workspace starts full-screen and is already opaque; the
+            // rest fade in as the grid forms.
+            const float  ALPHA = entry.isActive ? 1.F : PROGRESS;
             const double round = ROUNDING * PROGRESS;
+
+            // Scale from monitor-local logical coords into this cell.
+            const double s = MONITOR->m_size.x > 0 ? cell.w / MONITOR->m_size.x : 0.0;
 
             if (BORDER > 0 && (SELECTED || HOVERED) && PROGRESS > 0.2F) {
                 auto colour = SELECTED ? config::overviewActiveBorder() : config::overviewHoverBorder();
-                rect(SBoxF{box.x - BORDER, box.y - BORDER, box.w + BORDER * 2.0, box.h + BORDER * 2.0}, colour.modifyA(colour.a * PROGRESS), round + BORDER);
+                rect(SBoxF{cell.x - BORDER, cell.y - BORDER, cell.w + BORDER * 2.0, cell.h + BORDER * 2.0}, colour.modifyA(colour.a * PROGRESS * ALPHA),
+                     round + BORDER);
             }
 
-            tex(t, box, A, round);
+            // A backing plate, so a workspace's empty area reads as a screen
+            // rather than a hole punched in the dim.
+            const auto TILEBG = config::overviewTileBgColor();
+            rect(cell, TILEBG.modifyA(TILEBG.a * ALPHA), round);
 
-            // --- title of the selected tile -----------------------------------
-            // Drawn inside the bottom of the tile rather than below it: bands sit
-            // close together, and a title hanging off a tile would overlap the
-            // workspace underneath.
-            if (SELECTED && config::overviewShowTitles() && PROGRESS > 0.5F && !e.title.empty() && box.h > 48) {
-                const float TITLE_A = (PROGRESS - 0.5F) / 0.5F;
+            for (const auto& slot : entry.windows) {
+                const auto W = slot.window.lock();
+                if (!W)
+                    continue;
 
-                auto        t2 = textures().text(e.title, FONT, config::overviewTitleColor(), static_cast<int>(std::max(48.0, box.w - 24)), SCALE);
+                auto t = m_capture.textureFor(W);
+                if (!t)
+                    continue;
+
+                const SBoxF b{cell.x + slot.rect.x * s, cell.y + slot.rect.y * s, slot.rect.w * s, slot.rect.h * s};
+                if (b.w < 1 || b.h < 1)
+                    continue;
+
+                tex(t, b, ALPHA, round * 0.5);
+            }
+
+            // --- workspace label ------------------------------------------------
+            if (config::overviewShowLabels() && PROGRESS > 0.35F) {
+                const float LABEL_A = (PROGRESS - 0.35F) / 0.65F;
+
+                auto        t2 = textures().text(entry.name, FONT, config::overviewLabelColor(), static_cast<int>(cell.w), SCALE);
                 if (!t2)
                     continue;
 
-                const auto       SZ = logicalSize(t2);
-                constexpr double PAD_X = 10, PAD_Y = 4;
+                const auto       SZ    = logicalSize(t2);
+                constexpr double PAD_X = 12, PAD_Y = 4;
 
+                // Centred just under the tile, GNOME-style.
                 const SBoxF      bgBox{
-                         box.x + (box.w - SZ.x) / 2.0 - PAD_X,
-                         box.y + box.h - SZ.y - PAD_Y * 2 - 8,
+                         cell.x + (cell.w - SZ.x) / 2.0 - PAD_X,
+                         cell.y + cell.h + 6,
                          SZ.x + PAD_X * 2,
                          SZ.y + PAD_Y * 2,
                 };
 
                 const auto BGCOL = config::overviewTitleBgColor();
-                rect(bgBox, BGCOL.modifyA(BGCOL.a * TITLE_A), 6);
-                tex(t2, SBoxF{bgBox.x + PAD_X, bgBox.y + PAD_Y, SZ.x, SZ.y}, TITLE_A);
+                rect(bgBox, BGCOL.modifyA(BGCOL.a * LABEL_A), (SZ.y + PAD_Y * 2) / 2.0);
+                tex(t2, SBoxF{bgBox.x + PAD_X, bgBox.y + PAD_Y, SZ.x, SZ.y}, LABEL_A);
             }
         }
 

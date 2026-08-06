@@ -46,114 +46,130 @@ static void section(const char* name) {
 
 // ---------------------------------------------------------------- layout ----
 
-static void testLayoutPreservesAspect() {
-    section("layout: tiles keep their exact aspect ratio");
+static std::vector<STileInput> makeInput(size_t n) {
+    std::vector<STileInput> in;
+    for (size_t i = 0; i < n; ++i)
+        in.push_back({.key = i, .workspaceId = static_cast<long>(i + 1)});
+    return in;
+}
 
-    std::vector<STileInput> in = {
-        {.key = 0, .aspect = 16.0 / 9.0, .workspaceId = 1},
-        {.key = 1, .aspect = 1.0, .workspaceId = 1},
-        {.key = 2, .aspect = 3.0 / 4.0, .workspaceId = 1},
-    };
+static void testGridUniformity() {
+    section("layout: every workspace cell is the same size and monitor-shaped");
 
     SLayoutParams p;
     p.screenW = 1920;
     p.screenH = 1080;
+    p.aspect  = 1920.0 / 1080.0;
 
-    const auto out = layout(in, p);
-    CHECK(out.tiles.size() == 3);
-    CHECK(out.bands.size() == 1);
+    for (size_t n = 1; n <= 10; ++n) {
+        const auto out = layout(makeInput(n), p);
+        CHECK(out.tiles.size() == n);
+        if (out.tiles.empty())
+            continue;
 
-    for (const auto& t : out.tiles) {
-        CHECK(t.box.w > 0 && t.box.h > 0);
-        CHECK_NEAR(t.box.w / t.box.h, in[t.key].aspect, 1e-6);
-    }
-}
-
-static void testLayoutStaysInsideScreen() {
-    section("layout: nothing escapes the padded screen area");
-
-    std::vector<STileInput> in;
-    for (int i = 0; i < 11; ++i)
-        in.push_back({.key = static_cast<size_t>(i), .aspect = (i % 3 == 0) ? 2.0 : 1.3, .workspaceId = 1 + i % 3});
-
-    SLayoutParams p;
-    p.screenW = 2560;
-    p.screenH = 1440;
-    p.padding = 50;
-
-    const auto out = layout(in, p);
-    CHECK(out.tiles.size() == in.size());
-    CHECK(out.bands.size() == 3); // three distinct workspaces
-
-    for (const auto& t : out.tiles) {
-        CHECK(t.box.x >= p.padding - 1.0);
-        CHECK(t.box.y >= p.padding - 1.0);
-        CHECK(t.box.x + t.box.w <= p.screenW - p.padding + 1.0);
-        CHECK(t.box.y + t.box.h <= p.screenH - p.padding + 1.0);
-    }
-}
-
-static void testLayoutNoOverlap() {
-    section("layout: tiles never overlap");
-
-    std::vector<STileInput> in;
-    for (int i = 0; i < 8; ++i)
-        in.push_back({.key = static_cast<size_t>(i), .aspect = 1.6, .workspaceId = 1});
-
-    SLayoutParams p;
-    p.screenW = 1920;
-    p.screenH = 1080;
-
-    const auto out = layout(in, p);
-
-    for (size_t i = 0; i < out.tiles.size(); ++i) {
-        for (size_t j = i + 1; j < out.tiles.size(); ++j) {
-            const auto& a = out.tiles[i].box;
-            const auto& b = out.tiles[j].box;
-
-            const bool separated = a.x + a.w <= b.x + 1e-6 || b.x + b.w <= a.x + 1e-6 || a.y + a.h <= b.y + 1e-6 || b.y + b.h <= a.y + 1e-6;
-            CHECK(separated);
+        const auto& first = out.tiles.front().box;
+        for (const auto& t : out.tiles) {
+            CHECK_NEAR(t.box.w, first.w, 1e-6);
+            CHECK_NEAR(t.box.h, first.h, 1e-6);
+            CHECK_NEAR(t.box.w / t.box.h, p.aspect, 1e-6);
         }
     }
 }
 
-static void testLayoutGroupsByWorkspace() {
-    section("layout: one band per workspace, sorted by id");
+static void testGridFitsOnScreen() {
+    section("layout: the grid never leaves the padded screen area");
 
-    std::vector<STileInput> in = {
-        {.key = 0, .aspect = 1.6, .workspaceId = 3},
-        {.key = 1, .aspect = 1.6, .workspaceId = 1},
-        {.key = 2, .aspect = 1.6, .workspaceId = 3},
-    };
+    for (double sw : {1920.0, 2560.0, 3840.0, 1366.0}) {
+        SLayoutParams p;
+        p.screenW = sw;
+        p.screenH = sw * 9.0 / 16.0;
+        p.aspect  = 16.0 / 9.0;
+        p.padding = 56;
 
-    SLayoutParams p;
-    const auto    out = layout(in, p);
-
-    CHECK(out.bands.size() == 2);
-    CHECK(out.bands[0].workspaceId == 1);
-    CHECK(out.bands[1].workspaceId == 3);
-    CHECK(out.bands[0].tileCount == 1);
-    CHECK(out.bands[1].tileCount == 2);
-
-    // Band 1 must sit above band 3 on screen.
-    CHECK(out.bands[0].contentBox.y < out.bands[1].contentBox.y);
+        for (size_t n = 1; n <= 10; ++n) {
+            const auto out = layout(makeInput(n), p);
+            for (const auto& t : out.tiles) {
+                CHECK(t.box.x >= p.padding - 1.0);
+                CHECK(t.box.y >= p.padding - 1.0);
+                CHECK(t.box.x + t.box.w <= p.screenW - p.padding + 1.0);
+                CHECK(t.box.y + t.box.h <= p.screenH - p.padding + 1.0);
+            }
+        }
+    }
 }
 
-static void testLayoutEdgeCases() {
+static void testGridNoOverlap() {
+    section("layout: workspace cells never overlap, at any count up to ten");
+
+    SLayoutParams p;
+    p.screenW = 1920;
+    p.screenH = 1080;
+    p.aspect  = 16.0 / 9.0;
+
+    for (size_t n = 1; n <= 10; ++n) {
+        const auto out = layout(makeInput(n), p);
+
+        for (size_t i = 0; i < out.tiles.size(); ++i) {
+            for (size_t j = i + 1; j < out.tiles.size(); ++j) {
+                const auto& a = out.tiles[i].box;
+                const auto& b = out.tiles[j].box;
+
+                const bool separated = a.x + a.w <= b.x + 1e-6 || b.x + b.w <= a.x + 1e-6 || a.y + a.h <= b.y + 1e-6 || b.y + b.h <= a.y + 1e-6;
+                CHECK(separated);
+            }
+        }
+    }
+}
+
+static void testGridShape() {
+    section("layout: the grid stays close to square");
+
+    SLayoutParams p;
+    p.screenW = 1920;
+    p.screenH = 1080;
+    p.aspect  = 16.0 / 9.0;
+
+    // A single workspace should fill most of the screen.
+    {
+        const auto out = layout(makeInput(1), p);
+        CHECK(out.rows == 1 && out.cols == 1);
+        CHECK(out.tiles[0].box.w > (p.screenW - 2 * p.padding) * 0.9);
+    }
+
+    // Five workspaces -> 3 over 2, the shape in the reference screenshot.
+    {
+        const auto out = layout(makeInput(5), p);
+        CHECK(out.cols == 3);
+        CHECK(out.rows == 2);
+        // The trailing row is centred, not left-aligned.
+        CHECK(out.tiles[3].box.x > out.tiles[0].box.x);
+    }
+
+    // Ten workspaces must still produce a sane, non-degenerate grid.
+    {
+        const auto out = layout(makeInput(10), p);
+        CHECK(out.tiles.size() == 10);
+        CHECK(out.rows >= 2 && out.rows <= 4);
+        CHECK(out.tiles[0].box.w > 200); // still big enough to read
+    }
+}
+
+static void testGridEdgeCases() {
     section("layout: degenerate inputs are handled");
 
     SLayoutParams p;
     CHECK(layout({}, p).tiles.empty());
 
-    std::vector<STileInput> one = {{.key = 0, .aspect = 1.6, .workspaceId = 1}};
-    CHECK(layout(one, p).tiles.size() == 1);
-
-    // A screen smaller than its own padding must not produce garbage.
     SLayoutParams tiny;
     tiny.screenW = 40;
     tiny.screenH = 40;
     tiny.padding = 56;
-    CHECK(layout(one, tiny).tiles.empty());
+    CHECK(layout(makeInput(3), tiny).tiles.empty());
+
+    // A zero aspect must fall back rather than divide by zero.
+    SLayoutParams bad;
+    bad.aspect = 0.0;
+    CHECK(layout(makeInput(2), bad).tiles.size() == 2);
 }
 
 // ------------------------------------------------------------ navigation ----
@@ -443,11 +459,11 @@ static void testIconLoading() {
 int main() {
     std::printf("hyprspace test suite\n\n");
 
-    testLayoutPreservesAspect();
-    testLayoutStaysInsideScreen();
-    testLayoutNoOverlap();
-    testLayoutGroupsByWorkspace();
-    testLayoutEdgeCases();
+    testGridUniformity();
+    testGridFitsOnScreen();
+    testGridNoOverlap();
+    testGridShape();
+    testGridEdgeCases();
     testNavigation();
     testHitTest();
     testDesktopParsing();

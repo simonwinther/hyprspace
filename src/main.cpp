@@ -322,7 +322,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_listeners.monitorRemoved = bus.monitor.removed.listen(onMonitorRemoved);
     g_listeners.configReloaded = bus.config.reloaded.listen([] { textures().clear(); });
 
-    return {"hyprspace", "Live window overview and GNOME-style Alt+Tab switcher", "hyprspace", "1.0.0"};
+    // Hyprland parses the config before it finishes loading plugins, so any
+    // `bind = ..., hyprspace:overview` in that same config is rejected with
+    // "invalid dispatcher". Queue a reload now that the dispatchers exist; the
+    // second pass registers them. This cannot loop, because a plugin is never
+    // initialised twice.
+    HyprlandAPI::reloadConfig();
+
+    return {"hyprspace", "Live workspace overview and GNOME-style Alt+Tab switcher", "hyprspace", "1.0.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {

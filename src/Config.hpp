@@ -22,12 +22,10 @@ namespace hyprspace::config {
     CHyprColor  overviewActiveBorder();
     CHyprColor  overviewHoverBorder();
     bool        overviewShowLabels();
-    int         overviewLabelGutter();
-    bool        overviewShowTitles();
     bool        overviewIncludeSpecial();
     bool        overviewAllWorkspaces();
     CHyprColor  overviewLabelColor();
-    CHyprColor  overviewTitleColor();
+    CHyprColor  overviewTileBgColor();
     CHyprColor  overviewTitleBgColor();
     std::string overviewFont();
 
