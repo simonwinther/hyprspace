@@ -1,0 +1,6 @@
+build/
+test/test_hyprspace
+test/test_hyprspace-asan
+*.o
+*.d
+*.so

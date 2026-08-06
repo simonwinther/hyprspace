@@ -1,0 +1,53 @@
+MIT License
+
+Copyright (c) 2026 hyprspace contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+ATTRIBUTION
+
+hyprspace was written with reference to two MIT-licensed projects. No code was
+copied verbatim — the current Hyprland plugin API has moved on from what either
+targets — but the following ideas were taken from them:
+
+  hyprview — https://github.com/yz778/hyprview
+  Copyright (c) 2025 yz778
+  MIT License
+
+    * Rendering each window into its own offscreen framebuffer with Hyprland's
+      own window renderer, then compositing those textures as overview tiles.
+    * Driving the open/close transition from a Hyprland animated variable so the
+      overview inherits the user's configured animation curve.
+    * Restoring the previously focused window when the overview is dismissed
+      without a selection.
+
+  hyprshell — https://github.com/H3rmt/hyprshell
+  Copyright (c) 2025 Enrico Stemmer
+  MIT License
+
+    * The shape of a GNOME-style Alt+Tab switcher: a most-recently-used window
+      list, stepping while the modifier is held, committing on modifier release
+      and cancelling on Escape.
+    * Resolving a window's app icon by matching its class against .desktop
+      entries, including the StartupWMClass fallback.
+
+Both projects are MIT licensed; their licence text is reproduced above in the
+same form it applies to this work.

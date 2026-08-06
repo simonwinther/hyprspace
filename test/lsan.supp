@@ -1,0 +1,11 @@
+# Pango/fontconfig keep process-lifetime font caches that are never freed.
+# These are not hyprspace leaks.
+leak:libfontconfig
+leak:libpango
+leak:libpangoft2
+leak:libpangocairo
+leak:libgobject
+leak:libglib
+leak:librsvg
+leak:libgdk_pixbuf
+leak:libcairo

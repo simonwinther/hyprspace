@@ -1,0 +1,335 @@
+// hyprspace - a Hyprland window overview and Alt+Tab switcher.
+//
+// Two overlays, one plugin:
+//   * hyprspace:overview  - full-screen live overview of all windows/workspaces
+//   * hyprspace:switch    - GNOME-style Alt+Tab switcher
+//
+// There is deliberately no launcher, no search field and no text input anywhere.
+
+#include "globals.hpp"
+
+#include "Config.hpp"
+#include "Overview.hpp"
+#include "PassElements.hpp"
+#include "Switcher.hpp"
+#include "Texture.hpp"
+
+#include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/devices/IKeyboard.hpp>
+#include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/SeatManager.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/render/Renderer.hpp>
+
+#include <xkbcommon/xkbcommon.h>
+
+#include <memory>
+
+using namespace hyprspace;
+
+namespace {
+
+    std::unique_ptr<COverview> g_overview;
+    std::unique_ptr<CSwitcher> g_switcher;
+
+    struct SListeners {
+        CHyprSignalListener key;
+        CHyprSignalListener mouseMove;
+        CHyprSignalListener mouseButton;
+        CHyprSignalListener renderPre;
+        CHyprSignalListener renderStage;
+        CHyprSignalListener monitorRemoved;
+        CHyprSignalListener configReloaded;
+    };
+
+    SListeners g_listeners;
+
+    bool       active() {
+        return g_overview || g_switcher;
+    }
+
+    PHLMONITOR targetMonitor() {
+        if (auto m = g_pCompositor->getMonitorFromCursor())
+            return m;
+
+        if (auto w = Desktop::focusState()->window(); w && w->m_monitor)
+            return w->m_monitor.lock();
+
+        return g_pCompositor->m_monitors.empty() ? nullptr : g_pCompositor->m_monitors.front();
+    }
+
+    // Translate a raw evdev keycode into a layout-independent keysym. The
+    // "static" xkb state deliberately ignores active modifiers, so Alt+Shift+Tab
+    // still reports Tab and navigation keys behave the same on every layout.
+    xkb_keysym_t keysymFor(uint32_t keycode) {
+        const auto KEEB = g_pSeatManager->m_keyboard;
+        if (!KEEB)
+            return XKB_KEY_NoSymbol;
+
+        // m_xkbSymState tracks the layout group but not modifiers, so Alt+Shift+Tab
+        // still resolves to Tab and hjkl stay hjkl on every layout.
+        if (!KEEB->m_xkbSymState)
+            return XKB_KEY_NoSymbol;
+
+        return xkb_state_key_get_one_sym(KEEB->m_xkbSymState, keycode + 8);
+    }
+
+    uint32_t currentMods() {
+        const auto KEEB = g_pSeatManager->m_keyboard;
+        return KEEB ? KEEB->getModifiers() : 0;
+    }
+
+    void destroyOverview() {
+        if (!g_overview)
+            return;
+
+        const auto MON = g_overview->monitor();
+        g_overview.reset();
+
+        if (MON)
+            g_pHyprRenderer->damageMonitor(MON);
+    }
+
+    void destroySwitcher() {
+        if (!g_switcher)
+            return;
+
+        const auto MON = g_switcher->monitor();
+        g_switcher.reset();
+
+        if (MON)
+            g_pHyprRenderer->damageMonitor(MON);
+    }
+
+    // ------------------------------------------------------------- input ----
+
+    void onKey(IKeyboard::SKeyEvent event, Event::SCallbackInfo& info) {
+        if (!active())
+            return;
+
+        const bool         PRESSED = event.state == WL_KEYBOARD_KEY_STATE_PRESSED;
+        const xkb_keysym_t SYM     = keysymFor(event.keycode);
+        const uint32_t     MODS    = currentMods();
+
+        // While an overlay is up it owns the keyboard entirely: nothing reaches
+        // keybinds or clients. This event fires before both, and xkb state is
+        // updated in the device layer beforehand, so modifiers stay consistent.
+        info.cancelled = true;
+
+        if (g_switcher) {
+            g_switcher->onKey(SYM, MODS, PRESSED);
+
+            // Alt released -> commit, exactly like GNOME.
+            const bool ALT_KEY = SYM == XKB_KEY_Alt_L || SYM == XKB_KEY_Alt_R || SYM == XKB_KEY_Meta_L || SYM == XKB_KEY_Meta_R;
+            if (!PRESSED && ALT_KEY)
+                g_switcher->close(true);
+
+            return;
+        }
+
+        if (g_overview)
+            g_overview->onKey(SYM, MODS, PRESSED);
+    }
+
+    void onMouseMove(Vector2D pos, Event::SCallbackInfo& info) {
+        if (!active())
+            return;
+
+        info.cancelled = true;
+
+        if (g_switcher)
+            g_switcher->onMouseMove(pos);
+        else if (g_overview)
+            g_overview->onMouseMove(pos);
+    }
+
+    void onMouseButton(IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
+        if (!active())
+            return;
+
+        info.cancelled       = true;
+        const bool PRESSED   = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
+
+        if (g_switcher)
+            g_switcher->onMouseButton(event.button, PRESSED);
+        else if (g_overview)
+            g_overview->onMouseButton(event.button, PRESSED);
+    }
+
+    // ------------------------------------------------------------ render ----
+
+    void onRenderPre(PHLMONITOR monitor) {
+        // Reap finished overlays before anything else touches them.
+        if (g_overview && g_overview->finished())
+            destroyOverview();
+        if (g_switcher && g_switcher->finished())
+            destroySwitcher();
+
+        if (!monitor)
+            return;
+
+        const bool OWNS_MONITOR = (g_overview && g_overview->monitor() == monitor) || (g_switcher && g_switcher->monitor() == monitor);
+
+        // The overlays repaint the whole output every frame and (for the
+        // overview) occlude everything under them. Damage tracking alone leaves
+        // stale content from older buffers in the swapchain, so ask for complete
+        // frames while either overlay is up.
+        if (OWNS_MONITOR)
+            monitor->m_forceFullFrames = 2;
+
+        if (g_overview && g_overview->monitor() == monitor)
+            g_overview->prepareFrame();
+    }
+
+    void onRenderStage(eRenderStage stage) {
+        // LAST_MOMENT is after the top/overlay layer surfaces, so the overlays
+        // sit above bars and notifications the way a full-screen overview should.
+        if (stage != RENDER_LAST_MOMENT || !active())
+            return;
+
+        const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        if (!MONITOR)
+            return;
+
+        // Add to the pass being built rather than calling draw() directly:
+        // draw() renders immediately with whatever damage it is handed, and the
+        // pass is what computes the real per-element damage and occlusion.
+        if (g_overview && g_overview->monitor() == MONITOR)
+            g_pHyprRenderer->m_renderPass.add(makeUnique<COverviewPassElement>(g_overview.get()));
+
+        if (g_switcher && g_switcher->monitor() == MONITOR)
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CSwitcherPassElement>(g_switcher.get()));
+    }
+
+    void onMonitorRemoved(PHLMONITOR monitor) {
+        if (g_overview && g_overview->monitor() == monitor)
+            destroyOverview();
+        if (g_switcher && g_switcher->monitor() == monitor)
+            destroySwitcher();
+    }
+
+    // -------------------------------------------------------- dispatchers ----
+
+    SDispatchResult dispatchOverview(std::string args) {
+        // An already-open overview toggles closed, which makes a single Super
+        // binding behave the way people expect. An overview that is mid-close
+        // does not count as open, otherwise a quick second press would be
+        // swallowed instead of reopening.
+        if (g_overview && !g_overview->closing()) {
+            if (args != "on")
+                g_overview->close(false);
+            return {.success = true};
+        }
+
+        if (args == "off") {
+            if (g_overview)
+                g_overview->close(false);
+            return {.success = true};
+        }
+
+        if (g_switcher)
+            destroySwitcher();
+
+        const auto MONITOR = targetMonitor();
+        if (!MONITOR)
+            return {.success = false, .error = "hyprspace: no monitor"};
+
+        // Tear the closing instance down *before* building the new one: the
+        // overview parks the real windows at zero alpha and restores them in its
+        // destructor, so overlapping lifetimes would let the new instance record
+        // the hidden value as the one to restore.
+        destroyOverview();
+
+        g_overview = std::make_unique<COverview>(MONITOR);
+        return {.success = true};
+    }
+
+    SDispatchResult dispatchSwitch(std::string args) {
+        const bool FORWARD = args != "prev" && args != "backward";
+
+        if (g_overview)
+            g_overview->close(false);
+
+        if (g_switcher && !g_switcher->closing()) {
+            g_switcher->advance(FORWARD);
+            return {.success = true};
+        }
+
+        const auto MONITOR = targetMonitor();
+        if (!MONITOR)
+            return {.success = false, .error = "hyprspace: no monitor"};
+
+        destroySwitcher();
+
+        auto sw = std::make_unique<CSwitcher>(MONITOR, FORWARD);
+        if (sw->empty())
+            return {.success = true}; // nothing to switch between
+
+        g_switcher = std::move(sw);
+
+        // If the dispatcher was reached without Alt held (e.g. bound to a plain
+        // key), there will never be an Alt release to commit on. Fall back to
+        // committing on Enter/click, which onKey already handles.
+        return {.success = true};
+    }
+
+    SDispatchResult dispatchClose(std::string) {
+        if (g_overview)
+            g_overview->close(false);
+        if (g_switcher)
+            g_switcher->close(false);
+        return {.success = true};
+    }
+
+} // namespace
+
+APICALL EXPORT std::string PLUGIN_API_VERSION() {
+    return HYPRLAND_API_VERSION;
+}
+
+APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+    PHANDLE = handle;
+
+    // __hyprland_api_get_hash() resolves to the running compositor's symbol;
+    // __hyprland_api_get_client_hash() is inline in the headers and so carries
+    // the ABI string this plugin was compiled against. Both cover the commit
+    // hash *and* the hypr* library versions. A mismatch would crash the session
+    // later, so refuse to load now.
+    const std::string RUNNING = __hyprland_api_get_hash();
+    const std::string BUILT   = __hyprland_api_get_client_hash();
+
+    if (RUNNING != BUILT) {
+        HyprlandAPI::addNotification(PHANDLE, HS_LOG_PREFIX "built for " + BUILT + " but Hyprland is " + RUNNING + " — rebuild with `make && make install`",
+                                     CHyprColor{1.0, 0.2, 0.2, 1.0}, 10000);
+        throw std::runtime_error("[hyprspace] Hyprland ABI mismatch, rebuild the plugin");
+    }
+
+    config::registerAll();
+
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:overview", dispatchOverview);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:switch", dispatchSwitch);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:close", dispatchClose);
+
+    auto& bus = Event::bus()->m_events;
+
+    g_listeners.key            = bus.input.keyboard.key.listen(onKey);
+    g_listeners.mouseMove      = bus.input.mouse.move.listen(onMouseMove);
+    g_listeners.mouseButton    = bus.input.mouse.button.listen(onMouseButton);
+    g_listeners.renderPre      = bus.render.pre.listen(onRenderPre);
+    g_listeners.renderStage    = bus.render.stage.listen(onRenderStage);
+    g_listeners.monitorRemoved = bus.monitor.removed.listen(onMonitorRemoved);
+    g_listeners.configReloaded = bus.config.reloaded.listen([] { textures().clear(); });
+
+    return {"hyprspace", "Live window overview and GNOME-style Alt+Tab switcher", "hyprspace", "1.0.0"};
+}
+
+APICALL EXPORT void PLUGIN_EXIT() {
+    destroyOverview();
+    destroySwitcher();
+
+    g_listeners = {};
+
+    textures().clear();
+}

@@ -1,0 +1,10 @@
+[repository]
+name = "hyprspace"
+authors = ["hyprspace contributors"]
+
+[hyprspace]
+output = "build/hyprspace.so"
+authors = ["hyprspace contributors"]
+description = "Live full-workspace overview and a GNOME-style Alt+Tab switcher"
+version = "1.0.0"
+build = ["make clean", "make all"]
