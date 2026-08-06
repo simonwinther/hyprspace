@@ -2,7 +2,7 @@
 
 A Hyprland plugin with exactly two things in it:
 
-* **Super + `** → a full-screen grid of your workspaces, each tile showing that
+* **Super + A** → a full-screen grid of your workspaces, each tile showing that
   workspace's real live windows exactly where they sit.
 * **Alt+Tab** → a GNOME-style switcher: app icons, the window title, forward and
   backward cycling, commit on Alt release, cancel on Escape.
@@ -110,15 +110,17 @@ it creates its state store under `/root`.
 # The plugin path must be absolute — Hyprland does not expand `~` here.
 plugin = /home/YOU/.local/share/hyprspace/hyprspace.so
 
-bind = SUPER, GRAVE, hyprspace:overview      # Super + `
+bind = SUPER, A, hyprspace:overview
 bind = ALT, TAB, hyprspace:switch
 bind = ALT SHIFT, TAB, hyprspace:switch, prev
 ```
 
-`SUPER + \`` (the key above Tab) is the default because nothing on a stock
-Omarchy claims it. If you would rather tap Super on its own, uncomment the
-`bindr` line in `contrib/hyprspace.conf` — `bindr` fires on key release, so Super
-held as a modifier for another shortcut will not open the overview.
+`SUPER + A` is the default because it is free on a stock Omarchy and, unlike
+`GRAVE`, it is in the same place on every keyboard layout — on a Danish layout
+the key above Tab is `½`, so a `GRAVE` binding simply never fires. If you would
+rather tap Super on its own, uncomment the `bindr` line in
+`contrib/hyprspace.conf`; `bindr` fires on key release, so Super held as a
+modifier for another shortcut will not open the overview.
 
 ### Omarchy
 
