@@ -110,6 +110,45 @@ namespace {
         return KEEB ? KEEB->getModifiers() : 0;
     }
 
+    // The modifier a key is itself, or 0 for an ordinary key.
+    uint32_t modifierBitFor(xkb_keysym_t sym) {
+        switch (sym) {
+            case XKB_KEY_Super_L:
+            case XKB_KEY_Super_R:
+            case XKB_KEY_Meta_L:
+            case XKB_KEY_Meta_R: return HL_MODIFIER_META;
+
+            case XKB_KEY_Alt_L:
+            case XKB_KEY_Alt_R: return HL_MODIFIER_ALT;
+
+            case XKB_KEY_Control_L:
+            case XKB_KEY_Control_R: return HL_MODIFIER_CTRL;
+
+            case XKB_KEY_Shift_L:
+            case XKB_KEY_Shift_R: return HL_MODIFIER_SHIFT;
+
+            default: return 0;
+        }
+    }
+
+    // Modifiers as they stand *including* the event being delivered.
+    //
+    // getModifiers() lags by exactly one event — this callback runs before the
+    // device layer folds the key into the xkb state, so a Super press still
+    // reads as "no Super" and a Super release still reads as "Super held".
+    // Taking it at face value makes the two halves of a keystroke disagree:
+    // the Super press gets swallowed while the Super release is passed
+    // through, which is the same press/release asymmetry that strands keys.
+    uint32_t modsWith(xkb_keysym_t sym, bool pressed) {
+        const uint32_t MODS = currentMods();
+        const uint32_t BIT  = modifierBitFor(sym);
+
+        if (!BIT)
+            return MODS;
+
+        return pressed ? (MODS | BIT) : (MODS & ~BIT);
+    }
+
     void destroyOverview() {
         if (!g_overview)
             return;
@@ -147,7 +186,7 @@ namespace {
             return;
 
         const xkb_keysym_t SYM  = keysymFor(event.keycode);
-        const uint32_t     MODS = currentMods();
+        const uint32_t     MODS = modsWith(SYM, PRESSED);
 
         // Super-modified keys keep reaching Hyprland's keybinds. That is what
         // makes the overview's own binding a toggle — the second Super+A has to
@@ -161,8 +200,9 @@ namespace {
         }
 
         // Otherwise the overlay owns the keyboard entirely: nothing reaches
-        // keybinds or clients. This event fires before both, and xkb state is
-        // updated in the device layer beforehand, so modifiers stay consistent.
+        // keybinds or clients. This event fires before both, and the device
+        // layer folds the key into the xkb state either way, so cancelling here
+        // cannot leave the compositor's own modifier tracking out of step.
         info.cancelled = true;
 
         if (switcherLive()) {
@@ -264,6 +304,7 @@ namespace {
         // binding behave the way people expect. An overview that is mid-close
         // does not count as open, otherwise a quick second press would be
         // swallowed instead of reopening.
+
         if (g_overview && !g_overview->closing()) {
             if (args != "on")
                 g_overview->close(false);

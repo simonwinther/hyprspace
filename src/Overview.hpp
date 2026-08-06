@@ -104,6 +104,8 @@ namespace hyprspace {
         void      restoreRealWindows();
         void      selectIndex(int idx);
         void      commit();
+        void      commitSelection();
+        void      settleWorkspaceAnimations() const;
 
         SBoxF     interpolate(const SEntry& e) const;
 

@@ -24,6 +24,7 @@
 #include <optional>
 #include <ranges>
 
+
 namespace hyprspace {
 
     static float lerpf(float a, float b, float t) {
@@ -300,7 +301,36 @@ namespace hyprspace {
         return g_pCompositor->createNewWorkspace(e.workspaceId, MONITOR->m_id);
     }
 
+    // Hyprland animates a workspace change itself: the outgoing workspace
+    // slides and fades out while the incoming one slides in. Left alone that
+    // runs *underneath* the overview's zoom and is still in flight when the
+    // overview hands the screen back, so the last thing you see is the new
+    // workspace sliding into place after the zoom already landed on it — two
+    // transitions for one action, which is the glitch.
+    //
+    // Warp them to their finished state instead. The zoom is the transition.
+    void COverview::settleWorkspaceAnimations() const {
+        const auto MONITOR = m_monitor.lock();
+        if (!MONITOR)
+            return;
+
+        for (const auto& WS : g_pCompositor->getWorkspacesCopy()) {
+            if (!WS || WS->m_monitor.lock() != MONITOR)
+                continue;
+
+            if (WS->m_renderOffset)
+                WS->m_renderOffset->warp();
+            if (WS->m_alpha)
+                WS->m_alpha->warp();
+        }
+    }
+
     void COverview::commit() {
+        commitSelection();
+        settleWorkspaceAnimations();
+    }
+
+    void COverview::commitSelection() {
         // A number key naming a workspace with no tile of its own still goes
         // there — it is just empty, and Hyprland creates it as needed.
         if (m_gotoWorkspace > 0) {

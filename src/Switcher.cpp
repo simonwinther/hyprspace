@@ -20,6 +20,7 @@
 
 #include <algorithm>
 
+
 namespace hyprspace {
 
     CSwitcher::CSwitcher(PHLMONITOR monitor, bool forward) : m_monitor(monitor) {
@@ -43,35 +44,48 @@ namespace hyprspace {
         if (!MONITOR)
             return;
 
-        const bool WS_ONLY = config::switcherCurrentWorkspaceOnly();
-
         // Hyprland's tracker is ordered oldest -> newest, so walking it backwards
         // gives most-recently-used first, which is what Alt+Tab expects.
         const auto& HISTORY = Desktop::History::windowTracker()->fullHistory();
 
-        auto        eligible = [&](const PHLWINDOW& w) {
-            if (!w || !w->m_isMapped || w->m_fadingOut || w->isHidden())
-                return false;
-            if (!w->m_workspace)
-                return false;
-            if (WS_ONLY && w->m_workspace != MONITOR->m_activeWorkspace)
-                return false;
-            return true;
+        auto        gather = [&](bool wsOnly) {
+            auto eligible = [&](const PHLWINDOW& w) {
+                if (!w || !w->m_isMapped || w->m_fadingOut || w->isHidden())
+                    return false;
+                if (!w->m_workspace)
+                    return false;
+                if (wsOnly && w->m_workspace != MONITOR->m_activeWorkspace)
+                    return false;
+                return true;
+            };
+
+            std::vector<PHLWINDOW> out;
+
+            for (const auto& ref : HISTORY | std::views::reverse) {
+                const auto W = ref.lock();
+                if (eligible(W) && std::ranges::find(out, W) == out.end())
+                    out.push_back(W);
+            }
+
+            // Anything the tracker has not seen yet still belongs in the list.
+            for (const auto& w : g_pCompositor->m_windows) {
+                if (eligible(w) && std::ranges::find(out, w) == out.end())
+                    out.push_back(w);
+            }
+
+            return out;
         };
 
-        std::vector<PHLWINDOW> ordered;
+        auto ordered = gather(config::switcherCurrentWorkspaceOnly());
 
-        for (const auto& ref : HISTORY | std::views::reverse) {
-            const auto W = ref.lock();
-            if (eligible(W) && std::ranges::find(ordered, W) == ordered.end())
-                ordered.push_back(W);
-        }
-
-        // Anything the tracker has not seen yet still belongs in the list.
-        for (const auto& w : g_pCompositor->m_windows) {
-            if (eligible(w) && std::ranges::find(ordered, w) == ordered.end())
-                ordered.push_back(w);
-        }
+        // A workspace holding one window has nothing to switch between, and a
+        // switcher that cannot move is worse than none: it swallows the
+        // keystroke and commits straight back to the window you are already on,
+        // so Alt+Tab reads as broken. Widen to the whole monitor rather than do
+        // nothing — scoping is there to keep the common case tidy, not to make
+        // the key dead.
+        if (ordered.size() < 2)
+            ordered = gather(false);
 
         for (const auto& w : ordered) {
             SEntry e;
@@ -88,6 +102,7 @@ namespace hyprspace {
         // already land on the previous one.
         const int N = static_cast<int>(m_entries.size());
         m_selected  = forward ? (1 % N) : ((N - 1) % N);
+
     }
 
     void CSwitcher::layoutPanel() {
