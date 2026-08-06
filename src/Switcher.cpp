@@ -122,11 +122,38 @@ namespace hyprspace {
         const double gridW    = cols * ICON + (cols - 1) * GAP;
         const double gridH    = rows * ICON + (rows - 1) * GAP;
 
-        const double panelW   = gridW + 2 * PAD;
+        // Widen the panel until the titles actually fit.
+        //
+        // Sizing it from the icon grid alone gives a three-window switcher
+        // about 300px of title, which turns every real window title into
+        // "Build h..." — the icons already said which app it is, so a title
+        // that cannot show what distinguishes two windows of the same app is
+        // dead weight. Measure the longest one and let the panel grow to it,
+        // capped so a pathological title cannot span the whole screen.
+        double contentW = gridW;
+
+        if (TITLE) {
+            const std::string FONT     = config::switcherFont();
+            const double      MAX_TEXT = SCREEN_W * 0.66;
+
+            double            widest   = 0.0;
+            for (const auto& e : m_entries) {
+                if (e.title.empty())
+                    continue;
+
+                int tw = 0, th = 0;
+                measureText(e.title, FONT, tw, th);
+                widest = std::max(widest, static_cast<double>(tw));
+            }
+
+            contentW = std::max(contentW, std::min(widest, MAX_TEXT));
+        }
+
+        const double panelW   = contentW + 2 * PAD;
         const double panelH   = gridH + 2 * PAD + TITLE_H;
 
         m_panel               = SBoxF{(SCREEN_W - panelW) / 2.0, (SCREEN_H - panelH) / 2.0, panelW, panelH};
-        m_titleArea           = SBoxF{m_panel.x + PAD, m_panel.y + PAD + gridH + 4, gridW, TITLE_H - 4};
+        m_titleArea           = SBoxF{m_panel.x + PAD, m_panel.y + PAD + gridH + 4, contentW, TITLE_H - 4};
 
         for (int i = 0; i < n; ++i) {
             const int    row     = i / cols;
