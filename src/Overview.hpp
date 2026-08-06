@@ -46,6 +46,7 @@ namespace hyprspace {
         bool onKey(xkb_keysym_t sym, uint32_t mods, bool pressed);
         void onMouseMove(const Vector2D& globalPos);
         bool onMouseButton(uint32_t button, bool pressed, uint32_t mods);
+        void onScroll(double delta);
 
         // --- render lifecycle ---
         void                          prepareFrame(); // capture live window contents

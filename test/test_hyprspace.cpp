@@ -385,6 +385,28 @@ static void testWebAppLookup() {
     CHECK(db.iconNameForClass("chrome-chatgpt.com__-Default") == "/tmp/ChatGPT.png");
     CHECK(db.appNameForClass("chrome-chatgpt.com__-Default") == "ChatGPT");
     CHECK(db.iconNameForClass("chrome-example.org__-Default").empty());
+
+    // A "www." host must still reach an entry named for the bare site, which
+    // is how Omarchy writes them. Without stripping it the class only ever
+    // offers "www.youtube", nothing matches, and the switcher falls back to a
+    // letter placeholder.
+    db.addEntry(parseDesktopEntry("[Desktop Entry]\nName=YouTube\nIcon=/tmp/YouTube.png\n", "YouTube"));
+
+    CHECK(db.iconNameForClass("chrome-www.youtube.com__-Default") == "/tmp/YouTube.png");
+    CHECK(db.appNameForClass("chrome-www.youtube.com__-Default") == "YouTube");
+
+    // The bare host keeps working, and other browsers use the same scheme.
+    CHECK(db.iconNameForClass("chrome-youtube.com__-Default") == "/tmp/YouTube.png");
+    CHECK(db.iconNameForClass("brave-www.youtube.com__-Default") == "/tmp/YouTube.png");
+    CHECK(db.iconNameForClass("chromium-www.youtube.com__-Default") == "/tmp/YouTube.png");
+
+    // Still no false positives.
+    CHECK(db.iconNameForClass("chrome-www.example.org__-Default").empty());
+
+    const auto CANDS = classCandidates("chrome-www.youtube.com__-Default");
+    CHECK(std::ranges::find(CANDS, "youtube") != CANDS.end());
+    CHECK(std::ranges::find(CANDS, "youtube.com") != CANDS.end());
+    CHECK(std::ranges::find(CANDS, "www.youtube.com") != CANDS.end());
 }
 
 static void testIconResolution() {

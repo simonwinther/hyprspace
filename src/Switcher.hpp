@@ -45,6 +45,7 @@ namespace hyprspace {
         void                          onModifiersChanged(uint32_t mods);
         void                          onMouseMove(const Vector2D& globalPos);
         bool                          onMouseButton(uint32_t button, bool pressed);
+        void                          onScroll(double delta);
 
         // --- render ---
         std::vector<UP<IPassElement>> buildPass();

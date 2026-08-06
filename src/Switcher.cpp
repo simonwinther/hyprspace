@@ -237,9 +237,18 @@ namespace hyprspace {
 
         const auto LOCAL = globalPos - MONITOR->m_position;
 
-        int        hit = -1;
+        // Hit test the whole cell, not just the icon.
+        //
+        // The icons sit a gap apart, so testing the icon box alone leaves a
+        // dead strip between every pair: dragging along the row drops the
+        // highlight in each gap and the selection appears to stutter and catch
+        // on nothing. Grow each box by half the gap so the row is continuous.
+        const double PAD = config::switcherGap() / 2.0;
+
+        int          hit = -1;
         for (size_t i = 0; i < m_entries.size(); ++i) {
-            if (m_entries[i].box.contains(LOCAL.x, LOCAL.y)) {
+            const auto& b = m_entries[i].box;
+            if (LOCAL.x >= b.x - PAD && LOCAL.x <= b.x + b.w + PAD && LOCAL.y >= b.y - PAD && LOCAL.y <= b.y + b.h + PAD) {
                 hit = static_cast<int>(i);
                 break;
             }
@@ -253,6 +262,13 @@ namespace hyprspace {
             m_selected = hit;
 
         damage();
+    }
+
+    void CSwitcher::onScroll(double delta) {
+        if (m_entries.empty() || m_closing || delta == 0.0)
+            return;
+
+        advance(delta > 0.0);
     }
 
     bool CSwitcher::onMouseButton(uint32_t button, bool pressed) {

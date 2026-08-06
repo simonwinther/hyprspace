@@ -69,11 +69,24 @@ namespace hyprspace {
             if (const auto us = rest.find('_'); us != std::string::npos)
                 rest = rest.substr(0, us);
 
-            push(rest); // e.g. "chatgpt.com"
+            // The host, with and without a "www." that no .desktop is named
+            // after: "chrome-www.youtube.com__-Default" has to reach
+            // YouTube.desktop, and it is the subdomain that stops it.
+            auto pushHost = [&](const std::string& host) {
+                if (host.empty())
+                    return;
 
-            // ...and without the TLD, which is how such entries are usually named.
-            if (const auto dot = rest.find_last_of('.'); dot != std::string::npos && dot > 0)
-                push(rest.substr(0, dot)); // e.g. "chatgpt"
+                push(host); // e.g. "chatgpt.com"
+
+                // ...and without the TLD, which is how such entries are named.
+                if (const auto dot = host.find_last_of('.'); dot != std::string::npos && dot > 0)
+                    push(host.substr(0, dot)); // e.g. "chatgpt"
+            };
+
+            pushHost(rest);
+
+            if (rest.starts_with("www."))
+                pushHost(rest.substr(4)); // "www.youtube.com" -> "youtube.com" -> "youtube"
 
             break;
         }

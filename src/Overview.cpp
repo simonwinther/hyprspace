@@ -117,8 +117,16 @@ namespace hyprspace {
             SWindowSlot slot;
             slot.window = w;
 
-            const auto POS = w->m_realPosition->value() - MONITOR->m_position;
-            slot.rect      = SBoxF{POS.x, POS.y, SIZE.x, SIZE.y};
+            // A fullscreen window covers the whole output, including the strip
+            // the bar reserved. Tiles map the usable area, so its real geometry
+            // would be drawn hanging outside the tile it belongs to. It fills
+            // the screen, so let it fill the tile.
+            if (w->isFullscreen())
+                slot.rect = m_usable;
+            else {
+                const auto POS = w->m_realPosition->value() - MONITOR->m_position;
+                slot.rect      = SBoxF{POS.x, POS.y, SIZE.x, SIZE.y};
+            }
 
             it->windows.push_back(slot);
 
@@ -631,6 +639,15 @@ namespace hyprspace {
             selectIndex(IDX);
 
         damage();
+    }
+
+    // Scrolling steps the selection, the same order Tab walks.
+    void COverview::onScroll(double delta) {
+        if (m_tiles.empty() || m_closing || delta == 0.0)
+            return;
+
+        const int N = static_cast<int>(m_tiles.size());
+        selectIndex(((m_selected + (delta > 0.0 ? 1 : -1)) % N + N) % N);
     }
 
     bool COverview::onMouseButton(uint32_t button, bool pressed, uint32_t mods) {

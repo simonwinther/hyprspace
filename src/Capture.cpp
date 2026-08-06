@@ -57,15 +57,17 @@ namespace hyprspace {
         if (!g_pHyprRenderer->beginFullFakeRender(monitor, fakeDamage, entry.fb))
             return;
 
-        // Windows that Hyprland is already drawing this frame get their frame
-        // callbacks from the normal pass (occluded surfaces still receive
-        // presentFeedback on discard). Windows on hidden workspaces do not, so we
-        // let this capture drive their callbacks and keep them animating.
-        const auto WS         = window->m_workspace;
-        const bool VISIBLE_WS = WS && WS->isVisible();
-
-        const bool prevBlock             = g_pHyprRenderer->m_bBlockSurfaceFeedback;
-        g_pHyprRenderer->m_bBlockSurfaceFeedback = VISIBLE_WS;
+        // This capture drives frame callbacks for every window it draws.
+        //
+        // Deferring to the normal pass for windows on the visible workspace does
+        // not work while the overview is up: the overview parks those windows at
+        // zero alpha precisely so the normal pass skips them, so they would get
+        // no callbacks from anywhere and stop repainting. A client that is not
+        // repainting never commits a buffer at its new size, which is why a
+        // window resized inside the overview kept showing a stale buffer with
+        // empty space where it grew.
+        const bool prevBlock                     = g_pHyprRenderer->m_bBlockSurfaceFeedback;
+        g_pHyprRenderer->m_bBlockSurfaceFeedback = false;
 
         g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor(0, 0, 0, 0)});
         g_pHyprRenderer->startRenderPass();

@@ -199,6 +199,7 @@ keyboard grab, which makes it a reliable escape hatch.
 | Right click | Close without selecting |
 | `Super` + drag left | Pick a window up and drop it on another workspace tile |
 | `Super` + drag right | Resize that window in place, scaled into the tile |
+| Scroll wheel | Step the selection |
 
 The overview binding toggles: pressing it again closes. Super-modified keys are
 passed through to Hyprland while the overview is up, so the rest of your Super
@@ -218,6 +219,7 @@ both here and in Hyprland's own `workspace` binds.
 | `Enter` | Commit without waiting for the Alt release |
 | `←` / `→` | Step backward / forward |
 | Mouse move, click | Hover to select, click to commit |
+| Scroll wheel | Step through the list |
 
 Every other key is swallowed while an overlay is up. There is deliberately
 nowhere to type.

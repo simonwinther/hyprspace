@@ -55,6 +55,7 @@ namespace {
         CHyprSignalListener key;
         CHyprSignalListener mouseMove;
         CHyprSignalListener mouseButton;
+        CHyprSignalListener mouseAxis;
         CHyprSignalListener renderPre;
         CHyprSignalListener renderStage;
         CHyprSignalListener monitorRemoved;
@@ -251,6 +252,28 @@ namespace {
             g_overview->onMouseMove(pos);
     }
 
+    // Scroll belongs to the overlay while one is up. Without this the wheel
+    // falls through to whatever sits underneath, so scrolling over the switcher
+    // silently scrolls the page behind it.
+    void onMouseAxis(IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
+        if (!ownsInput())
+            return;
+
+        info.cancelled = true;
+
+        if (event.axis != WL_POINTER_AXIS_VERTICAL_SCROLL)
+            return;
+
+        // One notch per event, not a pixel delta: a high-resolution wheel
+        // reports many small deltas and would race through the list.
+        const double DELTA = event.deltaDiscrete != 0 ? static_cast<double>(event.deltaDiscrete) : event.delta;
+
+        if (switcherLive())
+            g_switcher->onScroll(DELTA);
+        else if (overviewLive())
+            g_overview->onScroll(DELTA);
+    }
+
     void onMouseButton(IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
         if (!ownsInput())
             return;
@@ -424,6 +447,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_listeners.key            = bus.input.keyboard.key.listen(onKey);
     g_listeners.mouseMove      = bus.input.mouse.move.listen(onMouseMove);
     g_listeners.mouseButton    = bus.input.mouse.button.listen(onMouseButton);
+    g_listeners.mouseAxis      = bus.input.mouse.axis.listen(onMouseAxis);
     g_listeners.renderPre      = bus.render.pre.listen(onRenderPre);
     g_listeners.renderStage    = bus.render.stage.listen(onRenderStage);
     g_listeners.monitorRemoved = bus.monitor.removed.listen(onMonitorRemoved);
