@@ -54,8 +54,29 @@ namespace {
 
     SListeners g_listeners;
 
+    // Something is on screen and has to be drawn.
     bool       active() {
         return g_overview || g_switcher;
+    }
+
+    // Something on screen still wants the keyboard and pointer.
+    //
+    // Deliberately narrower than active(). An overlay that has been closed is
+    // only an animation playing itself out — it has already committed, and it
+    // must not keep swallowing input, or every keystroke in the couple of
+    // hundred milliseconds after a close is lost: keybinds included, so the
+    // next Alt+Tab or Super+A silently does nothing, and text typed in that
+    // window never reaches the app.
+    bool overviewLive() {
+        return g_overview && !g_overview->closing();
+    }
+
+    bool switcherLive() {
+        return g_switcher && !g_switcher->closing();
+    }
+
+    bool ownsInput() {
+        return overviewLive() || switcherLive();
     }
 
     PHLMONITOR targetMonitor() {
@@ -118,11 +139,11 @@ namespace {
 
         // Matching release for a press we let through — let it through too,
         // whatever the modifiers or the overlay say now. Checked before the
-        // active() test so the overlay closing mid-keystroke cannot strand it.
+        // ownsInput() test so the overlay closing mid-keystroke cannot strand it.
         if (!PRESSED && g_passedThrough.erase(event.keycode) > 0)
             return;
 
-        if (!active())
+        if (!ownsInput())
             return;
 
         const xkb_keysym_t SYM  = keysymFor(event.keycode);
@@ -133,7 +154,7 @@ namespace {
         // get through to the dispatcher to close it — and it leaves the rest of
         // your Super shortcuts working while the overview is up. The switcher is
         // exempt: it is driven by Alt and lives for a fraction of a second.
-        if (g_overview && !g_switcher && (MODS & HL_MODIFIER_META)) {
+        if (overviewLive() && !switcherLive() && (MODS & HL_MODIFIER_META)) {
             if (PRESSED)
                 g_passedThrough.insert(event.keycode);
             return;
@@ -144,7 +165,7 @@ namespace {
         // updated in the device layer beforehand, so modifiers stay consistent.
         info.cancelled = true;
 
-        if (g_switcher) {
+        if (switcherLive()) {
             g_switcher->onKey(SYM, MODS, PRESSED);
 
             // Alt released -> commit, exactly like GNOME.
@@ -155,32 +176,32 @@ namespace {
             return;
         }
 
-        if (g_overview)
+        if (overviewLive())
             g_overview->onKey(SYM, MODS, PRESSED);
     }
 
     void onMouseMove(Vector2D pos, Event::SCallbackInfo& info) {
-        if (!active())
+        if (!ownsInput())
             return;
 
         info.cancelled = true;
 
-        if (g_switcher)
+        if (switcherLive())
             g_switcher->onMouseMove(pos);
-        else if (g_overview)
+        else if (overviewLive())
             g_overview->onMouseMove(pos);
     }
 
     void onMouseButton(IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
-        if (!active())
+        if (!ownsInput())
             return;
 
         info.cancelled     = true;
         const bool PRESSED = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
 
-        if (g_switcher)
+        if (switcherLive())
             g_switcher->onMouseButton(event.button, PRESSED);
-        else if (g_overview)
+        else if (overviewLive())
             g_overview->onMouseButton(event.button, PRESSED, currentMods());
     }
 
