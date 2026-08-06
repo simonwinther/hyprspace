@@ -201,6 +201,10 @@ keyboard grab, which makes it a reliable escape hatch.
 | `Super` + drag right | Resize that window in place, scaled into the tile |
 | Scroll wheel | Step the selection |
 
+Screenshot, volume, brightness and media keys are passed through to the system
+while either overlay is up, so `Print` captures the overview itself rather than
+being swallowed.
+
 The overview binding toggles: pressing it again closes. Super-modified keys are
 passed through to Hyprland while the overview is up, so the rest of your Super
 shortcuts still work — and so the second `Super+A` reaches the dispatcher.

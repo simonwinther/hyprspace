@@ -120,6 +120,22 @@ namespace {
         return KEEB ? KEEB->getModifiers() : 0;
     }
 
+    // Keys that belong to the system, not to whatever is on screen.
+    //
+    // Screenshot, volume, brightness, keyboard backlight, media transport and
+    // the rest of the XF86 vendor block are global by nature: they mean the
+    // same thing no matter what has focus, and an overlay swallowing them just
+    // makes the machine feel broken while it is up. Letting Print through also
+    // means the overview and the switcher can be screenshotted at all, which
+    // is the only way to show anyone what they look like.
+    bool isSystemKey(xkb_keysym_t sym) {
+        if (sym == XKB_KEY_Print || sym == XKB_KEY_Sys_Req)
+            return true;
+
+        // XFree86 vendor keysyms: every media and hardware key lives here.
+        return sym >= 0x10080000 && sym <= 0x1008FFFF;
+    }
+
     // The modifier a key is itself, or 0 for an ordinary key.
     uint32_t modifierBitFor(xkb_keysym_t sym) {
         switch (sym) {
@@ -222,6 +238,10 @@ namespace {
         // your Super shortcuts working while the overview is up. The switcher is
         // exempt: it is driven by Alt and lives for a fraction of a second.
         if (overviewLive() && !switcherLive() && (MODS & HL_MODIFIER_META))
+            return;
+
+        // System keys are never the overlay's to eat.
+        if (isSystemKey(SYM))
             return;
 
         // Otherwise the overlay owns the keyboard entirely: nothing reaches
