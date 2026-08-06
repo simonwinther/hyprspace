@@ -296,7 +296,7 @@ Empty workspaces are never shown — there is nothing on them to look at.
 | `switcher:highlight_color` | color | `rgba(89b4fa40)` | Selection highlight |
 | `switcher:text_color` | color | `rgba(cdd6f4ff)` | Title colour |
 | `switcher:show_title` | bool | `true` | Show the selected window's title |
-| `switcher:current_workspace_only` | bool | `true` | Restrict to the active workspace. A workspace with a single window falls back to the whole monitor, so Alt+Tab is never a dead key. Set `false` to always cycle every window |
+| `switcher:current_workspace_only` | bool | `true` | Restrict to the active workspace, strictly — a workspace with one window has nowhere to switch to. Set `false` to cycle every window on the monitor |
 | `switcher:font` | string | `Sans 13` | Pango font description |
 
 ### Animations

@@ -76,16 +76,7 @@ namespace hyprspace {
             return out;
         };
 
-        auto ordered = gather(config::switcherCurrentWorkspaceOnly());
-
-        // A workspace holding one window has nothing to switch between, and a
-        // switcher that cannot move is worse than none: it swallows the
-        // keystroke and commits straight back to the window you are already on,
-        // so Alt+Tab reads as broken. Widen to the whole monitor rather than do
-        // nothing — scoping is there to keep the common case tidy, not to make
-        // the key dead.
-        if (ordered.size() < 2)
-            ordered = gather(false);
+        const auto ordered = gather(config::switcherCurrentWorkspaceOnly());
 
         for (const auto& w : ordered) {
             SEntry e;
@@ -102,6 +93,7 @@ namespace hyprspace {
         // already land on the previous one.
         const int N = static_cast<int>(m_entries.size());
         m_selected  = forward ? (1 % N) : ((N - 1) % N);
+
 
     }
 

@@ -35,12 +35,21 @@ namespace {
     std::unique_ptr<COverview> g_overview;
     std::unique_ptr<CSwitcher> g_switcher;
 
-    // Keycodes whose press the overlay let through to Hyprland. A release has
-    // to travel the same path its press did. Deciding that per-event from the
-    // live modifier state is not enough: releasing Super before the key it
-    // modified flips the decision mid-keystroke, the client is left holding a
-    // press it never sees released, and it repeats that key forever.
-    std::unordered_set<uint32_t> g_passedThrough;
+    // Keycodes whose press the overlay swallowed.
+    //
+    // A key's release must always travel the path its press took, and the
+    // decision cannot be re-derived per event: the modifiers, and whether an
+    // overlay is still up at all, both change between the two halves of one
+    // keystroke. Getting it wrong in either direction breaks something.
+    //
+    // Pass the press, swallow the release, and the client keeps repeating a key
+    // it never saw released. Swallow the press, pass the release — which is what
+    // happens to the digit that dismisses the overview, since the overlay has
+    // stopped owning input by the time the finger comes up — and Hyprland gets a
+    // release for a key it never saw pressed. That desyncs its pressed-key
+    // bookkeeping and the *next* keybind silently does not fire, which is why
+    // Alt+Tab alternated between working and dead after every overview use.
+    std::unordered_set<uint32_t> g_swallowedPresses;
 
     struct SListeners {
         CHyprSignalListener key;
@@ -176,11 +185,29 @@ namespace {
     void onKey(IKeyboard::SKeyEvent event, Event::SCallbackInfo& info) {
         const bool PRESSED = event.state == WL_KEYBOARD_KEY_STATE_PRESSED;
 
-        // Matching release for a press we let through — let it through too,
-        // whatever the modifiers or the overlay say now. Checked before the
-        // ownsInput() test so the overlay closing mid-keystroke cannot strand it.
-        if (!PRESSED && g_passedThrough.erase(event.keycode) > 0)
+        // A release always mirrors its own press for *cancellation*, whatever
+        // the modifiers or the overlay say now. Whether the overlay is told
+        // about it is a separate question: the switcher commits on the Alt
+        // release, and that Alt press was passed through, so the two decisions
+        // cannot share an answer.
+        if (!PRESSED) {
+            const xkb_keysym_t SYM  = keysymFor(event.keycode);
+            const bool         MINE = g_swallowedPresses.erase(event.keycode) > 0;
+
+            if (MINE)
+                info.cancelled = true;
+
+            if (switcherLive()) {
+                g_switcher->onKey(SYM, modsWith(SYM, false), false);
+
+                // Alt released -> commit, exactly like GNOME.
+                if (SYM == XKB_KEY_Alt_L || SYM == XKB_KEY_Alt_R || SYM == XKB_KEY_Meta_L || SYM == XKB_KEY_Meta_R)
+                    g_switcher->close(true);
+            } else if (overviewLive() && MINE)
+                g_overview->onKey(SYM, modsWith(SYM, false), false);
+
             return;
+        }
 
         if (!ownsInput())
             return;
@@ -193,31 +220,23 @@ namespace {
         // get through to the dispatcher to close it — and it leaves the rest of
         // your Super shortcuts working while the overview is up. The switcher is
         // exempt: it is driven by Alt and lives for a fraction of a second.
-        if (overviewLive() && !switcherLive() && (MODS & HL_MODIFIER_META)) {
-            if (PRESSED)
-                g_passedThrough.insert(event.keycode);
+        if (overviewLive() && !switcherLive() && (MODS & HL_MODIFIER_META))
             return;
-        }
 
         // Otherwise the overlay owns the keyboard entirely: nothing reaches
         // keybinds or clients. This event fires before both, and the device
         // layer folds the key into the xkb state either way, so cancelling here
         // cannot leave the compositor's own modifier tracking out of step.
         info.cancelled = true;
+        g_swallowedPresses.insert(event.keycode);
 
         if (switcherLive()) {
-            g_switcher->onKey(SYM, MODS, PRESSED);
-
-            // Alt released -> commit, exactly like GNOME.
-            const bool ALT_KEY = SYM == XKB_KEY_Alt_L || SYM == XKB_KEY_Alt_R || SYM == XKB_KEY_Meta_L || SYM == XKB_KEY_Meta_R;
-            if (!PRESSED && ALT_KEY)
-                g_switcher->close(true);
-
+            g_switcher->onKey(SYM, MODS, true);
             return;
         }
 
         if (overviewLive())
-            g_overview->onKey(SYM, MODS, PRESSED);
+            g_overview->onKey(SYM, MODS, true);
     }
 
     void onMouseMove(Vector2D pos, Event::SCallbackInfo& info) {
@@ -425,7 +444,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     destroySwitcher();
 
     g_listeners = {};
-    g_passedThrough.clear();
+    g_swallowedPresses.clear();
 
     textures().clear();
 }

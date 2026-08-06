@@ -701,6 +701,13 @@ namespace hyprspace {
         if (!MONITOR)
             return;
 
+        // Every frame of the close, not just the moment of the commit: Hyprland
+        // may not have started its workspace slide yet when the selection is
+        // committed, and a single warp then would be undone by an animation
+        // that begins a frame later.
+        if (m_closing)
+            settleWorkspaceAnimations();
+
         m_capture.beginFrame();
 
         for (auto& e : m_entries) {
