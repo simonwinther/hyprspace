@@ -153,14 +153,34 @@ namespace hyprspace {
         for (const auto& t : m_tiles)
             m_entries[t.key].target = t.box;
 
-        // The workspace already on screen shrinks into its cell; the others grow
-        // in place, which reads as the desktop folding into the grid. Starting
-        // from the usable area rather than the whole output means its windows
-        // begin exactly where they really are.
+        int active = -1;
+        for (size_t i = 0; i < m_entries.size(); ++i) {
+            if (m_entries[i].isActive) {
+                active = static_cast<int>(i);
+                break;
+            }
+        }
+
+        anchorAnimation(active);
+    }
+
+    // Pick the tile the animation grows out of and folds back into.
+    //
+    // That tile starts full-screen, so at progress 0 it *is* the desktop; the
+    // rest start slightly shrunk in place, which reads as the grid folding
+    // together. Opening anchors on the workspace already on screen. Closing
+    // re-anchors on the workspace being switched to, so the zoom lands on what
+    // was chosen — anchoring on the old one expands the workspace you just left
+    // and then cuts to the new one, which is the glitch.
+    //
+    // An index of -1 anchors nothing and every tile simply collapses.
+    void COverview::anchorAnimation(int entryIdx) {
         const SBoxF FULL = m_usable;
 
-        for (auto& e : m_entries) {
-            if (e.isActive) {
+        for (size_t i = 0; i < m_entries.size(); ++i) {
+            auto& e = m_entries[i];
+
+            if (static_cast<int>(i) == entryIdx) {
                 e.start = FULL;
                 continue;
             }
@@ -173,6 +193,23 @@ namespace hyprspace {
                                 e.target.h * SHRINK,
             };
         }
+    }
+
+    // The entry the commit is about to land on, or -1 if it lands nowhere with
+    // a tile of its own.
+    int COverview::committedEntry() const {
+        if (m_gotoWorkspace > 0) {
+            for (size_t i = 0; i < m_entries.size(); ++i) {
+                if (m_entries[i].workspaceId == m_gotoWorkspace)
+                    return static_cast<int>(i);
+            }
+            return -1;
+        }
+
+        if (m_selected < 0 || m_selected >= static_cast<int>(m_tiles.size()))
+            return -1;
+
+        return static_cast<int>(m_tiles[m_selected].key);
     }
 
     // Warp every window to zero alpha so Hyprland's normal pass skips it
@@ -231,8 +268,19 @@ namespace hyprspace {
 
         m_closing = true;
 
-        if (commitSelection)
+        if (commitSelection) {
+            // Re-anchor before committing, while the selection is still intact,
+            // so the closing zoom runs into the workspace being switched to.
+            // Nothing to re-anchor means nothing switched, and the layout's own
+            // anchor — the workspace on screen — is still the right one.
+            const int  ANCHOR    = committedEntry();
+            const bool SWITCHING = m_gotoWorkspace > 0;
+
+            if (ANCHOR >= 0 || SWITCHING)
+                anchorAnimation(ANCHOR);
+
             commit();
+        }
 
         *m_progress = 0.F;
         damage();

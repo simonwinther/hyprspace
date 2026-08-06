@@ -296,7 +296,7 @@ Empty workspaces are never shown — there is nothing on them to look at.
 | `switcher:highlight_color` | color | `rgba(89b4fa40)` | Selection highlight |
 | `switcher:text_color` | color | `rgba(cdd6f4ff)` | Title colour |
 | `switcher:show_title` | bool | `true` | Show the selected window's title |
-| `switcher:current_workspace_only` | bool | `false` | Restrict to the active workspace |
+| `switcher:current_workspace_only` | bool | `true` | Restrict to the active workspace. Set `false` to cycle every window on the monitor |
 | `switcher:font` | string | `Sans 13` | Pango font description |
 
 ### Animations

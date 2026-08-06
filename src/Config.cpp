@@ -93,7 +93,7 @@ namespace hyprspace::config {
         g_values.switcherTextColor      = reg<CColorValue>("plugin:hyprspace:switcher:text_color", "switcher title colour", 0xffcdd6f4);
         g_values.switcherShowTitle      = reg<CBoolValue>("plugin:hyprspace:switcher:show_title", "show the selected window's title under the icons", true);
         g_values.switcherCurrentWorkspaceOnly =
-            reg<CBoolValue>("plugin:hyprspace:switcher:current_workspace_only", "restrict the switcher to the active workspace", false);
+            reg<CBoolValue>("plugin:hyprspace:switcher:current_workspace_only", "restrict the switcher to the active workspace", true);
         g_values.switcherFont = reg<CStringValue>("plugin:hyprspace:switcher:font", "pango font description used in the switcher", "Sans 13");
 
         // ---- shared ----

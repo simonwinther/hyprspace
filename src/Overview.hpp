@@ -95,6 +95,11 @@ namespace hyprspace {
 
         void      collect();
         void      computeLayout();
+
+        // Which tile the open/close zoom starts full-screen from; -1 for none.
+        void      anchorAnimation(int entryIdx);
+        int       committedEntry() const;
+
         void      hideRealWindows();
         void      restoreRealWindows();
         void      selectIndex(int idx);
