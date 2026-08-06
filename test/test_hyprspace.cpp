@@ -229,6 +229,55 @@ static void testHitTest() {
     CHECK(tileAt(tiles, -10, -10) == -1);
 }
 
+// ------------------------------------------------------------- workspaces ----
+
+static void testWorkspaceLabels() {
+    section("workspace: tile labels");
+
+    // Hyprland hands us the id's own digits as the name for numbered
+    // workspaces, so that must not be mistaken for a user-set name.
+    CHECK(workspaceLabel(1, "1") == "1");
+    CHECK(workspaceLabel(7, "7") == "7");
+    CHECK(workspaceLabel(3, "") == "3");
+
+    // Workspace 10 is the 0 key, so it gets the 0 key's label.
+    CHECK(workspaceLabel(10, "10") == "0");
+    CHECK(workspaceLabel(10, "") == "0");
+
+    // A real name always wins, including one that happens to look numeric but
+    // does not match the id.
+    CHECK(workspaceLabel(-99, "special:scratchpad") == "special:scratchpad");
+    CHECK(workspaceLabel(2, "mail") == "mail");
+    CHECK(workspaceLabel(10, "chat") == "chat");
+    CHECK(workspaceLabel(4, "10") == "10");
+
+    // Named workspaces past the number row keep their own identity.
+    CHECK(workspaceLabel(11, "11") == "11");
+    CHECK(workspaceLabel(100, "100") == "100");
+}
+
+static void testWorkspaceForDigit() {
+    section("workspace: number-row key mapping");
+
+    for (int d = 1; d <= 9; ++d)
+        CHECK(workspaceForDigit(d) == d);
+
+    // 0 is workspace 10 — the same mapping the labels use, so pressing the key
+    // under a tile's label goes to that tile.
+    CHECK(workspaceForDigit(0) == 10);
+
+    // Round-trip: every number-row key names the workspace its label shows.
+    for (int d = 0; d <= 9; ++d) {
+        const long WS = workspaceForDigit(d);
+        CHECK(workspaceLabel(WS, std::to_string(WS)) == std::to_string(d));
+    }
+
+    // Anything off the number row names nothing.
+    CHECK(workspaceForDigit(-1) == 0);
+    CHECK(workspaceForDigit(10) == 0);
+    CHECK(workspaceForDigit(99) == 0);
+}
+
 // --------------------------------------------------------------- desktop ----
 
 static void testDesktopParsing() {
@@ -468,6 +517,8 @@ int main() {
     testGridEdgeCases();
     testNavigation();
     testHitTest();
+    testWorkspaceLabels();
+    testWorkspaceForDigit();
     testDesktopParsing();
     testClassLookup();
     testClassCandidates();

@@ -188,6 +188,31 @@ namespace hyprspace {
         return best == -1 ? current : best;
     }
 
+    // The label under a workspace tile.
+    //
+    // Hyprland fills a workspace's name with its own id for plain numbered
+    // workspaces, so a name is only worth showing when it says something the id
+    // does not — "special:scratchpad" and friends. Workspace 10 is labelled "0",
+    // because 0 is the key that goes there: there is no 10 on a number row, here
+    // or in Hyprland's own workspace binds.
+    inline std::string workspaceLabel(long id, const std::string& name) {
+        const std::string DIGITS = std::to_string(id);
+
+        if (!name.empty() && name != DIGITS)
+            return name;
+
+        return id == 10 ? "0" : DIGITS;
+    }
+
+    // The workspace a number-row key names, or 0 for keys that name none.
+    // Mirrors workspaceLabel: 0 is workspace 10.
+    inline long workspaceForDigit(int digit) {
+        if (digit < 0 || digit > 9)
+            return 0;
+
+        return digit == 0 ? 10 : digit;
+    }
+
     inline int tileAt(const std::vector<STile>& tiles, double x, double y) {
         for (size_t i = 0; i < tiles.size(); ++i) {
             if (tiles[i].box.contains(x, y))

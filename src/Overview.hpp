@@ -45,7 +45,7 @@ namespace hyprspace {
         // --- input ---
         bool onKey(xkb_keysym_t sym, uint32_t mods, bool pressed);
         void onMouseMove(const Vector2D& globalPos);
-        bool onMouseButton(uint32_t button, bool pressed);
+        bool onMouseButton(uint32_t button, bool pressed, uint32_t mods);
 
         // --- render lifecycle ---
         void                          prepareFrame(); // capture live window contents
@@ -71,6 +71,28 @@ namespace hyprspace {
             SBoxF                    start    = {}; // where it animates from
         };
 
+        // Super + drag: move a window between workspaces, or resize it in place.
+        enum class EDrag : uint8_t {
+            NONE = 0,
+            MOVE,
+            RESIZE,
+        };
+
+        struct SDrag {
+            EDrag        mode       = EDrag::NONE;
+            PHLWINDOWREF window;
+            int          sourceTile = -1; // tile the window was picked up from
+            int          targetTile = -1; // tile currently under the pointer
+            Vector2D     grabOffset = {}; // pointer minus the window's top-left
+            Vector2D     lastPos    = {}; // previous pointer position, overview-local
+            SBoxF        box        = {}; // where the lifted window is drawn
+            bool         moved      = false;
+
+            bool         active() const {
+                return mode != EDrag::NONE;
+            }
+        };
+
         void      collect();
         void      computeLayout();
         void      hideRealWindows();
@@ -83,9 +105,20 @@ namespace hyprspace {
         // Where a window at monitor-local logical `r` lands inside cell `cell`.
         SBoxF     windowBoxInCell(const SBoxF& r, const SBoxF& cell) const;
 
+        // Overview px -> monitor logical px, for a window living in tile `idx`.
+        double    tileScale(int idx) const;
+
         // Hit test: which tile, and which window inside it.
         int       tileAtLocal(const Vector2D& local) const;
         PHLWINDOW windowAtLocal(const Vector2D& local) const;
+
+        bool      beginDrag(EDrag mode, const Vector2D& local);
+        void      updateDrag(const Vector2D& local);
+        void      finishDrag();
+
+        // The workspace a tile stands for, created if the last window was
+        // dragged off it and Hyprland reaped it.
+        PHLWORKSPACE workspaceForEntry(const SEntry& e) const;
 
         PHLMONITORREF       m_monitor;
 
@@ -102,9 +135,15 @@ namespace hyprspace {
         int                 m_hovered  = -1;
         bool                m_closing  = false;
 
+        SDrag               m_drag;
+
         PHLWINDOWREF        m_originalFocus;
         PHLWORKSPACEREF     m_originalWorkspace;
         PHLWINDOWREF        m_clickedWindow;
+
+        // Set when a number key names a workspace that has no tile; commit()
+        // switches to it (creating it) instead of using the selection.
+        long                m_gotoWorkspace = 0;
 
         PHLANIMVAR<float>   m_progress; // 0 = desktop, 1 = overview
 

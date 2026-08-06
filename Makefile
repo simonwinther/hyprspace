@@ -36,7 +36,9 @@ CXXFLAGS += $(shell pkg-config --cflags $(PKGS))
 LDFLAGS  += -shared
 LDLIBS   += $(shell pkg-config --libs pangocairo cairo gdk-pixbuf-2.0 librsvg-2.0)
 
-.PHONY: all clean install uninstall check test format
+.PHONY: all clean install uninstall check test format reload
+
+PLUGIN_SO := $(abspath $(PLUGIN_DIR))/hyprspace.so
 
 all: $(TARGET)
 
@@ -55,19 +57,40 @@ $(BUILD_DIR)/%.o: src/%.cpp
 check: $(TARGET)
 	@./scripts/check-abi.sh $(TARGET)
 
+# Install by atomic rename, never by writing over the destination.
+#
+# A loaded plugin is dlopen'd, so Hyprland has this exact file mmap'd as
+# executable pages. Truncating and rewriting it in place — which is what a
+# plain `install` or `cp` does — swaps the code out from under the running
+# compositor and takes it down with SIGBUS. rename(2) replaces the directory
+# entry instead: the old inode stays alive and mapped until the plugin is
+# properly unloaded, so installing over a live plugin is harmless.
 install: check
 	@mkdir -p $(PLUGIN_DIR)
-	install -m 0755 $(TARGET) $(PLUGIN_DIR)/hyprspace.so
+	install -m 0755 $(TARGET) $(PLUGIN_DIR)/.hyprspace.so.new
+	mv -f $(PLUGIN_DIR)/.hyprspace.so.new $(PLUGIN_SO)
 	@echo ""
-	@echo "Installed to $(PLUGIN_DIR)/hyprspace.so"
+	@echo "Installed to $(PLUGIN_SO)"
 	@echo ""
 	@echo "Add these two lines to the END of ~/.config/hypr/hyprland.conf:"
 	@echo ""
-	@echo "  plugin = $(abspath $(PLUGIN_DIR))/hyprspace.so"
+	@echo "  plugin = $(PLUGIN_SO)"
 	@echo "  source = $(abspath .)/contrib/hyprspace.conf"
 	@echo ""
 	@echo "The plugin path must be absolute — Hyprland does not expand ~ for it."
-	@echo "Then: hyprctl reload"
+	@echo "Then: make reload"
+
+# Swap a running plugin for a freshly built one.
+#
+# `hyprctl reload` only re-reads the config; it does not re-dlopen anything, so
+# a plugin already in memory stays in memory. The binary has to be unloaded
+# before the new one is loaded, and the unload has to happen before the file is
+# replaced so Hyprland closes the handle it actually opened.
+reload: check
+	-hyprctl plugin unload $(PLUGIN_SO)
+	@$(MAKE) --no-print-directory install
+	hyprctl plugin load $(PLUGIN_SO)
+	hyprctl reload
 
 uninstall:
 	rm -f $(PLUGIN_DIR)/hyprspace.so

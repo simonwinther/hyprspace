@@ -89,6 +89,29 @@ Then `hyprctl reload`, or to load without touching your config:
 hyprctl plugin load ~/.local/share/hyprspace/hyprspace.so
 ```
 
+### Reinstalling over a running plugin
+
+Once the plugin is loaded, use `make reload` and nothing else:
+
+```bash
+make reload
+```
+
+`hyprctl reload` only re-reads the config. It does **not** re-`dlopen` anything,
+so a plugin already in memory stays in memory and a freshly built `.so` appears
+to change nothing — you end up debugging a binary that is not running.
+
+Worse, the obvious fix of copying the new build over the old file will take
+Hyprland down with it. A loaded plugin is `dlopen`'d, so the compositor has that
+exact file mapped as executable pages; `install` and `cp` truncate the
+destination and write into it, swapping code out from under a running process.
+The result is a SIGBUS in Hyprland, and the whole session goes with it.
+
+`make reload` does it in the order that is actually safe: unload the plugin
+first, install by `rename(2)` so the old inode is replaced rather than
+overwritten, then load the new one. `make install` on its own is safe too — it
+uses the same atomic rename — it just will not take effect until a reload.
+
 ### With hyprpm
 
 ```bash
@@ -169,11 +192,20 @@ keyboard grab, which makes it a reliable escape hatch.
 | `Tab` / `Shift+Tab` | Next / previous workspace |
 | `←` `↓` `↑` `→` | Move to the nearest tile in that direction |
 | `Ctrl+h/j/k/l`, `h/j/k/l` | Same, vim style |
-| `1`–`9`, `0` | Jump straight to that workspace's tile (`0` = workspace 10) |
+| `1`–`9`, `0` | Go to that workspace at once, no Enter needed (`0` = workspace 10) |
 | `Home` / `End` | First / last tile |
 | Mouse move | Hover highlights, and selects when `follow_mouse` is on |
 | Left click | Go there. Clicking a *window* inside a tile focuses that window; clicking empty space dismisses |
 | Right click | Close without selecting |
+| `Super` + drag left | Pick a window up and drop it on another workspace tile |
+| `Super` + drag right | Resize that window in place, scaled into the tile |
+
+The overview binding toggles: pressing it again closes. Super-modified keys are
+passed through to Hyprland while the overview is up, so the rest of your Super
+shortcuts still work — and so the second `Super+A` reaches the dispatcher.
+
+Workspace 10's tile is labelled **0**, because `0` is the key that goes there,
+both here and in Hyprland's own `workspace` binds.
 
 **Switcher**
 

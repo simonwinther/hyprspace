@@ -26,6 +26,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include <memory>
+#include <unordered_set>
 
 using namespace hyprspace;
 
@@ -33,6 +34,13 @@ namespace {
 
     std::unique_ptr<COverview> g_overview;
     std::unique_ptr<CSwitcher> g_switcher;
+
+    // Keycodes whose press the overlay let through to Hyprland. A release has
+    // to travel the same path its press did. Deciding that per-event from the
+    // live modifier state is not enough: releasing Super before the key it
+    // modified flips the decision mid-keystroke, the client is left holding a
+    // press it never sees released, and it repeats that key forever.
+    std::unordered_set<uint32_t> g_passedThrough;
 
     struct SListeners {
         CHyprSignalListener key;
@@ -106,14 +114,32 @@ namespace {
     // ------------------------------------------------------------- input ----
 
     void onKey(IKeyboard::SKeyEvent event, Event::SCallbackInfo& info) {
+        const bool PRESSED = event.state == WL_KEYBOARD_KEY_STATE_PRESSED;
+
+        // Matching release for a press we let through — let it through too,
+        // whatever the modifiers or the overlay say now. Checked before the
+        // active() test so the overlay closing mid-keystroke cannot strand it.
+        if (!PRESSED && g_passedThrough.erase(event.keycode) > 0)
+            return;
+
         if (!active())
             return;
 
-        const bool         PRESSED = event.state == WL_KEYBOARD_KEY_STATE_PRESSED;
-        const xkb_keysym_t SYM     = keysymFor(event.keycode);
-        const uint32_t     MODS    = currentMods();
+        const xkb_keysym_t SYM  = keysymFor(event.keycode);
+        const uint32_t     MODS = currentMods();
 
-        // While an overlay is up it owns the keyboard entirely: nothing reaches
+        // Super-modified keys keep reaching Hyprland's keybinds. That is what
+        // makes the overview's own binding a toggle — the second Super+A has to
+        // get through to the dispatcher to close it — and it leaves the rest of
+        // your Super shortcuts working while the overview is up. The switcher is
+        // exempt: it is driven by Alt and lives for a fraction of a second.
+        if (g_overview && !g_switcher && (MODS & HL_MODIFIER_META)) {
+            if (PRESSED)
+                g_passedThrough.insert(event.keycode);
+            return;
+        }
+
+        // Otherwise the overlay owns the keyboard entirely: nothing reaches
         // keybinds or clients. This event fires before both, and xkb state is
         // updated in the device layer beforehand, so modifiers stay consistent.
         info.cancelled = true;
@@ -149,13 +175,13 @@ namespace {
         if (!active())
             return;
 
-        info.cancelled       = true;
-        const bool PRESSED   = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
+        info.cancelled     = true;
+        const bool PRESSED = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
 
         if (g_switcher)
             g_switcher->onMouseButton(event.button, PRESSED);
         else if (g_overview)
-            g_overview->onMouseButton(event.button, PRESSED);
+            g_overview->onMouseButton(event.button, PRESSED, currentMods());
     }
 
     // ------------------------------------------------------------ render ----
@@ -337,6 +363,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     destroySwitcher();
 
     g_listeners = {};
+    g_passedThrough.clear();
 
     textures().clear();
 }
