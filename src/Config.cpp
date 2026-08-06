@@ -26,6 +26,7 @@ namespace hyprspace::config {
             SP<Config::Values::CBoolValue>   overviewAllWorkspaces;
             SP<Config::Values::CColorValue>  overviewLabelColor;
             SP<Config::Values::CColorValue>  overviewTileBgColor;
+            SP<Config::Values::CColorValue>  overviewTileBorderColor;
             SP<Config::Values::CColorValue>  overviewTitleBgColor;
             SP<Config::Values::CStringValue> overviewFont;
 
@@ -77,7 +78,8 @@ namespace hyprspace::config {
         g_values.overviewIncludeSpecial = reg<CBoolValue>("plugin:hyprspace:overview:include_special", "include special (scratchpad) workspaces", true);
         g_values.overviewAllWorkspaces  = reg<CBoolValue>("plugin:hyprspace:overview:all_workspaces", "show every workspace on the monitor, not just the active one", true);
         g_values.overviewLabelColor     = reg<CColorValue>("plugin:hyprspace:overview:label_color", "workspace label colour", 0xffcdd6f4);
-        g_values.overviewTileBgColor    = reg<CColorValue>("plugin:hyprspace:overview:tile_bg_color", "backing plate drawn behind each workspace tile", 0xd91e1e2e);
+        g_values.overviewTileBgColor    = reg<CColorValue>("plugin:hyprspace:overview:tile_bg_color", "backing plate drawn behind each workspace tile", 0xd90d0d14);
+        g_values.overviewTileBorderColor = reg<CColorValue>("plugin:hyprspace:overview:tile_border_color", "hairline drawn around every workspace tile", 0x1affffff);
         g_values.overviewTitleBgColor   = reg<CColorValue>("plugin:hyprspace:overview:title_bg_color", "window title backdrop colour", 0xe61e1e2e);
         g_values.overviewFont           = reg<CStringValue>("plugin:hyprspace:overview:font", "pango font description used in the overview", "Sans 12");
 
@@ -142,7 +144,10 @@ namespace hyprspace::config {
         return colorOf(g_values.overviewLabelColor, 0xffcdd6f4);
     }
     CHyprColor overviewTileBgColor() {
-        return colorOf(g_values.overviewTileBgColor, 0xd91e1e2e);
+        return colorOf(g_values.overviewTileBgColor, 0xd90d0d14);
+    }
+    CHyprColor overviewTileBorderColor() {
+        return colorOf(g_values.overviewTileBorderColor, 0x1affffff);
     }
     CHyprColor overviewTitleBgColor() {
         return colorOf(g_values.overviewTitleBgColor, 0xe61e1e2e);

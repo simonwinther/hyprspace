@@ -26,6 +26,7 @@ namespace hyprspace::config {
     bool        overviewAllWorkspaces();
     CHyprColor  overviewLabelColor();
     CHyprColor  overviewTileBgColor();
+    CHyprColor  overviewTileBorderColor();
     CHyprColor  overviewTitleBgColor();
     std::string overviewFont();
 

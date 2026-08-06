@@ -44,9 +44,10 @@ namespace hyprspace {
     struct SLayoutParams {
         double screenW = 1920;
         double screenH = 1080;
-        double padding = 56; // outer padding
-        double gap     = 28; // gap between cells
-        double aspect  = 16.0 / 9.0;
+        double padding    = 56;  // outer padding
+        double gap        = 28;  // gap between cells
+        double aspect     = 16.0 / 9.0;
+        double labelSpace = 0;   // room reserved under each cell for its label
     };
 
     struct SLayoutResult {
@@ -68,9 +69,13 @@ namespace hyprspace {
         if (n == 0)
             return out;
 
+        const double aspect = p.aspect > 0.01 ? p.aspect : 16.0 / 9.0;
+
+        // Every row needs room for its labels, including the last one, so the
+        // bottom row's label is not left crammed against the screen edge.
+        const double rowGap  = p.gap + p.labelSpace;
         const double usableW = p.screenW - 2 * p.padding;
-        const double usableH = p.screenH - 2 * p.padding;
-        const double aspect  = p.aspect > 0.01 ? p.aspect : 16.0 / 9.0;
+        const double usableH = p.screenH - 2 * p.padding - p.labelSpace;
 
         if (usableW <= 0 || usableH <= 0)
             return out;
@@ -84,7 +89,7 @@ namespace hyprspace {
             // Width-limited and height-limited candidates; the cell must satisfy
             // both, so take the smaller.
             const double byW = (usableW - p.gap * static_cast<double>(cols - 1)) / static_cast<double>(cols);
-            const double byH = ((usableH - p.gap * static_cast<double>(rows - 1)) / static_cast<double>(rows)) * aspect;
+            const double byH = ((usableH - rowGap * static_cast<double>(rows - 1)) / static_cast<double>(rows)) * aspect;
 
             const double cellW = std::min(byW, byH);
             if (cellW > bestW) {
@@ -100,7 +105,7 @@ namespace hyprspace {
         const size_t rows   = (n + cols - 1) / cols;
         const double cellW  = bestW;
         const double cellH  = cellW / aspect;
-        const double gridH  = cellH * static_cast<double>(rows) + p.gap * static_cast<double>(rows - 1);
+        const double gridH  = cellH * static_cast<double>(rows) + rowGap * static_cast<double>(rows - 1);
         const double startY = p.padding + (usableH - gridH) / 2.0;
 
         out.rows = static_cast<int>(rows);
@@ -115,7 +120,7 @@ namespace hyprspace {
 
             STile tile;
             tile.key   = input[i].key;
-            tile.box   = SBoxF{startX + static_cast<double>(col) * (cellW + p.gap), startY + static_cast<double>(row) * (cellH + p.gap), cellW, cellH};
+            tile.box   = SBoxF{startX + static_cast<double>(col) * (cellW + p.gap), startY + static_cast<double>(row) * (cellH + rowGap), cellW, cellH};
             tile.row   = static_cast<int>(row);
             tile.col   = static_cast<int>(col);
             tile.order = i;

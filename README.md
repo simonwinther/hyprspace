@@ -236,7 +236,8 @@ your selection silently does nothing. Warping is how Hyprland's own
 |---|---|---|---|
 | `overview:bg_dim` | float `0..1` | `0.80` | How strongly the desktop behind is dimmed |
 | `overview:bg_color` | color | `rgba(11111bff)` | Colour mixed over the desktop |
-| `overview:tile_bg_color` | color | `rgba(1e1e2ed9)` | Plate drawn behind each workspace tile |
+| `overview:tile_bg_color` | color | `rgba(0d0d14d9)` | Plate drawn behind each workspace tile |
+| `overview:tile_border_color` | color | `rgba(ffffff1a)` | Hairline around every tile |
 | `overview:padding` | int | `56` | Outer padding |
 | `overview:gap` | int | `28` | Gap between workspace tiles |
 | `overview:rounding` | int | `14` | Tile corner radius |
@@ -301,8 +302,11 @@ Retune those in your `animations` block to change the feel.
 * **Drawing.** The overlay is a custom `IPassElement` that returns ordinary
   texture and rect pass elements. No raw GL calls, so it stays correct if
   Hyprland gains another renderer backend.
-* **Layout.** One tile per non-empty workspace, every tile at the monitor's own
-  aspect ratio so it reads as a small screen. Each window is then drawn inside
+* **Layout.** One tile per non-empty workspace, every tile shaped like the
+  monitor's *usable* area — the output minus whatever the bar reserved. Mapping
+  the full output instead would leave an empty strip along the top of every
+  tile where the bar sits, which is the single most obvious way to make this
+  look wrong. Each window is then drawn inside
   its tile at its real relative position, which is also what makes clicking a
   specific window inside a tile work. Column counts are all tried and the one
   producing the largest cell wins, so the grid stays close to square: 5

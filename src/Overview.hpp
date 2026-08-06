@@ -80,11 +80,19 @@ namespace hyprspace {
 
         SBoxF     interpolate(const SEntry& e) const;
 
+        // Where a window at monitor-local logical `r` lands inside cell `cell`.
+        SBoxF     windowBoxInCell(const SBoxF& r, const SBoxF& cell) const;
+
         // Hit test: which tile, and which window inside it.
         int       tileAtLocal(const Vector2D& local) const;
         PHLWINDOW windowAtLocal(const Vector2D& local) const;
 
         PHLMONITORREF       m_monitor;
+
+        // The part of the monitor windows actually live in — the full output
+        // minus whatever layer surfaces reserved (the bar). Tiles map this, not
+        // the whole output, so no tile carries an empty strip where the bar sits.
+        SBoxF               m_usable;
         std::vector<SEntry> m_entries;
         std::vector<STile>  m_tiles;
 

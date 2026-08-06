@@ -21,6 +21,7 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <algorithm>
+#include <optional>
 #include <ranges>
 
 namespace hyprspace {
@@ -36,6 +37,14 @@ namespace hyprspace {
     COverview::COverview(PHLMONITOR monitor) : m_monitor(monitor) {
         m_originalFocus     = Desktop::focusState()->window();
         m_originalWorkspace = monitor->m_activeWorkspace;
+
+        const auto& RES = monitor->m_reservedArea;
+        m_usable        = SBoxF{
+                   RES.left(),
+                   RES.top(),
+                   std::max(1.0, monitor->m_size.x - RES.left() - RES.right()),
+                   std::max(1.0, monitor->m_size.y - RES.top() - RES.bottom()),
+        };
 
         collect();
         computeLayout();
@@ -135,7 +144,8 @@ namespace hyprspace {
         params.screenH = MONITOR->m_size.y;
         params.padding = config::overviewPadding();
         params.gap     = config::overviewGap();
-        params.aspect  = MONITOR->m_size.y > 0 ? MONITOR->m_size.x / MONITOR->m_size.y : 16.0 / 9.0;
+        params.aspect  = m_usable.h > 0 ? m_usable.w / m_usable.h : 16.0 / 9.0;
+        params.labelSpace = config::overviewShowLabels() ? 34.0 : 0.0;
 
         auto result = layout(input, params);
         m_tiles     = std::move(result.tiles);
@@ -144,8 +154,10 @@ namespace hyprspace {
             m_entries[t.key].target = t.box;
 
         // The workspace already on screen shrinks into its cell; the others grow
-        // in place, which reads as the desktop folding into the grid.
-        const SBoxF FULL{0, 0, MONITOR->m_size.x, MONITOR->m_size.y};
+        // in place, which reads as the desktop folding into the grid. Starting
+        // from the usable area rather than the whole output means its windows
+        // begin exactly where they really are.
+        const SBoxF FULL = m_usable;
 
         for (auto& e : m_entries) {
             if (e.isActive) {
@@ -198,6 +210,11 @@ namespace hyprspace {
 
     SBoxF COverview::interpolate(const SEntry& e) const {
         return lerpBox(e.start, e.target, m_progress->value());
+    }
+
+    SBoxF COverview::windowBoxInCell(const SBoxF& r, const SBoxF& cell) const {
+        const double s = m_usable.w > 0 ? cell.w / m_usable.w : 0.0;
+        return SBoxF{cell.x + (r.x - m_usable.x) * s, cell.y + (r.y - m_usable.y) * s, r.w * s, r.h * s};
     }
 
     void COverview::selectIndex(int idx) {
@@ -344,16 +361,12 @@ namespace hyprspace {
         if (IDX < 0)
             return nullptr;
 
-        const auto&  entry = m_entries[m_tiles[IDX].key];
-        const SBoxF  cell  = m_tiles[IDX].box;
-        const double s     = MONITOR->m_size.x > 0 ? cell.w / MONITOR->m_size.x : 0.0;
-        if (s <= 0)
-            return nullptr;
+        const auto& entry = m_entries[m_tiles[IDX].key];
+        const SBoxF cell  = m_tiles[IDX].box;
 
         // Topmost window wins, matching the order the tile is drawn in.
         for (const auto& slot : entry.windows | std::views::reverse) {
-            const SBoxF b{cell.x + slot.rect.x * s, cell.y + slot.rect.y * s, slot.rect.w * s, slot.rect.h * s};
-            if (b.contains(local.x, local.y))
+            if (windowBoxInCell(slot.rect, cell).contains(local.x, local.y))
                 return slot.window.lock();
         }
 
@@ -462,9 +475,11 @@ namespace hyprspace {
         auto rect = [&](const SBoxF& b, const CHyprColor& col, double round = 0) {
             out.emplace_back(makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = px(b), .color = col, .round = static_cast<int>(round * SCALE)}));
         };
-        auto tex = [&](SP<Render::ITexture> t, const SBoxF& b, float a, double round = 0) {
-            out.emplace_back(
-                makeUnique<CTexPassElement>(CTexPassElement::SRenderData{.tex = t, .box = px(b), .a = a, .round = static_cast<int>(round * SCALE)}));
+        auto tex = [&](SP<Render::ITexture> t, const SBoxF& b, float a, double round = 0, std::optional<SBoxF> clip = std::nullopt) {
+            CTexPassElement::SRenderData d{.tex = t, .box = px(b), .a = a, .round = static_cast<int>(round * SCALE)};
+            if (clip)
+                d.clipBox = px(*clip);
+            out.emplace_back(makeUnique<CTexPassElement>(std::move(d)));
         };
         auto logicalSize = [&](const SP<Render::ITexture>& t) { return Vector2D{t->m_size.x / SCALE, t->m_size.y / SCALE}; };
 
@@ -488,23 +503,28 @@ namespace hyprspace {
             const bool   HOVERED  = static_cast<int>(i) == m_hovered;
 
             // The active workspace starts full-screen and is already opaque; the
-            // rest fade in as the grid forms.
-            const float  ALPHA = entry.isActive ? 1.F : PROGRESS;
+            // rest fade in as the grid forms. Unselected tiles then sit back a
+            // little so the selection reads at a glance without hurting how much
+            // of each workspace you can actually make out.
+            const float  FADE  = entry.isActive ? 1.F : PROGRESS;
+            const float  ALPHA = FADE * (SELECTED || PROGRESS < 0.2F ? 1.F : 0.9F);
             const double round = ROUNDING * PROGRESS;
 
-            // Scale from monitor-local logical coords into this cell.
-            const double s = MONITOR->m_size.x > 0 ? cell.w / MONITOR->m_size.x : 0.0;
+            // A hairline around every tile so they read as distinct cards against
+            // the wallpaper, with the accent border replacing it on selection.
+            if (PROGRESS > 0.2F) {
+                const bool ACCENT = SELECTED || HOVERED;
+                const auto COLOUR = ACCENT ? (SELECTED ? config::overviewActiveBorder() : config::overviewHoverBorder()) : config::overviewTileBorderColor();
+                const double W    = ACCENT ? BORDER : 1.0;
 
-            if (BORDER > 0 && (SELECTED || HOVERED) && PROGRESS > 0.2F) {
-                auto colour = SELECTED ? config::overviewActiveBorder() : config::overviewHoverBorder();
-                rect(SBoxF{cell.x - BORDER, cell.y - BORDER, cell.w + BORDER * 2.0, cell.h + BORDER * 2.0}, colour.modifyA(colour.a * PROGRESS * ALPHA),
-                     round + BORDER);
+                if (W > 0)
+                    rect(SBoxF{cell.x - W, cell.y - W, cell.w + W * 2.0, cell.h + W * 2.0}, COLOUR.modifyA(COLOUR.a * PROGRESS * FADE), round + W);
             }
 
             // A backing plate, so a workspace's empty area reads as a screen
             // rather than a hole punched in the dim.
             const auto TILEBG = config::overviewTileBgColor();
-            rect(cell, TILEBG.modifyA(TILEBG.a * ALPHA), round);
+            rect(cell, TILEBG.modifyA(TILEBG.a * FADE), round);
 
             for (const auto& slot : entry.windows) {
                 const auto W = slot.window.lock();
@@ -515,35 +535,40 @@ namespace hyprspace {
                 if (!t)
                     continue;
 
-                const SBoxF b{cell.x + slot.rect.x * s, cell.y + slot.rect.y * s, slot.rect.w * s, slot.rect.h * s};
+                const SBoxF b = windowBoxInCell(slot.rect, cell);
                 if (b.w < 1 || b.h < 1)
                     continue;
 
-                tex(t, b, ALPHA, round * 0.5);
+                // Clip to the cell: a fullscreen window covers the reserved area
+                // too, and would otherwise spill past the tile's edges.
+                tex(t, b, ALPHA, round, cell);
             }
 
             // --- workspace label ------------------------------------------------
             if (config::overviewShowLabels() && PROGRESS > 0.35F) {
-                const float LABEL_A = (PROGRESS - 0.35F) / 0.65F;
+                const float LABEL_A = (PROGRESS - 0.35F) / 0.65F * FADE;
 
-                auto        t2 = textures().text(entry.name, FONT, config::overviewLabelColor(), static_cast<int>(cell.w), SCALE);
+                const auto  LABELCOL = SELECTED ? config::overviewActiveBorder() : config::overviewLabelColor();
+                auto        t2       = textures().text(entry.name, FONT, LABELCOL, static_cast<int>(cell.w), SCALE);
                 if (!t2)
                     continue;
 
                 const auto       SZ    = logicalSize(t2);
-                constexpr double PAD_X = 12, PAD_Y = 4;
+                constexpr double PAD_X = 14, PAD_Y = 5;
 
-                // Centred just under the tile, GNOME-style.
+                // A pill centred just under the tile, GNOME-style. Give it a
+                // minimum width so single digits do not become tiny circles.
+                const double     PILL_W = std::max(SZ.x + PAD_X * 2, 46.0);
                 const SBoxF      bgBox{
-                         cell.x + (cell.w - SZ.x) / 2.0 - PAD_X,
-                         cell.y + cell.h + 6,
-                         SZ.x + PAD_X * 2,
+                         cell.x + (cell.w - PILL_W) / 2.0,
+                         cell.y + cell.h + 9,
+                         PILL_W,
                          SZ.y + PAD_Y * 2,
                 };
 
                 const auto BGCOL = config::overviewTitleBgColor();
-                rect(bgBox, BGCOL.modifyA(BGCOL.a * LABEL_A), (SZ.y + PAD_Y * 2) / 2.0);
-                tex(t2, SBoxF{bgBox.x + PAD_X, bgBox.y + PAD_Y, SZ.x, SZ.y}, LABEL_A);
+                rect(bgBox, BGCOL.modifyA(BGCOL.a * LABEL_A), bgBox.h / 2.0);
+                tex(t2, SBoxF{bgBox.x + (bgBox.w - SZ.x) / 2.0, bgBox.y + PAD_Y, SZ.x, SZ.y}, LABEL_A);
             }
         }
 

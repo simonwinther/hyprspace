@@ -83,8 +83,9 @@ static void testGridFitsOnScreen() {
         SLayoutParams p;
         p.screenW = sw;
         p.screenH = sw * 9.0 / 16.0;
-        p.aspect  = 16.0 / 9.0;
-        p.padding = 56;
+        p.aspect     = 16.0 / 9.0;
+        p.padding    = 56;
+        p.labelSpace = 34;
 
         for (size_t n = 1; n <= 10; ++n) {
             const auto out = layout(makeInput(n), p);
@@ -92,7 +93,8 @@ static void testGridFitsOnScreen() {
                 CHECK(t.box.x >= p.padding - 1.0);
                 CHECK(t.box.y >= p.padding - 1.0);
                 CHECK(t.box.x + t.box.w <= p.screenW - p.padding + 1.0);
-                CHECK(t.box.y + t.box.h <= p.screenH - p.padding + 1.0);
+                // Room must remain under the last row for its label.
+                CHECK(t.box.y + t.box.h + p.labelSpace <= p.screenH - p.padding + 1.0);
             }
         }
     }
