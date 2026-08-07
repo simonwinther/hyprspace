@@ -155,7 +155,6 @@ namespace hyprspace {
         int                 m_selected = -1;
         int                 m_hovered  = -1;
         bool                m_closing  = false;
-        bool                m_fullscreenSuspended = false;
 
         SDrag               m_drag;
 
