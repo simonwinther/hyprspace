@@ -50,7 +50,6 @@ namespace hyprspace {
         collect();
         computeLayout();
         hideRealWindows();
-        suspendFullscreen();
 
         // Start on the workspace the user is already looking at.
         m_selected = 0;
@@ -348,6 +347,11 @@ namespace hyprspace {
             return;
 
         m_closing = true;
+
+        // Restore fullscreen now, at the start of the close: the tiles are still
+        // small and in motion, so the window is back to fullscreen well before
+        // the zoom hands the screen back to it.
+        restoreFullscreen();
 
         if (commitSelection) {
             // Re-anchor before committing, while the selection is still intact,
@@ -796,6 +800,17 @@ namespace hyprspace {
         // that begins a frame later.
         if (m_closing)
             settleWorkspaceAnimations();
+
+        // Leave fullscreen alone until the zoom is well under way.
+        //
+        // The opening animation starts with the active tile at full size, so at
+        // that moment the tile is pixel-for-pixel the desktop: changing the
+        // window's state there is change in plain sight. A little into the zoom
+        // the tile is small and moving, and the swap goes unnoticed.
+        if (!m_closing && !m_fullscreenSuspended && m_progress->value() > 0.5F) {
+            suspendFullscreen();
+            m_fullscreenSuspended = true;
+        }
 
         m_capture.beginFrame();
 
