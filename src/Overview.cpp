@@ -48,9 +48,9 @@ namespace hyprspace {
         };
 
         collect();
-        suspendFullscreen();
         computeLayout();
         hideRealWindows();
+        suspendFullscreen();
 
         // Start on the workspace the user is already looking at.
         m_selected = 0;
@@ -70,8 +70,8 @@ namespace hyprspace {
     }
 
     COverview::~COverview() {
-        restoreRealWindows();
         restoreFullscreen();
+        restoreRealWindows();
 
         m_capture.clear();
         textures().clear();
@@ -244,6 +244,23 @@ namespace hyprspace {
     // (renderWindow bails on effectiveAlpha() == 0). What remains underneath is
     // the wallpaper and the bar, which is what gets dimmed. Offscreen captures
     // are unaffected: standalone renders force alpha to 1.
+    // Snap a window to its new geometry instead of animating there.
+    //
+    // Hyprland animates entering and leaving fullscreen. That transition is the
+    // window's own, not the overview's, and playing it on open and again on
+    // close reads as the whole desktop zooming out and back in. Nothing should
+    // animate here: the overview has its own transition and this one is an
+    // implementation detail of how it shows the workspace.
+    static void warpGeometry(const PHLWINDOW& w) {
+        if (!w)
+            return;
+
+        if (w->m_realPosition)
+            w->m_realPosition->warp();
+        if (w->m_realSize)
+            w->m_realSize->warp();
+    }
+
     // A fullscreen window cannot be shown where it would sit un-fullscreened,
     // because the client is still drawing a fullscreen-shaped surface: squeezing
     // that buffer into the smaller box only distorts it. Take it out of
@@ -258,6 +275,7 @@ namespace hyprspace {
 
                 slot.savedFullscreen = static_cast<uint8_t>(W->m_fullscreenState.internal);
                 g_pCompositor->setWindowFullscreenInternal(W, FSMODE_NONE);
+                warpGeometry(W);
             }
         }
     }
@@ -271,8 +289,10 @@ namespace hyprspace {
                 const auto MODE      = static_cast<eFullscreenMode>(slot.savedFullscreen);
                 slot.savedFullscreen = 0;
 
-                if (const auto W = slot.window.lock())
+                if (const auto W = slot.window.lock()) {
                     g_pCompositor->setWindowFullscreenInternal(W, MODE);
+                    warpGeometry(W);
+                }
             }
         }
     }
