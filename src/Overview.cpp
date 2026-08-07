@@ -92,7 +92,11 @@ namespace hyprspace {
         if (!w || !MONITOR)
             return m_usable;
 
-        if (w->isFullscreen()) {
+        // The explicit state, not isFullscreen(): that returned true for
+        // ordinary tiled windows here, so every window was treated as
+        // fullscreen and drawn over the others. This is the field hyprctl
+        // reports as "fullscreen", and FSMODE_NONE means exactly that.
+        if (w->m_fullscreenState.internal != FSMODE_NONE) {
             const auto POS = w->m_position - MONITOR->m_position;
             const auto SZ  = w->m_size;
 
@@ -545,7 +549,7 @@ namespace hyprspace {
 
             // A fullscreen window has no geometry of its own to move or resize;
             // driving the layout engine at one is asking for trouble.
-            if (W->isFullscreen())
+            if (W->m_fullscreenState.internal != FSMODE_NONE)
                 return false;
 
             m_drag             = {};
@@ -882,7 +886,7 @@ namespace hyprspace {
             const SWindowSlot* fsSlot = nullptr;
             for (const auto& slot : entry.windows) {
                 const auto W = slot.window.lock();
-                if (W && W != DRAGGED && W->isFullscreen())
+                if (W && W != DRAGGED && W->m_fullscreenState.internal != FSMODE_NONE)
                     fsSlot = &slot;
             }
 
