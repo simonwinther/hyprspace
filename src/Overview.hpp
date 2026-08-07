@@ -60,6 +60,11 @@ namespace hyprspace {
             SBoxF        rect;
             float        savedAlpha  = 1.F;
             bool         alphaHidden = false;
+
+            // eFullscreenMode this window was in when the overview opened;
+            // 0 is FSMODE_NONE. Non-zero means the overview took it out of
+            // fullscreen and owes it the state back on close.
+            uint8_t      savedFullscreen = 0;
         };
 
         // One workspace tile.
@@ -103,6 +108,11 @@ namespace hyprspace {
 
         void      hideRealWindows();
         void      restoreRealWindows();
+
+        // Fullscreen is undone for as long as the overview is up, and put back
+        // when it closes.
+        void      suspendFullscreen();
+        void      restoreFullscreen();
         void      selectIndex(int idx);
         void      commit();
         void      commitSelection();

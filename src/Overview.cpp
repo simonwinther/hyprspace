@@ -10,7 +10,6 @@
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/layout/target/Target.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/managers/animation/AnimationManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
@@ -49,6 +48,7 @@ namespace hyprspace {
         };
 
         collect();
+        suspendFullscreen();
         computeLayout();
         hideRealWindows();
 
@@ -71,6 +71,7 @@ namespace hyprspace {
 
     COverview::~COverview() {
         restoreRealWindows();
+        restoreFullscreen();
 
         m_capture.clear();
         textures().clear();
@@ -92,28 +93,6 @@ namespace hyprspace {
         const auto MONITOR = m_monitor.lock();
         if (!w || !MONITOR)
             return m_usable;
-
-        // The explicit state, not isFullscreen(): that returned true for
-        // ordinary tiled windows here, so every window was treated as
-        // fullscreen and drawn over the others. This is the field hyprctl
-        // reports as "fullscreen", and FSMODE_NONE means exactly that.
-        if (w->m_fullscreenState.internal != FSMODE_NONE) {
-            // Fullscreen is applied to the window's drawn geometry, not to its
-            // place in the layout, so the layout target still holds the box it
-            // returns to. m_position/m_size do not: those follow the window and
-            // read back as the fullscreen box.
-            if (const auto TARGET = w->m_target) {
-                const CBox  B = TARGET->position();
-                const SBoxF R{B.x - MONITOR->m_position.x, B.y - MONITOR->m_position.y, B.w, B.h};
-
-                if (R.w >= 1.0 && R.h >= 1.0)
-                    return R;
-            }
-
-            // No layout target to ask — a window mapped straight into fullscreen
-            // may never have had one. Centre it rather than fill the tile.
-            return insetBox(m_usable, 0.62);
-        }
 
         const auto POS = w->m_realPosition->value() - MONITOR->m_position;
         const auto SZ  = w->m_realSize->value();
@@ -265,6 +244,39 @@ namespace hyprspace {
     // (renderWindow bails on effectiveAlpha() == 0). What remains underneath is
     // the wallpaper and the bar, which is what gets dimmed. Offscreen captures
     // are unaffected: standalone renders force alpha to 1.
+    // A fullscreen window cannot be shown where it would sit un-fullscreened,
+    // because the client is still drawing a fullscreen-shaped surface: squeezing
+    // that buffer into the smaller box only distorts it. Take it out of
+    // fullscreen for as long as the overview is up and the client redraws itself
+    // at the size it actually returns to, which is the whole point.
+    void COverview::suspendFullscreen() {
+        for (auto& e : m_entries) {
+            for (auto& slot : e.windows) {
+                const auto W = slot.window.lock();
+                if (!W || W->m_fullscreenState.internal == FSMODE_NONE)
+                    continue;
+
+                slot.savedFullscreen = static_cast<uint8_t>(W->m_fullscreenState.internal);
+                g_pCompositor->setWindowFullscreenInternal(W, FSMODE_NONE);
+            }
+        }
+    }
+
+    void COverview::restoreFullscreen() {
+        for (auto& e : m_entries) {
+            for (auto& slot : e.windows) {
+                if (slot.savedFullscreen == 0)
+                    continue;
+
+                const auto MODE      = static_cast<eFullscreenMode>(slot.savedFullscreen);
+                slot.savedFullscreen = 0;
+
+                if (const auto W = slot.window.lock())
+                    g_pCompositor->setWindowFullscreenInternal(W, MODE);
+            }
+        }
+    }
+
     void COverview::hideRealWindows() {
         for (auto& e : m_entries) {
             for (auto& slot : e.windows) {
@@ -893,7 +905,7 @@ namespace hyprspace {
             const SWindowSlot* fsSlot = nullptr;
             for (const auto& slot : entry.windows) {
                 const auto W = slot.window.lock();
-                if (W && W != DRAGGED && W->m_fullscreenState.internal != FSMODE_NONE)
+                if (W && W != DRAGGED && slot.savedFullscreen != 0)
                     fsSlot = &slot;
             }
 
