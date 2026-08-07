@@ -10,6 +10,7 @@
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/layout/target/Target.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/managers/animation/AnimationManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
@@ -97,14 +98,20 @@ namespace hyprspace {
         // fullscreen and drawn over the others. This is the field hyprctl
         // reports as "fullscreen", and FSMODE_NONE means exactly that.
         if (w->m_fullscreenState.internal != FSMODE_NONE) {
-            const auto POS = w->m_position - MONITOR->m_position;
-            const auto SZ  = w->m_size;
+            // Fullscreen is applied to the window's drawn geometry, not to its
+            // place in the layout, so the layout target still holds the box it
+            // returns to. m_position/m_size do not: those follow the window and
+            // read back as the fullscreen box.
+            if (const auto TARGET = w->m_target) {
+                const CBox  B = TARGET->position();
+                const SBoxF R{B.x - MONITOR->m_position.x, B.y - MONITOR->m_position.y, B.w, B.h};
 
-            if (SZ.x >= 1.0 && SZ.y >= 1.0)
-                return SBoxF{POS.x, POS.y, SZ.x, SZ.y};
+                if (R.w >= 1.0 && R.h >= 1.0)
+                    return R;
+            }
 
-            // No usable layout box — a window that came up fullscreen may never
-            // have had one. Centre it rather than let it fill the tile.
+            // No layout target to ask — a window mapped straight into fullscreen
+            // may never have had one. Centre it rather than fill the tile.
             return insetBox(m_usable, 0.62);
         }
 
