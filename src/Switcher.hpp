@@ -41,11 +41,11 @@ namespace hyprspace {
         }
 
         // --- input ---
-        bool                          onKey(xkb_keysym_t sym, uint32_t mods, bool pressed);
-        void                          onModifiersChanged(uint32_t mods);
-        void                          onMouseMove(const Vector2D& globalPos);
-        bool                          onMouseButton(uint32_t button, bool pressed);
-        void                          onScroll(double delta);
+        bool onKey(xkb_keysym_t sym, uint32_t mods, bool pressed);
+        void onModifiersChanged(uint32_t mods);
+        void onMouseMove(const Vector2D& globalPos);
+        bool onMouseButton(uint32_t button, bool pressed);
+        void onScroll(double delta);
 
         // --- render ---
         std::vector<UP<IPassElement>> buildPass();
@@ -62,17 +62,18 @@ namespace hyprspace {
         void collectWindows(bool forward);
         void layoutPanel();
         void commit();
+        void closeSelection();
 
         PHLMONITORREF       m_monitor;
         std::vector<SEntry> m_entries;
 
-        SBoxF               m_panel      = {};
-        SBoxF               m_titleArea  = {};
-        int                 m_selected   = 0;
-        int                 m_hovered    = -1;
-        bool                m_closing    = false;
+        SBoxF m_panel     = {};
+        SBoxF m_titleArea = {};
+        int   m_selected  = 0;
+        int   m_hovered   = -1;
+        bool  m_closing   = false;
 
-        PHLANIMVAR<float>   m_alpha;
+        PHLANIMVAR<float> m_alpha;
 
         friend class CSwitcherPassElement;
     };

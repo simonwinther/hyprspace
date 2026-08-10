@@ -20,7 +20,6 @@
 
 #include <algorithm>
 
-
 namespace hyprspace {
 
     CSwitcher::CSwitcher(PHLMONITOR monitor, bool forward) : m_monitor(monitor) {
@@ -48,7 +47,7 @@ namespace hyprspace {
         // gives most-recently-used first, which is what Alt+Tab expects.
         const auto& HISTORY = Desktop::History::windowTracker()->fullHistory();
 
-        auto        gather = [&](bool wsOnly) {
+        auto gather = [&](bool wsOnly) {
             auto eligible = [&](const PHLWINDOW& w) {
                 if (!w || !w->m_isMapped || w->m_fadingOut || w->isHidden())
                     return false;
@@ -93,8 +92,6 @@ namespace hyprspace {
         // already land on the previous one.
         const int N = static_cast<int>(m_entries.size());
         m_selected  = forward ? (1 % N) : ((N - 1) % N);
-
-
     }
 
     void CSwitcher::layoutPanel() {
@@ -113,14 +110,14 @@ namespace hyprspace {
         const double SCREEN_H = MONITOR->m_size.y;
 
         // Wrap into rows if a single row would not fit on screen.
-        const double maxRowW  = SCREEN_W - 2 * PAD - 80;
-        const int    perRow   = std::max(1, static_cast<int>((maxRowW + GAP) / CELL));
-        const int    n        = static_cast<int>(m_entries.size());
-        const int    cols     = std::min(n, perRow);
-        const int    rows     = (n + cols - 1) / cols;
+        const double maxRowW = SCREEN_W - 2 * PAD - 80;
+        const int    perRow  = std::max(1, static_cast<int>((maxRowW + GAP) / CELL));
+        const int    n       = static_cast<int>(m_entries.size());
+        const int    cols    = std::min(n, perRow);
+        const int    rows    = (n + cols - 1) / cols;
 
-        const double gridW    = cols * ICON + (cols - 1) * GAP;
-        const double gridH    = rows * ICON + (rows - 1) * GAP;
+        const double gridW = cols * ICON + (cols - 1) * GAP;
+        const double gridH = rows * ICON + (rows - 1) * GAP;
 
         // Widen the panel until the titles actually fit.
         //
@@ -136,7 +133,7 @@ namespace hyprspace {
             const std::string FONT     = config::switcherFont();
             const double      MAX_TEXT = SCREEN_W * 0.66;
 
-            double            widest   = 0.0;
+            double widest = 0.0;
             for (const auto& e : m_entries) {
                 if (e.title.empty())
                     continue;
@@ -149,18 +146,18 @@ namespace hyprspace {
             contentW = std::max(contentW, std::min(widest, MAX_TEXT));
         }
 
-        const double panelW   = contentW + 2 * PAD;
-        const double panelH   = gridH + 2 * PAD + TITLE_H;
+        const double panelW = contentW + 2 * PAD;
+        const double panelH = gridH + 2 * PAD + TITLE_H;
 
-        m_panel               = SBoxF{(SCREEN_W - panelW) / 2.0, (SCREEN_H - panelH) / 2.0, panelW, panelH};
-        m_titleArea           = SBoxF{m_panel.x + PAD, m_panel.y + PAD + gridH + 4, contentW, TITLE_H - 4};
+        m_panel     = SBoxF{(SCREEN_W - panelW) / 2.0, (SCREEN_H - panelH) / 2.0, panelW, panelH};
+        m_titleArea = SBoxF{m_panel.x + PAD, m_panel.y + PAD + gridH + 4, contentW, TITLE_H - 4};
 
         for (int i = 0; i < n; ++i) {
-            const int    row     = i / cols;
-            const int    col     = i % cols;
-            const int    inRow   = std::min(cols, n - row * cols);
-            const double rowW    = inRow * ICON + (inRow - 1) * GAP;
-            const double rowX    = m_panel.x + (panelW - rowW) / 2.0;
+            const int    row   = i / cols;
+            const int    col   = i % cols;
+            const int    inRow = std::min(cols, n - row * cols);
+            const double rowW  = inRow * ICON + (inRow - 1) * GAP;
+            const double rowX  = m_panel.x + (panelW - rowW) / 2.0;
 
             m_entries[i].box = SBoxF{rowX + col * CELL, m_panel.y + PAD + row * CELL, ICON, ICON};
         }
@@ -195,6 +192,32 @@ namespace hyprspace {
         focusSelection(m_entries[m_selected].window.lock(), config::warpCursor());
     }
 
+    void CSwitcher::closeSelection() {
+        if (m_closing || m_selected < 0 || m_selected >= static_cast<int>(m_entries.size()))
+            return;
+
+        const auto WINDOW = m_entries[m_selected].window.lock();
+        if (WINDOW) {
+            // Address the highlighted window explicitly. It never becomes the
+            // active window, so closing something on another workspace does not
+            // move the user's real desktop underneath the switcher.
+            if (!Config::Actions::closeWindow(WINDOW))
+                return;
+        }
+
+        m_entries.erase(m_entries.begin() + m_selected);
+        m_hovered = -1;
+
+        if (m_entries.empty()) {
+            close(false);
+            return;
+        }
+
+        m_selected = std::min(m_selected, static_cast<int>(m_entries.size()) - 1);
+        layoutPanel();
+        damage();
+    }
+
     // ---------------------------------------------------------------- input --
 
     bool CSwitcher::onKey(xkb_keysym_t sym, uint32_t mods, bool pressed) {
@@ -204,21 +227,41 @@ namespace hyprspace {
         const bool SHIFT = mods & HL_MODIFIER_SHIFT;
 
         switch (sym) {
-            case XKB_KEY_Escape: close(false); return true;
+        case XKB_KEY_Escape:
+            close(false);
+            return true;
 
-            case XKB_KEY_Return:
-            case XKB_KEY_KP_Enter: close(true); return true;
+        case XKB_KEY_Return:
+        case XKB_KEY_KP_Enter:
+            close(true);
+            return true;
 
-            case XKB_KEY_Tab: advance(!SHIFT); return true;
-            case XKB_KEY_ISO_Left_Tab: advance(false); return true;
+        case XKB_KEY_Tab:
+            advance(!SHIFT);
+            return true;
+        case XKB_KEY_ISO_Left_Tab:
+            advance(false);
+            return true;
 
-            case XKB_KEY_Left: advance(false); return true;
-            case XKB_KEY_Right: advance(true); return true;
+        case XKB_KEY_Left:
+            advance(false);
+            return true;
+        case XKB_KEY_Right:
+            advance(true);
+            return true;
 
-            case XKB_KEY_grave:
-            case XKB_KEY_asciitilde: advance(!SHIFT); return true;
+        case XKB_KEY_w:
+        case XKB_KEY_W:
+            closeSelection();
+            return true;
 
-            default: break;
+        case XKB_KEY_grave:
+        case XKB_KEY_asciitilde:
+            advance(!SHIFT);
+            return true;
+
+        default:
+            break;
         }
 
         return true;
@@ -245,7 +288,7 @@ namespace hyprspace {
         // on nothing. Grow each box by half the gap so the row is continuous.
         const double PAD = config::switcherGap() / 2.0;
 
-        int          hit = -1;
+        int hit = -1;
         for (size_t i = 0; i < m_entries.size(); ++i) {
             const auto& b = m_entries[i].box;
             if (LOCAL.x >= b.x - PAD && LOCAL.x <= b.x + b.w + PAD && LOCAL.y >= b.y - PAD && LOCAL.y <= b.y + b.h + PAD) {
@@ -300,11 +343,11 @@ namespace hyprspace {
         if (A < 0.01F)
             return out;
 
-        const auto FONT      = config::switcherFont();
-        const int  ROUNDING  = config::switcherRounding();
-        const int  ICON      = config::switcherIconSize();
+        const auto FONT     = config::switcherFont();
+        const int  ROUNDING = config::switcherRounding();
+        const int  ICON     = config::switcherIconSize();
 
-        auto       rect      = [&](const SBoxF& b, const CHyprColor& col, int round) {
+        auto rect = [&](const SBoxF& b, const CHyprColor& col, int round) {
             out.emplace_back(makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = CBox{b.x, b.y, b.w, b.h}, .color = col, .round = round}));
         };
         auto tex = [&](SP<Render::ITexture> t, const CBox& box, float a) {
@@ -320,7 +363,7 @@ namespace hyprspace {
             const auto&  sel  = m_entries[m_selected].box;
             const double grow = 10.0;
 
-            const auto   HL = config::switcherHighlightColor();
+            const auto HL = config::switcherHighlightColor();
             rect(SBoxF{sel.x - grow, sel.y - grow, sel.w + grow * 2, sel.h + grow * 2}, HL.modifyA(HL.a * A), ROUNDING / 2);
         }
 
@@ -328,7 +371,7 @@ namespace hyprspace {
         for (size_t i = 0; i < m_entries.size(); ++i) {
             const auto& e = m_entries[i];
 
-            auto        icon = textures().icon(e.appClass, ICON);
+            auto icon = textures().icon(e.appClass, ICON);
             if (!icon)
                 continue;
 
@@ -344,11 +387,16 @@ namespace hyprspace {
             if (!title.empty()) {
                 auto t = textures().text(title, FONT, config::switcherTextColor(), static_cast<int>(m_titleArea.w));
                 if (t) {
-                    tex(t, CBox{m_titleArea.x + (m_titleArea.w - t->m_size.x) / 2.0, m_titleArea.y + (m_titleArea.h - t->m_size.y) / 2.0, t->m_size.x, t->m_size.y},
-                        A);
+                    tex(t, CBox{m_titleArea.x + (m_titleArea.w - t->m_size.x) / 2.0, m_titleArea.y + (m_titleArea.h - t->m_size.y) / 2.0, t->m_size.x, t->m_size.y}, A);
                 }
             }
         }
+
+        // Discovery is deliberately asynchronous. Keep requesting inexpensive
+        // frames only while provisional icons remain, so completed results can
+        // replace them without ever blocking the first Alt+Tab.
+        if (textures().hasPendingIcons())
+            damage();
 
         return out;
     }

@@ -9,6 +9,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace hyprspace {
 
@@ -27,15 +28,25 @@ namespace hyprspace {
         // `size` is in physical px.
         SP<Render::ITexture> icon(const std::string& windowClass, int size);
 
-        void                 clear();
-        size_t               size() const {
+        void clear();
+        bool hasPendingIcons() const {
+            return !m_provisionalIcons.empty();
+        }
+        size_t size() const {
             return m_cache.size();
         }
 
       private:
         std::unordered_map<std::string, SP<Render::ITexture>> m_cache;
+        std::unordered_set<std::string>                       m_provisionalIcons;
     };
 
     CTextureCache& textures();
+
+    // Desktop files and icon themes are filesystem work, so prepare them away
+    // from Hyprland's compositor thread. `finishIconDiscovery` joins that work
+    // before the plugin is unloaded.
+    void startIconDiscovery();
+    void finishIconDiscovery();
 
 } // namespace hyprspace

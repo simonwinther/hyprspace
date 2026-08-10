@@ -10,6 +10,7 @@
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/layout/target/Target.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/managers/animation/AnimationManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
@@ -50,7 +51,6 @@ namespace hyprspace {
         collect();
         computeLayout();
         hideRealWindows();
-        suspendFullscreen();
 
         // Start on the workspace the user is already looking at.
         m_selected = 0;
@@ -70,7 +70,6 @@ namespace hyprspace {
     }
 
     COverview::~COverview() {
-        restoreFullscreen();
         restoreRealWindows();
 
         m_capture.clear();
@@ -93,6 +92,29 @@ namespace hyprspace {
         const auto MONITOR = m_monitor.lock();
         if (!w || !MONITOR)
             return m_usable;
+
+        // A fullscreen window covers the whole output, so drawing it where it
+        // really is collapses its tile to that one window. Fullscreen is applied
+        // to the drawn geometry, not to the window's place in the layout, so the
+        // layout target still holds the box it returns to. m_position/m_size do
+        // not: those follow the window and read back as the fullscreen box.
+        //
+        // isFullscreen() is not usable here — it returns true for ordinary tiled
+        // windows on this Hyprland. This is the field hyprctl reports as
+        // "fullscreen".
+        if (w->m_fullscreenState.internal != FSMODE_NONE) {
+            if (const auto TARGET = w->m_target) {
+                const CBox  B = TARGET->position();
+                const SBoxF R{B.x - MONITOR->m_position.x, B.y - MONITOR->m_position.y, B.w, B.h};
+
+                if (R.w >= 1.0 && R.h >= 1.0)
+                    return R;
+            }
+
+            // No layout target to ask — a window mapped straight into fullscreen
+            // may never have had one. Centre it rather than fill the tile.
+            return insetBox(m_usable, 0.62);
+        }
 
         const auto POS = w->m_realPosition->value() - MONITOR->m_position;
         const auto SZ  = w->m_realSize->value();
@@ -244,59 +266,6 @@ namespace hyprspace {
     // (renderWindow bails on effectiveAlpha() == 0). What remains underneath is
     // the wallpaper and the bar, which is what gets dimmed. Offscreen captures
     // are unaffected: standalone renders force alpha to 1.
-    // Snap a window to its new geometry instead of animating there.
-    //
-    // Hyprland animates entering and leaving fullscreen. That transition is the
-    // window's own, not the overview's, and playing it on open and again on
-    // close reads as the whole desktop zooming out and back in. Nothing should
-    // animate here: the overview has its own transition and this one is an
-    // implementation detail of how it shows the workspace.
-    static void warpGeometry(const PHLWINDOW& w) {
-        if (!w)
-            return;
-
-        if (w->m_realPosition)
-            w->m_realPosition->warp();
-        if (w->m_realSize)
-            w->m_realSize->warp();
-    }
-
-    // A fullscreen window cannot be shown where it would sit un-fullscreened,
-    // because the client is still drawing a fullscreen-shaped surface: squeezing
-    // that buffer into the smaller box only distorts it. Take it out of
-    // fullscreen for as long as the overview is up and the client redraws itself
-    // at the size it actually returns to, which is the whole point.
-    void COverview::suspendFullscreen() {
-        for (auto& e : m_entries) {
-            for (auto& slot : e.windows) {
-                const auto W = slot.window.lock();
-                if (!W || W->m_fullscreenState.internal == FSMODE_NONE)
-                    continue;
-
-                slot.savedFullscreen = static_cast<uint8_t>(W->m_fullscreenState.internal);
-                g_pCompositor->setWindowFullscreenInternal(W, FSMODE_NONE);
-                warpGeometry(W);
-            }
-        }
-    }
-
-    void COverview::restoreFullscreen() {
-        for (auto& e : m_entries) {
-            for (auto& slot : e.windows) {
-                if (slot.savedFullscreen == 0)
-                    continue;
-
-                const auto MODE      = static_cast<eFullscreenMode>(slot.savedFullscreen);
-                slot.savedFullscreen = 0;
-
-                if (const auto W = slot.window.lock()) {
-                    g_pCompositor->setWindowFullscreenInternal(W, MODE);
-                    warpGeometry(W);
-                }
-            }
-        }
-    }
-
     void COverview::hideRealWindows() {
         for (auto& e : m_entries) {
             for (auto& slot : e.windows) {
@@ -348,11 +317,6 @@ namespace hyprspace {
             return;
 
         m_closing = true;
-
-        // Restore fullscreen now, at the start of the close: the tiles are still
-        // small and in motion, so the window is back to fullscreen well before
-        // the zoom hands the screen back to it.
-        restoreFullscreen();
 
         if (commitSelection) {
             // Re-anchor before committing, while the selection is still intact,
@@ -930,7 +894,7 @@ namespace hyprspace {
             const SWindowSlot* fsSlot = nullptr;
             for (const auto& slot : entry.windows) {
                 const auto W = slot.window.lock();
-                if (W && W != DRAGGED && slot.savedFullscreen != 0)
+                if (W && W != DRAGGED && W->m_fullscreenState.internal != FSMODE_NONE)
                     fsSlot = &slot;
             }
 
@@ -943,9 +907,14 @@ namespace hyprspace {
                 if (!t)
                     continue;
 
-                const SBoxF b = windowBoxInCell(slot.rect, cell);
+                SBoxF b = windowBoxInCell(slot.rect, cell);
                 if (b.w < 1 || b.h < 1)
                     continue;
+
+                // The fullscreen window's texture is fullscreen-shaped while its
+                // box is not, so fit rather than stretch.
+                if (&slot == fsSlot && t->m_size.y > 0)
+                    b = fitBox(b, static_cast<double>(t->m_size.x) / t->m_size.y);
 
                 // Clip to the cell: a window can reach past the usable area, and
                 // would otherwise spill over the tile's edges.
@@ -955,7 +924,12 @@ namespace hyprspace {
             // Say which window is the fullscreen one, since it is no longer
             // drawn fullscreen and nothing else would give it away.
             if (fsSlot) {
-                const SBoxF FSBOX = windowBoxInCell(fsSlot->rect, cell);
+                // Same fit the texture got, so the outline hugs what is drawn.
+                SBoxF      FSBOX = windowBoxInCell(fsSlot->rect, cell);
+                const auto FST   = m_capture.textureFor(fsSlot->window.lock());
+
+                if (FST && FST->m_size.y > 0)
+                    FSBOX = fitBox(FSBOX, static_cast<double>(FST->m_size.x) / FST->m_size.y);
 
                 if (FSBOX.w >= 1 && FSBOX.h >= 1) {
                     const double MARK = std::max(2.0, static_cast<double>(config::overviewBorderSize()));

@@ -7,15 +7,16 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace hyprspace {
 
     struct SDesktopEntry {
-        std::string name;           // Name=
-        std::string icon;           // Icon=
-        std::string wmClass;        // StartupWMClass=
-        std::string id;             // basename without .desktop
+        std::string name;    // Name=
+        std::string icon;    // Icon=
+        std::string wmClass; // StartupWMClass=
+        std::string id;      // basename without .desktop
         bool        noDisplay = false;
     };
 
@@ -24,7 +25,7 @@ namespace hyprspace {
     SDesktopEntry parseDesktopEntry(const std::string& contents, const std::string& id = "");
 
     // Normalise a window class for matching: trimmed and lowercased.
-    std::string              normaliseClass(const std::string& cls);
+    std::string normaliseClass(const std::string& cls);
 
     // Ordered lookup keys to try for a window class, most specific first.
     //
@@ -39,19 +40,19 @@ namespace hyprspace {
         CDesktopDb() = default;
 
         // Scan XDG_DATA_DIRS + XDG_DATA_HOME for application entries.
-        void                         scan();
+        void scan();
 
         // Look up the icon *name* for a window class. Empty if unknown.
-        std::string                  iconNameForClass(const std::string& cls) const;
+        std::string iconNameForClass(const std::string& cls) const;
 
         // Look up a human app name for a window class. Empty if unknown.
-        std::string                  appNameForClass(const std::string& cls) const;
+        std::string appNameForClass(const std::string& cls) const;
 
         // Resolve an icon name (or absolute path) to a file on disk.
         // `preferredSize` steers which themed size is picked.
-        std::optional<std::string>   resolveIconPath(const std::string& iconName, int preferredSize = 64) const;
+        std::optional<std::string> resolveIconPath(const std::string& iconName, int preferredSize = 64) const;
 
-        size_t                       entryCount() const {
+        size_t entryCount() const {
             return m_entries.size();
         }
 
@@ -63,14 +64,29 @@ namespace hyprspace {
         // Overridable for tests.
         void setIconRoots(std::vector<std::string> roots) {
             m_iconRoots = std::move(roots);
+            m_iconCache.clear();
+            m_iconIndex.clear();
+            m_iconIndexReady = false;
         }
         void addEntry(const SDesktopEntry& e);
 
       private:
-        std::vector<SDesktopEntry>                 m_entries;
-        std::map<std::string, size_t>              m_byClass; // normalised class -> index
-        std::vector<std::string>                   m_iconRoots;
-        mutable std::map<std::string, std::string> m_iconCache; // "name@size" -> path
+        struct SIconFile {
+            std::string path;
+            size_t      root     = 0;
+            int         size     = 0;
+            bool        scalable = false;
+            bool        svg      = false;
+        };
+
+        void indexIcons() const;
+
+        std::vector<SDesktopEntry>                                      m_entries;
+        std::map<std::string, size_t>                                   m_byClass; // normalised class -> index
+        std::vector<std::string>                                        m_iconRoots;
+        mutable std::map<std::string, std::string>                      m_iconCache; // "name@size" -> path
+        mutable std::unordered_map<std::string, std::vector<SIconFile>> m_iconIndex;
+        mutable bool                                                    m_iconIndexReady = false;
     };
 
     // Helper: list of data dirs per the XDG basedir spec.

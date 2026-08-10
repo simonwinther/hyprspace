@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -192,14 +193,16 @@ namespace hyprspace {
         m_byClass.clear();
         m_iconCache.clear();
         m_iconRoots.clear();
+        m_iconIndex.clear();
+        m_iconIndexReady = false;
 
         std::error_code ec;
 
         for (const auto& base : xdgDataDirs()) {
             const fs::path apps = fs::path(base) / "applications";
             if (fs::is_directory(apps, ec)) {
-                for (auto it = fs::recursive_directory_iterator(apps, fs::directory_options::skip_permission_denied, ec);
-                     it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                for (auto it = fs::recursive_directory_iterator(apps, fs::directory_options::skip_permission_denied, ec); it != fs::recursive_directory_iterator();
+                     it.increment(ec)) {
                     if (ec)
                         break;
                     if (!it->is_regular_file(ec))
@@ -226,6 +229,12 @@ namespace hyprspace {
 
         if (fs::is_directory("/usr/share/pixmaps", ec))
             m_iconRoots.emplace_back("/usr/share/pixmaps");
+
+        // Build one filename index while this work is running off the compositor
+        // thread. The old resolver walked every icon-theme directory once per
+        // requested icon, which is exactly the cold-start pause users felt on
+        // their first Alt+Tab.
+        indexIcons();
     }
 
     std::string CDesktopDb::iconNameForClass(const std::string& cls) const {
@@ -261,9 +270,49 @@ namespace hyprspace {
                 continue;
             try {
                 return std::stoi(s.substr(0, x));
-            } catch (...) { /* not a size segment */ }
+            } catch (...) { /* not a size segment */
+            }
         }
         return 0;
+    }
+
+    void CDesktopDb::indexIcons() const {
+        m_iconIndex.clear();
+
+        static const std::vector<std::string> EXTS = {".svg", ".png", ".xpm"};
+
+        for (size_t rootIndex = 0; rootIndex < m_iconRoots.size(); ++rootIndex) {
+            const auto&     root = m_iconRoots[rootIndex];
+            std::error_code ec;
+            if (!fs::is_directory(root, ec))
+                continue;
+
+            for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec); it != fs::recursive_directory_iterator();
+                 it.increment(ec)) {
+                if (ec)
+                    break;
+                if (!it->is_regular_file(ec))
+                    continue;
+
+                const auto& p   = it->path();
+                const auto  ext = p.extension().string();
+                if (std::ranges::find(EXTS, ext) == EXTS.end())
+                    continue;
+
+                bool      scalable = false;
+                const int size     = sizeFromPath(p, scalable);
+
+                m_iconIndex[p.stem().string()].push_back(SIconFile{
+                    .path     = p.string(),
+                    .root     = rootIndex,
+                    .size     = size,
+                    .scalable = scalable,
+                    .svg      = ext == ".svg",
+                });
+            }
+        }
+
+        m_iconIndexReady = true;
     }
 
     std::optional<std::string> CDesktopDb::resolveIconPath(const std::string& iconName, int preferredSize) const {
@@ -283,51 +332,33 @@ namespace hyprspace {
         if (auto it = m_iconCache.find(cacheKey); it != m_iconCache.end())
             return it->second.empty() ? std::nullopt : std::optional<std::string>(it->second);
 
-        static const std::vector<std::string> EXTS = {".svg", ".png", ".xpm"};
+        if (!m_iconIndexReady)
+            indexIcons();
 
         std::string bestPath;
         long        bestScore = -1;
+        size_t      bestRoot  = std::numeric_limits<size_t>::max();
 
-        for (const auto& root : m_iconRoots) {
-            if (!fs::is_directory(root, ec))
-                continue;
-
-            for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec); it != fs::recursive_directory_iterator();
-                 it.increment(ec)) {
-                if (ec)
-                    break;
-                if (!it->is_regular_file(ec))
-                    continue;
-
-                const auto& p = it->path();
-                if (p.stem().string() != iconName)
-                    continue;
-                if (std::ranges::find(EXTS, p.extension().string()) == EXTS.end())
-                    continue;
-
-                bool       scalable = false;
-                const int  sz       = sizeFromPath(p, scalable);
-                const bool isSvg    = p.extension() == ".svg";
-
+        if (const auto found = m_iconIndex.find(iconName); found != m_iconIndex.end()) {
+            for (const auto& icon : found->second) {
                 // Scoring: scalable/svg wins, then closest size at or above the
                 // requested one, then anything else.
                 long score = 0;
-                if (scalable || isSvg)
+                if (icon.scalable || icon.svg)
                     score = 10'000;
-                else if (sz >= preferredSize)
-                    score = 5'000 - (sz - preferredSize);
+                else if (icon.size >= preferredSize)
+                    score = 5'000 - (icon.size - preferredSize);
                 else
-                    score = 1'000 + sz;
+                    score = 1'000 + icon.size;
 
-                if (score > bestScore) {
+                // A hit in a higher-priority XDG root wins outright, just as it
+                // did when roots were searched one after another.
+                if (icon.root < bestRoot || (icon.root == bestRoot && score > bestScore)) {
+                    bestRoot  = icon.root;
                     bestScore = score;
-                    bestPath  = p.string();
+                    bestPath  = icon.path;
                 }
             }
-
-            // A hit in a higher-priority root wins outright.
-            if (bestScore > 0)
-                break;
         }
 
         m_iconCache[cacheKey] = bestPath;

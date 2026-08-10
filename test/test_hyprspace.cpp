@@ -22,22 +22,22 @@ using namespace hyprspace;
 static int g_failures = 0;
 static int g_checks   = 0;
 
-#define CHECK(cond)                                                                                                                                            \
-    do {                                                                                                                                                       \
-        ++g_checks;                                                                                                                                            \
-        if (!(cond)) {                                                                                                                                         \
-            std::printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);                                                                                      \
-            ++g_failures;                                                                                                                                      \
-        }                                                                                                                                                      \
+#define CHECK(cond)                                                                                                                                                      \
+    do {                                                                                                                                                                 \
+        ++g_checks;                                                                                                                                                      \
+        if (!(cond)) {                                                                                                                                                   \
+            std::printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);                                                                                                \
+            ++g_failures;                                                                                                                                                \
+        }                                                                                                                                                                \
     } while (0)
 
-#define CHECK_NEAR(a, b, eps)                                                                                                                                  \
-    do {                                                                                                                                                       \
-        ++g_checks;                                                                                                                                            \
-        if (std::fabs((a) - (b)) > (eps)) {                                                                                                                    \
-            std::printf("  FAIL %s:%d  %s (%.4f) != %s (%.4f)\n", __FILE__, __LINE__, #a, (double)(a), #b, (double)(b));                                        \
-            ++g_failures;                                                                                                                                      \
-        }                                                                                                                                                      \
+#define CHECK_NEAR(a, b, eps)                                                                                                                                            \
+    do {                                                                                                                                                                 \
+        ++g_checks;                                                                                                                                                      \
+        if (std::fabs((a) - (b)) > (eps)) {                                                                                                                              \
+            std::printf("  FAIL %s:%d  %s (%.4f) != %s (%.4f)\n", __FILE__, __LINE__, #a, (double)(a), #b, (double)(b));                                                 \
+            ++g_failures;                                                                                                                                                \
+        }                                                                                                                                                                \
     } while (0)
 
 static void section(const char* name) {
@@ -81,8 +81,8 @@ static void testGridFitsOnScreen() {
 
     for (double sw : {1920.0, 2560.0, 3840.0, 1366.0}) {
         SLayoutParams p;
-        p.screenW = sw;
-        p.screenH = sw * 9.0 / 16.0;
+        p.screenW    = sw;
+        p.screenH    = sw * 9.0 / 16.0;
         p.aspect     = 16.0 / 9.0;
         p.padding    = 56;
         p.labelSpace = 34;
@@ -437,20 +437,25 @@ static void testWebAppLookup() {
 static void testIconResolution() {
     section("desktop: icon theme path resolution");
 
-    const auto root = fs::temp_directory_path() / "hyprspace-test-icons";
+    const auto root     = fs::temp_directory_path() / "hyprspace-test-icons";
+    const auto fallback = fs::temp_directory_path() / "hyprspace-test-icons-fallback";
     fs::remove_all(root);
+    fs::remove_all(fallback);
 
     fs::create_directories(root / "hicolor" / "48x48" / "apps");
     fs::create_directories(root / "hicolor" / "256x256" / "apps");
     fs::create_directories(root / "hicolor" / "scalable" / "apps");
+    fs::create_directories(fallback / "hicolor" / "scalable" / "apps");
 
     auto touch = [](const fs::path& p) { std::ofstream(p) << "x"; };
     touch(root / "hicolor" / "48x48" / "apps" / "sized-only.png");
     touch(root / "hicolor" / "256x256" / "apps" / "sized-only.png");
     touch(root / "hicolor" / "scalable" / "apps" / "vector.svg");
+    touch(root / "hicolor" / "48x48" / "apps" / "priority.png");
+    touch(fallback / "hicolor" / "scalable" / "apps" / "priority.svg");
 
     CDesktopDb db;
-    db.setIconRoots({root.string()});
+    db.setIconRoots({root.string(), fallback.string()});
 
     // SVG is preferred because it scales to any tile size.
     const auto vec = db.resolveIconPath("vector", 64);
@@ -466,6 +471,17 @@ static void testIconResolution() {
     CHECK(bigger.has_value());
     CHECK(bigger && bigger->ends_with("256x256/apps/sized-only.png"));
 
+    // XDG root priority beats format/size preference. Replacing the roots must
+    // also invalidate both the filename index and previously resolved paths.
+    const auto priority = db.resolveIconPath("priority", 64);
+    CHECK(priority && priority->starts_with(root.string()));
+    CHECK(priority && priority->ends_with("priority.png"));
+
+    db.setIconRoots({fallback.string()});
+    const auto reprioritised = db.resolveIconPath("priority", 64);
+    CHECK(reprioritised && reprioritised->starts_with(fallback.string()));
+    CHECK(reprioritised && reprioritised->ends_with("priority.svg"));
+
     CHECK(!db.resolveIconPath("nothing-here", 64).has_value());
     CHECK(!db.resolveIconPath("", 64).has_value());
 
@@ -475,6 +491,7 @@ static void testIconResolution() {
     CHECK(!db.resolveIconPath("/nonexistent/icon.png", 64).has_value());
 
     fs::remove_all(root);
+    fs::remove_all(fallback);
 }
 
 // ---------------------------------------------------------------- raster ----

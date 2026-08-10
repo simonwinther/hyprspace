@@ -202,6 +202,30 @@ namespace hyprspace {
         };
     }
 
+    // The largest box of the given aspect that fits inside `b`, centred.
+    //
+    // A fullscreen window's client is still drawing a fullscreen-shaped surface,
+    // so its texture carries the monitor's aspect rather than that of the box it
+    // is being drawn into. Stretching it to fit squashes the picture; fit it
+    // inside instead and let the box keep whatever margin is left over.
+    inline SBoxF fitBox(const SBoxF& b, double aspect) {
+        if (aspect <= 0.0 || b.w <= 0.0 || b.h <= 0.0)
+            return b;
+
+        const double BOX = b.w / b.h;
+
+        if (std::abs(BOX - aspect) < 1e-9)
+            return b;
+
+        if (aspect > BOX) { // wider than the box: bounded by width
+            const double h = b.w / aspect;
+            return SBoxF{b.x, b.y + (b.h - h) / 2.0, b.w, h};
+        }
+
+        const double w = b.h * aspect;
+        return SBoxF{b.x + (b.w - w) / 2.0, b.y, w, b.h};
+    }
+
     // The label under a workspace tile.
     //
     // Hyprland fills a workspace's name with its own id for plain numbered

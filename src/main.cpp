@@ -17,15 +17,22 @@
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/protocols/wlr-layer-shell-unstable-v1.hpp>
 
 #include <xkbcommon/xkbcommon.h>
 
+#include <algorithm>
+#include <chrono>
 #include <memory>
+#include <optional>
 #include <unordered_set>
 
 using namespace hyprspace;
@@ -34,6 +41,19 @@ namespace {
 
     std::unique_ptr<COverview> g_overview;
     std::unique_ptr<CSwitcher> g_switcher;
+
+    // Print Screen starts an external layer-shell UI (Omarchy uses a frozen
+    // hyprpicker surface plus slurp). While that UI exists, it must sit above
+    // hyprspace and receive the input that hyprspace normally owns.
+    struct SExternalUiState {
+        bool                      pending                = false;
+        bool                      active                 = false;
+        bool                      deferredSwitcherCommit = false;
+        SP<CEventLoopTimer>       timeout;
+        UP<SEventLoopDoLaterLock> layerCloseCheck;
+    };
+
+    SExternalUiState g_externalUi;
 
     // Keycodes whose press the overlay swallowed.
     //
@@ -60,12 +80,14 @@ namespace {
         CHyprSignalListener renderStage;
         CHyprSignalListener monitorRemoved;
         CHyprSignalListener configReloaded;
+        CHyprSignalListener layerOpened;
+        CHyprSignalListener layerClosed;
     };
 
     SListeners g_listeners;
 
     // Something is on screen and has to be drawn.
-    bool       active() {
+    bool active() {
         return g_overview || g_switcher;
     }
 
@@ -116,8 +138,11 @@ namespace {
     }
 
     uint32_t currentMods() {
-        const auto KEEB = g_pSeatManager->m_keyboard;
-        return KEEB ? KEEB->getModifiers() : 0;
+        // Hyprland resolves binds against the union of every keyboard. Reading
+        // only the seat's currently preferred keyboard disagrees as soon as a
+        // USB or virtual keyboard holds the modifier and another device sends
+        // the key, which can make us miss Alt while Hyprland still sees it.
+        return g_pInputManager ? g_pInputManager->getModsFromAllKBs() : 0;
     }
 
     // Keys that belong to the system, not to whatever is on screen.
@@ -136,24 +161,63 @@ namespace {
         return sym >= 0x10080000 && sym <= 0x1008FFFF;
     }
 
+    bool isScreenshotKey(xkb_keysym_t sym) {
+        return sym == XKB_KEY_Print || sym == XKB_KEY_Sys_Req || sym == XKB_KEY_XF86SelectiveScreenshot;
+    }
+
+    // Alt has to stay held while the switcher is open, but that changes which
+    // Hyprland binding Print resolves to (Omarchy uses Alt+Print for recording).
+    // Invoke the user's ordinary, unmodified screenshot binding directly so
+    // the switcher can be captured without hard-coding a distro command here.
+    bool dispatchPlainScreenshotBinding() {
+        if (!g_pKeybindManager)
+            return false;
+
+        const auto SUBMAP = g_pKeybindManager->getCurrentSubmap();
+
+        for (const auto& binding : g_pKeybindManager->m_keybinds) {
+            if (!binding || !binding->enabled || binding->modmask != 0 || binding->release || binding->longPress || binding->multiKey)
+                continue;
+            if (binding->submap != SUBMAP && !binding->submapUniversal)
+                continue;
+
+            const auto SYM = xkb_keysym_from_name(binding->key.c_str(), XKB_KEYSYM_CASE_INSENSITIVE);
+            if (!isScreenshotKey(SYM))
+                continue;
+
+            const auto DISPATCHER = g_pKeybindManager->m_dispatchers.find(binding->handler);
+            if (DISPATCHER == g_pKeybindManager->m_dispatchers.end())
+                continue;
+
+            return DISPATCHER->second(binding->arg).success;
+        }
+
+        return false;
+    }
+
     // The modifier a key is itself, or 0 for an ordinary key.
     uint32_t modifierBitFor(xkb_keysym_t sym) {
         switch (sym) {
-            case XKB_KEY_Super_L:
-            case XKB_KEY_Super_R:
-            case XKB_KEY_Meta_L:
-            case XKB_KEY_Meta_R: return HL_MODIFIER_META;
+        case XKB_KEY_Super_L:
+        case XKB_KEY_Super_R:
+        case XKB_KEY_Meta_L:
+        case XKB_KEY_Meta_R:
+            return HL_MODIFIER_META;
 
-            case XKB_KEY_Alt_L:
-            case XKB_KEY_Alt_R: return HL_MODIFIER_ALT;
+        case XKB_KEY_Alt_L:
+        case XKB_KEY_Alt_R:
+            return HL_MODIFIER_ALT;
 
-            case XKB_KEY_Control_L:
-            case XKB_KEY_Control_R: return HL_MODIFIER_CTRL;
+        case XKB_KEY_Control_L:
+        case XKB_KEY_Control_R:
+            return HL_MODIFIER_CTRL;
 
-            case XKB_KEY_Shift_L:
-            case XKB_KEY_Shift_R: return HL_MODIFIER_SHIFT;
+        case XKB_KEY_Shift_L:
+        case XKB_KEY_Shift_R:
+            return HL_MODIFIER_SHIFT;
 
-            default: return 0;
+        default:
+            return 0;
         }
     }
 
@@ -173,6 +237,110 @@ namespace {
             return MODS;
 
         return pressed ? (MODS | BIT) : (MODS & ~BIT);
+    }
+
+    PHLMONITOR overlayMonitor() {
+        if (switcherLive())
+            return g_switcher->monitor();
+        if (overviewLive())
+            return g_overview->monitor();
+        return nullptr;
+    }
+
+    bool isExternalUiLayer(const PHLLS& layer) {
+        const auto MONITOR = overlayMonitor();
+        if (!layer || !MONITOR || !layer->m_mapped || layer->m_layer != ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY || layer->m_monitor.lock() != MONITOR)
+            return false;
+
+        // These are the namespaces used by Omarchy's freeze + selection pair.
+        // The geometry fallback keeps the hand-off useful for other screenshot
+        // tools without yielding to ordinary notifications.
+        if (layer->m_namespace == "hyprpicker" || layer->m_namespace == "selection" || layer->m_namespace == "slurp")
+            return true;
+
+        return layer->m_geometry.w >= MONITOR->m_size.x * 0.8 && layer->m_geometry.h >= MONITOR->m_size.y * 0.8;
+    }
+
+    bool hasExternalUiLayer() {
+        return std::ranges::any_of(g_pCompositor->m_layers, isExternalUiLayer);
+    }
+
+    void damageOverlayMonitor() {
+        if (const auto MONITOR = overlayMonitor())
+            g_pHyprRenderer->damageMonitor(MONITOR);
+    }
+
+    void finishExternalUi() {
+        if (!g_externalUi.pending && !g_externalUi.active)
+            return;
+
+        const bool COMMIT_SWITCHER = g_externalUi.deferredSwitcherCommit && switcherLive() && !(currentMods() & HL_MODIFIER_ALT);
+
+        g_externalUi.pending                = false;
+        g_externalUi.active                 = false;
+        g_externalUi.deferredSwitcherCommit = false;
+        if (g_externalUi.timeout)
+            g_externalUi.timeout->updateTimeout(std::nullopt);
+
+        if (COMMIT_SWITCHER)
+            g_switcher->close(true);
+
+        damageOverlayMonitor();
+    }
+
+    void armExternalUi() {
+        g_externalUi.pending = true;
+
+        if (!g_externalUi.timeout) {
+            g_externalUi.timeout = makeShared<CEventLoopTimer>(
+                std::chrono::seconds(2),
+                [](SP<CEventLoopTimer> self, void*) {
+                    // A direct/fullscreen capture may not create a selector layer at
+                    // all. Do not leave the overlay's input suspended in that case.
+                    if (hasExternalUiLayer()) {
+                        g_externalUi.pending = false;
+                        g_externalUi.active  = true;
+                        damageOverlayMonitor();
+                    } else
+                        finishExternalUi();
+
+                    self->updateTimeout(std::nullopt);
+                },
+                nullptr);
+            g_pEventLoopManager->addTimer(g_externalUi.timeout);
+        } else
+            g_externalUi.timeout->updateTimeout(std::chrono::seconds(2));
+    }
+
+    bool yieldingInput() {
+        return g_externalUi.pending || g_externalUi.active;
+    }
+
+    void onLayerOpened(PHLLS layer) {
+        if (!g_externalUi.pending && !g_externalUi.active)
+            return;
+        if (!isExternalUiLayer(layer))
+            return;
+
+        g_externalUi.pending = false;
+        g_externalUi.active  = true;
+        if (g_externalUi.timeout)
+            g_externalUi.timeout->updateTimeout(std::nullopt);
+        damageOverlayMonitor();
+    }
+
+    void onLayerClosed(PHLLS) {
+        if (!g_externalUi.active)
+            return;
+
+        // Hyprland emits layer.closed from CLayerSurface::onUnmap immediately
+        // before setting m_mapped=false. Checking synchronously still sees the
+        // closing selector and can strand the input hand-off indefinitely. The
+        // idle turn runs after onUnmap has completed.
+        g_externalUi.layerCloseCheck = g_pEventLoopManager->doLaterLock([] {
+            if (g_externalUi.active && !hasExternalUiLayer())
+                finishExternalUi();
+        });
     }
 
     void destroyOverview() {
@@ -214,6 +382,12 @@ namespace {
             if (MINE)
                 info.cancelled = true;
 
+            if (yieldingInput()) {
+                if (switcherLive() && (SYM == XKB_KEY_Alt_L || SYM == XKB_KEY_Alt_R || SYM == XKB_KEY_Meta_L || SYM == XKB_KEY_Meta_R))
+                    g_externalUi.deferredSwitcherCommit = true;
+                return;
+            }
+
             if (switcherLive()) {
                 g_switcher->onKey(SYM, modsWith(SYM, false), false);
 
@@ -226,11 +400,37 @@ namespace {
             return;
         }
 
+        if (yieldingInput())
+            return;
+
         if (!ownsInput())
             return;
 
         const xkb_keysym_t SYM  = keysymFor(event.keycode);
         const uint32_t     MODS = modsWith(SYM, PRESSED);
+
+        // System keys are never normally the overlay's to eat. Print additionally
+        // arms a short hand-off window for the selector layer its binding opens.
+        if (isSystemKey(SYM)) {
+            if (isScreenshotKey(SYM)) {
+                armExternalUi();
+
+                // The switcher necessarily has Alt held, which would make
+                // Hyprland run Alt+Print (screen recording on Omarchy). Consume
+                // this event and run the configured plain Print binding instead.
+                if (switcherLive() && (MODS & HL_MODIFIER_ALT)) {
+                    info.cancelled = true;
+                    g_swallowedPresses.insert(event.keycode);
+
+                    const bool DISPATCHED = dispatchPlainScreenshotBinding();
+                    if (!DISPATCHED) {
+                        finishExternalUi();
+                        HyprlandAPI::addNotification(PHANDLE, HS_LOG_PREFIX "no usable unmodified Print binding", CHyprColor{1.0, 0.35, 0.2, 1.0}, 4000);
+                    }
+                }
+            }
+            return;
+        }
 
         // Super-modified keys keep reaching Hyprland's keybinds. That is what
         // makes the overview's own binding a toggle — the second Super+A has to
@@ -238,10 +438,6 @@ namespace {
         // your Super shortcuts working while the overview is up. The switcher is
         // exempt: it is driven by Alt and lives for a fraction of a second.
         if (overviewLive() && !switcherLive() && (MODS & HL_MODIFIER_META))
-            return;
-
-        // System keys are never the overlay's to eat.
-        if (isSystemKey(SYM))
             return;
 
         // Otherwise the overlay owns the keyboard entirely: nothing reaches
@@ -261,7 +457,7 @@ namespace {
     }
 
     void onMouseMove(Vector2D pos, Event::SCallbackInfo& info) {
-        if (!ownsInput())
+        if (yieldingInput() || !ownsInput())
             return;
 
         info.cancelled = true;
@@ -276,7 +472,7 @@ namespace {
     // falls through to whatever sits underneath, so scrolling over the switcher
     // silently scrolls the page behind it.
     void onMouseAxis(IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
-        if (!ownsInput())
+        if (yieldingInput() || !ownsInput())
             return;
 
         info.cancelled = true;
@@ -295,7 +491,7 @@ namespace {
     }
 
     void onMouseButton(IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
-        if (!ownsInput())
+        if (yieldingInput() || !ownsInput())
             return;
 
         info.cancelled     = true;
@@ -333,9 +529,14 @@ namespace {
     }
 
     void onRenderStage(eRenderStage stage) {
-        // LAST_MOMENT is after the top/overlay layer surfaces, so the overlays
-        // sit above bars and notifications the way a full-screen overview should.
-        if (stage != RENDER_LAST_MOMENT || !active())
+        if (!active())
+            return;
+
+        // Normally hyprspace is deliberately last, above bars and notifications.
+        // A screenshot selector is the one exception: draw before top/overlay
+        // layers so its frozen preview and selection UI remain visible above us.
+        const auto WANTED_STAGE = g_externalUi.active ? RENDER_POST_WINDOWS : RENDER_LAST_MOMENT;
+        if (stage != WANTED_STAGE)
             return;
 
         const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
@@ -472,6 +673,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_listeners.renderStage    = bus.render.stage.listen(onRenderStage);
     g_listeners.monitorRemoved = bus.monitor.removed.listen(onMonitorRemoved);
     g_listeners.configReloaded = bus.config.reloaded.listen([] { textures().clear(); });
+    g_listeners.layerOpened    = bus.layer.opened.listen(onLayerOpened);
+    g_listeners.layerClosed    = bus.layer.closed.listen(onLayerClosed);
+
+    // Filesystem discovery starts early but never runs on the compositor thread.
+    // In the unlikely event Alt+Tab wins the race, it gets instant placeholders
+    // which are replaced as soon as the index is ready.
+    startIconDiscovery();
 
     // Hyprland parses the config before it finishes loading plugins, so any
     // `bind = ..., hyprspace:overview` in that same config is rejected with
@@ -489,6 +697,12 @@ APICALL EXPORT void PLUGIN_EXIT() {
 
     g_listeners = {};
     g_swallowedPresses.clear();
+    if (g_externalUi.timeout)
+        g_pEventLoopManager->removeTimer(g_externalUi.timeout);
+    g_externalUi.layerCloseCheck.reset();
+    g_externalUi.timeout.reset();
+    g_externalUi = {};
 
     textures().clear();
+    finishIconDiscovery();
 }

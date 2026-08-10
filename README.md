@@ -202,8 +202,12 @@ keyboard grab, which makes it a reliable escape hatch.
 | Scroll wheel | Step the selection |
 
 Screenshot, volume, brightness and media keys are passed through to the system
-while either overlay is up, so `Print` captures the overview itself rather than
-being swallowed.
+while either overlay is up. When `Print` opens an interactive screenshot picker,
+hyprspace temporarily yields its input grab and draws underneath that picker;
+after the capture or cancellation it resumes automatically. The captured image
+still contains the overview or switcher. While the switcher has Alt held,
+`Alt+Print` deliberately invokes the configured *plain* `Print` binding instead;
+on Omarchy this takes a screenshot rather than opening its screen-recorder menu.
 
 The overview binding toggles: pressing it again closes. Super-modified keys are
 passed through to Hyprland while the overview is up, so the rest of your Super
@@ -226,6 +230,8 @@ both here and in Hyprland's own `workspace` binds.
 | Release `Alt` | Commit |
 | `Esc` | Cancel, keep the current focus |
 | `Enter` | Commit without waiting for the Alt release |
+| `W` (while holding `Alt`) | Close the selected window without focusing it; keep switching |
+| `Print` (while holding `Alt`) | Run the plain `Print` screenshot binding, not the system `Alt+Print` action |
 | `←` / `→` | Step backward / forward |
 | Mouse move, click | Hover to select, click to commit |
 | Scroll wheel | Step through the list |
@@ -362,7 +368,9 @@ Retune those in your `animations` block to change the feel.
   Chromium/Edge web-app classes (`chrome-chatgpt.com__-Default`) decoded to their
   underlying site, which is how Omarchy's web apps report themselves. SVG goes
   through librsvg, everything else through gdk-pixbuf. Unresolvable apps get a
-  tinted rounded square with their initial rather than a blank slot.
+  tinted rounded square with their initial rather than a blank slot. Desktop and
+  icon-theme discovery runs on a worker and builds one filename index, so the
+  first switcher frame never recursively scans the filesystem.
 
 Two load-order details worth knowing if you build on this: Hyprland parses the
 config *before* it finishes loading plugins, so `bind = ..., hyprspace:overview`
@@ -476,11 +484,10 @@ during the overview is restored when the overview closes, and on plugin unload.
 * **The grid is sized for up to about ten workspaces.** That is the practical
   ceiling on Omarchy and the layout is tested at every count from 1 to 10; beyond
   that the tiles keep shrinking rather than paginating.
-* **`.desktop` and icon-theme scanning happens once, on first use.** Apps
-  installed while the session is running are not picked up until the plugin is
-  reloaded. The scan walks the icon theme directories directly rather than
-  parsing `index.theme`, so on a very large theme the first switcher open can be
-  briefly slow; results are cached from then on.
+* **`.desktop` and icon-theme discovery happens once per plugin load.** It starts
+  asynchronously as the plugin loads; if Alt+Tab wins that race, lightweight
+  initial-letter placeholders are shown and replaced when discovery completes.
+  Apps installed while the session is running are picked up after a plugin reload.
 * **Windows with no resolvable icon get an initial-letter placeholder.** This is
   common for terminals launched with an unusual class and for Electron apps that
   do not set `StartupWMClass`.

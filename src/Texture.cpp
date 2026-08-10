@@ -6,7 +6,10 @@
 #include <hyprland/src/render/gl/GLTexture.hpp>
 
 #include <drm_fourcc.h>
+#include <chrono>
 #include <format>
+#include <future>
+#include <optional>
 
 namespace hyprspace {
 
@@ -37,29 +40,96 @@ namespace hyprspace {
         return tex;
     }
 
-    static CDesktopDb& desktopDb() {
-        static CDesktopDb db;
-        static bool       scanned = false;
-        if (!scanned) {
-            db.scan();
-            scanned = true;
+    namespace {
+        struct SDesktopDbState {
+            std::optional<CDesktopDb> db;
+            std::future<CDesktopDb>   pending;
+        };
+
+        SDesktopDbState& desktopDbState() {
+            static SDesktopDbState state;
+            return state;
         }
-        return db;
+
+        const CDesktopDb* desktopDbIfReady() {
+            auto& state = desktopDbState();
+            if (state.db)
+                return &*state.db;
+
+            startIconDiscovery();
+            if (!state.pending.valid() || state.pending.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+                return nullptr;
+
+            try {
+                state.db.emplace(state.pending.get());
+            } catch (...) {
+                // Discovery failure must degrade to placeholders, never make the
+                // compositor retry forever or let an exception escape rendering.
+                state.db.emplace();
+            }
+
+            return &*state.db;
+        }
+
+        SImage placeholderFor(const std::string& windowClass, int size) {
+            std::string initial = windowClass.empty() ? "?" : windowClass.substr(0, 1);
+            for (auto& c : initial)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+            return placeholderIcon(initial, std::format("Sans Bold {}", std::max(8, size / 2)), size, toRgba(config::switcherTextColor()),
+                                   toRgba(config::switcherHighlightColor()));
+        }
+    } // namespace
+
+    void startIconDiscovery() {
+        auto& state = desktopDbState();
+        if (state.db || state.pending.valid())
+            return;
+
+        try {
+            state.pending = std::async(std::launch::async, [] {
+                CDesktopDb db;
+                db.scan();
+                return db;
+            });
+        } catch (...) {
+            state.db.emplace();
+        }
+    }
+
+    void finishIconDiscovery() {
+        auto& state = desktopDbState();
+        if (state.db || !state.pending.valid())
+            return;
+
+        try {
+            state.db.emplace(state.pending.get());
+        } catch (...) {
+            state.db.emplace();
+        }
     }
 
     SP<Render::ITexture> CTextureCache::icon(const std::string& windowClass, int size) {
-        const auto key = std::format("i|{}|{}", windowClass, size);
-        if (auto it = m_cache.find(key); it != m_cache.end())
-            return it->second;
+        const auto key    = std::format("i|{}|{}", windowClass, size);
+        const auto cached = m_cache.find(key);
+        const auto db     = desktopDbIfReady();
+
+        if (cached != m_cache.end() && (!m_provisionalIcons.contains(key) || !db))
+            return cached->second;
+
+        if (!db) {
+            auto tex     = uploadImage(placeholderFor(windowClass, size));
+            m_cache[key] = tex;
+            m_provisionalIcons.insert(key);
+            return tex;
+        }
 
         SImage img;
 
-        auto& db = desktopDb();
-
         // A .desktop entry is the most reliable source; its Icon= may even be an
         // absolute path, which is what Chromium web-app entries use.
-        if (const auto name = db.iconNameForClass(windowClass); !name.empty()) {
-            if (auto path = db.resolveIconPath(name, size))
+        if (const auto name = db->iconNameForClass(windowClass); !name.empty()) {
+            if (auto path = db->resolveIconPath(name, size))
                 img = loadIcon(*path, size);
         }
 
@@ -67,7 +137,7 @@ namespace hyprspace {
         // valid icon theme name.
         if (!img.ok()) {
             for (const auto& cand : classCandidates(windowClass)) {
-                if (auto path = db.resolveIconPath(cand, size)) {
+                if (auto path = db->resolveIconPath(cand, size)) {
                     img = loadIcon(*path, size);
                     if (img.ok())
                         break;
@@ -78,21 +148,18 @@ namespace hyprspace {
         if (!img.ok()) {
             // Last resort: a tinted rounded square with the app's initial, which
             // still reads better in a switcher than an empty slot.
-            std::string initial = windowClass.empty() ? "?" : windowClass.substr(0, 1);
-            for (auto& c : initial)
-                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-
-            img = placeholderIcon(initial, std::format("Sans Bold {}", std::max(8, size / 2)), size, toRgba(config::switcherTextColor()),
-                                  toRgba(config::switcherHighlightColor()));
+            img = placeholderFor(windowClass, size);
         }
 
         auto tex     = uploadImage(img);
         m_cache[key] = tex;
+        m_provisionalIcons.erase(key);
         return tex;
     }
 
     void CTextureCache::clear() {
         m_cache.clear();
+        m_provisionalIcons.clear();
     }
 
     CTextureCache& textures() {
