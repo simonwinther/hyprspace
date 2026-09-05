@@ -9,9 +9,11 @@
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/history/WindowHistoryTracker.hpp>
+#include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
-#include <hyprland/src/managers/animation/AnimationManager.hpp>
+#include <hyprland/src/animation/AnimationManager.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
@@ -19,23 +21,21 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <algorithm>
+#include <format>
+#include <unordered_set>
 
 namespace hyprspace {
 
     CSwitcher::CSwitcher(PHLMONITOR monitor, bool forward) : m_monitor(monitor) {
         collectWindows(forward);
-        layoutPanel();
+        layoutPanel(true);
 
-        g_pAnimationManager->createAnimation(0.F, m_alpha, Config::animationTree()->getAnimationPropertyConfig("fadeIn"), AVARDAMAGE_NONE);
+        Animation::mgr()->createAnimation(0.F, m_alpha, Config::animationTree()->getAnimationPropertyConfig("fadeIn"), AVARDAMAGE_NONE);
         m_alpha->setUpdateCallback([this](auto) { damage(); });
         m_alpha->setValueAndWarp(0.F);
         *m_alpha = 1.F;
 
         damage();
-    }
-
-    CSwitcher::~CSwitcher() {
-        textures().clear();
     }
 
     void CSwitcher::collectWindows(bool forward) {
@@ -49,7 +49,7 @@ namespace hyprspace {
 
         auto gather = [&](bool wsOnly) {
             auto eligible = [&](const PHLWINDOW& w) {
-                if (!w || !w->m_isMapped || w->m_fadingOut || w->isHidden())
+                if (!w || !w->m_isMapped || w->isHidden())
                     return false;
                 if (!w->m_workspace)
                     return false;
@@ -58,17 +58,20 @@ namespace hyprspace {
                 return true;
             };
 
-            std::vector<PHLWINDOW> out;
+            std::vector<PHLWINDOW>                            out;
+            std::unordered_set<const Desktop::View::CWindow*> seen;
+            out.reserve(HISTORY.size());
+            seen.reserve(HISTORY.size());
 
             for (const auto& ref : HISTORY | std::views::reverse) {
                 const auto W = ref.lock();
-                if (eligible(W) && std::ranges::find(out, W) == out.end())
+                if (eligible(W) && seen.insert(W.get()).second)
                     out.push_back(W);
             }
 
             // Anything the tracker has not seen yet still belongs in the list.
-            for (const auto& w : g_pCompositor->m_windows) {
-                if (eligible(w) && std::ranges::find(out, w) == out.end())
+            for (const auto& w : Desktop::windowState()->windows()) {
+                if (eligible(w) && seen.insert(w.get()).second)
                     out.push_back(w);
             }
 
@@ -94,73 +97,49 @@ namespace hyprspace {
         m_selected  = forward ? (1 % N) : ((N - 1) % N);
     }
 
-    void CSwitcher::layoutPanel() {
+    void CSwitcher::layoutPanel(bool measureTitles) {
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR || m_entries.empty())
             return;
 
-        const double ICON    = config::switcherIconSize();
-        const double PAD     = config::switcherPadding();
-        const double GAP     = config::switcherGap();
-        const double CELL    = ICON + GAP;
-        const bool   TITLE   = config::switcherShowTitle();
-        const double TITLE_H = TITLE ? 34.0 : 0.0;
-
-        const double SCREEN_W = MONITOR->m_size.x;
-        const double SCREEN_H = MONITOR->m_size.y;
-
-        // Wrap into rows if a single row would not fit on screen.
-        const double maxRowW = SCREEN_W - 2 * PAD - 80;
-        const int    perRow  = std::max(1, static_cast<int>((maxRowW + GAP) / CELL));
-        const int    n       = static_cast<int>(m_entries.size());
-        const int    cols    = std::min(n, perRow);
-        const int    rows    = (n + cols - 1) / cols;
-
-        const double gridW = cols * ICON + (cols - 1) * GAP;
-        const double gridH = rows * ICON + (rows - 1) * GAP;
-
-        // Widen the panel until the titles actually fit.
-        //
-        // Sizing it from the icon grid alone gives a three-window switcher
-        // about 300px of title, which turns every real window title into
-        // "Build h..." — the icons already said which app it is, so a title
-        // that cannot show what distinguishes two windows of the same app is
-        // dead weight. Measure the longest one and let the panel grow to it,
-        // capped so a pathological title cannot span the whole screen.
-        double contentW = gridW;
-
-        if (TITLE) {
-            const std::string FONT     = config::switcherFont();
-            const double      MAX_TEXT = SCREEN_W * 0.66;
-
-            double widest = 0.0;
+        // Size to the initial titles, then keep the width stable while picking.
+        // Live title changes must not move icons out from under the pointer or
+        // measure every window again on each update or page change.
+        if (measureTitles) {
+            m_titleWidth    = 0.0;
+            const auto FONT = config::switcherFont();
             for (const auto& e : m_entries) {
-                if (e.title.empty())
+                if (e.title.empty() || !config::switcherShowTitle())
                     continue;
-
                 int tw = 0, th = 0;
                 measureText(e.title, FONT, tw, th);
-                widest = std::max(widest, static_cast<double>(tw));
+                m_titleWidth = std::max(m_titleWidth, static_cast<double>(tw));
             }
-
-            contentW = std::max(contentW, std::min(widest, MAX_TEXT));
         }
 
-        const double panelW = contentW + 2 * PAD;
-        const double panelH = gridH + 2 * PAD + TITLE_H;
+        m_layoutSize = MONITOR->m_size;
+        m_layout     = switcherLayout(static_cast<int>(m_entries.size()), m_selected,
+                                      SSwitcherLayoutParams{
+                                          .screenW     = m_layoutSize.x,
+                                          .screenH     = m_layoutSize.y,
+                                          .iconSize    = static_cast<double>(config::switcherIconSize()),
+                                          .padding     = static_cast<double>(config::switcherPadding()),
+                                          .gap         = static_cast<double>(config::switcherGap()),
+                                          .titleWidth  = config::switcherShowTitle() ? m_titleWidth : 0.0,
+                                          .titleHeight = config::switcherShowTitle() ? 34.0 : 0.0,
+                                      });
+    }
 
-        m_panel     = SBoxF{(SCREEN_W - panelW) / 2.0, (SCREEN_H - panelH) / 2.0, panelW, panelH};
-        m_titleArea = SBoxF{m_panel.x + PAD, m_panel.y + PAD + gridH + 4, contentW, TITLE_H - 4};
+    void CSwitcher::selectIndex(int index) {
+        if (m_closing || index < 0 || index >= static_cast<int>(m_entries.size()) || index == m_selected)
+            return;
 
-        for (int i = 0; i < n; ++i) {
-            const int    row   = i / cols;
-            const int    col   = i % cols;
-            const int    inRow = std::min(cols, n - row * cols);
-            const double rowW  = inRow * ICON + (inRow - 1) * GAP;
-            const double rowX  = m_panel.x + (panelW - rowW) / 2.0;
-
-            m_entries[i].box = SBoxF{rowX + col * CELL, m_panel.y + PAD + row * CELL, ICON, ICON};
+        m_selected = index;
+        if (index < m_layout.first || index >= m_layout.first + m_layout.capacity) {
+            m_hovered = -1;
+            layoutPanel();
         }
+        damage();
     }
 
     void CSwitcher::advance(bool forward) {
@@ -168,7 +147,55 @@ namespace hyprspace {
             return;
 
         const int N = static_cast<int>(m_entries.size());
-        m_selected  = ((m_selected + (forward ? 1 : -1)) % N + N) % N;
+        selectIndex(((m_selected + (forward ? 1 : -1)) % N + N) % N);
+    }
+
+    void CSwitcher::refreshWindows() {
+        if (m_closing || m_entries.empty())
+            return;
+
+        const auto SELECTED      = m_entries[m_selected].window.lock();
+        bool       layoutChanged = std::erase_if(m_entries, [](const SEntry& entry) {
+                                 const auto WINDOW = entry.window.lock();
+                                 return !WINDOW || !WINDOW->m_isMapped || WINDOW->isHidden() || !WINDOW->m_workspace;
+                                   }) > 0;
+
+        if (m_entries.empty()) {
+            close(false);
+            return;
+        }
+
+        // Preserve the selected window when an earlier entry disappears.
+        const auto selected = std::ranges::find_if(m_entries, [&](const SEntry& entry) { return entry.window.lock() == SELECTED; });
+        m_selected          = selected != m_entries.end() ? static_cast<int>(selected - m_entries.begin()) : std::min(m_selected, static_cast<int>(m_entries.size()) - 1);
+
+        bool contentChanged = false;
+        for (auto& entry : m_entries) {
+            const auto  WINDOW = entry.window.lock();
+            const auto& TITLE  = WINDOW->m_title.empty() ? WINDOW->m_class : WINDOW->m_title;
+            const auto& CLASS  = WINDOW->m_class.empty() ? WINDOW->m_initialClass : WINDOW->m_class;
+            if (entry.title != TITLE || entry.appClass != CLASS) {
+                entry.title    = TITLE;
+                entry.appClass = CLASS;
+                contentChanged = true;
+            }
+        }
+
+        if (const auto MONITOR = m_monitor.lock(); MONITOR && MONITOR->m_size != m_layoutSize)
+            layoutChanged = true;
+
+        if (layoutChanged) {
+            m_hovered = -1;
+            layoutPanel();
+        }
+        if (layoutChanged || contentChanged)
+            damage();
+    }
+
+    void CSwitcher::reconfigure() {
+        layoutPanel(true);
+        m_hovered = -1;
+        m_scroll.reset();
         damage();
     }
 
@@ -221,9 +248,10 @@ namespace hyprspace {
     // ---------------------------------------------------------------- input --
 
     bool CSwitcher::onKey(xkb_keysym_t sym, uint32_t mods, bool pressed) {
-        if (!pressed)
+        if (!pressed || m_closing || m_entries.empty())
             return true;
 
+        m_scroll.reset();
         const bool SHIFT = mods & HL_MODIFIER_SHIFT;
 
         switch (sym) {
@@ -250,6 +278,25 @@ namespace hyprspace {
             advance(true);
             return true;
 
+        case XKB_KEY_Up:
+            selectIndex(switcherRowStep(static_cast<int>(m_entries.size()), m_selected, m_layout.columns, -1));
+            return true;
+        case XKB_KEY_Down:
+            selectIndex(switcherRowStep(static_cast<int>(m_entries.size()), m_selected, m_layout.columns, 1));
+            return true;
+        case XKB_KEY_Home:
+            selectIndex(0);
+            return true;
+        case XKB_KEY_End:
+            selectIndex(static_cast<int>(m_entries.size()) - 1);
+            return true;
+        case XKB_KEY_Page_Up:
+        case XKB_KEY_Page_Down: {
+            const int64_t offset = sym == XKB_KEY_Page_Down ? m_layout.capacity : -static_cast<int64_t>(m_layout.capacity);
+            selectIndex(static_cast<int>(std::clamp<int64_t>(m_selected + offset, 0, static_cast<int64_t>(m_entries.size()) - 1)));
+            return true;
+        }
+
         case XKB_KEY_w:
         case XKB_KEY_W:
             closeSelection();
@@ -273,10 +320,10 @@ namespace hyprspace {
             close(true);
     }
 
-    void CSwitcher::onMouseMove(const Vector2D& globalPos) {
+    int CSwitcher::entryAt(const Vector2D& globalPos) const {
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR)
-            return;
+            return -1;
 
         const auto LOCAL = globalPos - MONITOR->m_position;
 
@@ -286,32 +333,40 @@ namespace hyprspace {
         // dead strip between every pair: dragging along the row drops the
         // highlight in each gap and the selection appears to stutter and catch
         // on nothing. Grow each box by half the gap so the row is continuous.
-        const double PAD = config::switcherGap() / 2.0;
+        const double PAD = m_layout.gap / 2.0;
 
-        int hit = -1;
-        for (size_t i = 0; i < m_entries.size(); ++i) {
-            const auto& b = m_entries[i].box;
-            if (LOCAL.x >= b.x - PAD && LOCAL.x <= b.x + b.w + PAD && LOCAL.y >= b.y - PAD && LOCAL.y <= b.y + b.h + PAD) {
-                hit = static_cast<int>(i);
-                break;
-            }
+        for (const auto& tile : m_layout.tiles) {
+            const auto& b = tile.box;
+            if (LOCAL.x >= b.x - PAD && LOCAL.x < b.x + b.w + PAD && LOCAL.y >= b.y - PAD && LOCAL.y < b.y + b.h + PAD)
+                return static_cast<int>(tile.key);
         }
 
+        return -1;
+    }
+
+    void CSwitcher::onMouseMove(const Vector2D& globalPos) {
+        const int hit = entryAt(globalPos);
         if (hit == m_hovered)
             return;
 
         m_hovered = hit;
-        if (hit >= 0)
-            m_selected = hit;
+        if (hit >= 0 && config::followMouse()) {
+            m_scroll.reset();
+            selectIndex(hit);
+        }
 
         damage();
     }
 
-    void CSwitcher::onScroll(double delta) {
-        if (m_entries.empty() || m_closing || delta == 0.0)
+    void CSwitcher::onScroll(const SScrollInput& event) {
+        if (m_entries.empty() || m_closing)
             return;
 
-        advance(delta > 0.0);
+        const int STEPS = m_scroll.steps(event);
+        if (STEPS == 0)
+            return;
+        const int N = static_cast<int>(m_entries.size());
+        selectIndex(static_cast<int>(((static_cast<int64_t>(m_selected) + STEPS) % N + N) % N));
     }
 
     bool CSwitcher::onMouseButton(uint32_t button, bool pressed) {
@@ -320,8 +375,13 @@ namespace hyprspace {
         if (!pressed)
             return true;
 
-        if (button == MOUSE_LEFT)
-            close(m_hovered >= 0);
+        m_scroll.reset();
+        if (button == MOUSE_LEFT) {
+            const int HIT = entryAt(g_pInputManager->getMouseCoordsInternal());
+            if (HIT >= 0)
+                selectIndex(HIT);
+            close(HIT >= 0);
+        }
 
         return true;
     }
@@ -336,31 +396,37 @@ namespace hyprspace {
     std::vector<UP<IPassElement>> CSwitcher::buildPass() {
         std::vector<UP<IPassElement>> out;
 
-        if (m_entries.empty())
+        const auto MONITOR = m_monitor.lock();
+        if (!MONITOR || m_entries.empty() || m_layout.tiles.empty())
             return out;
 
         const float A = std::clamp(m_alpha->value(), 0.F, 1.F);
         if (A < 0.01F)
             return out;
 
-        const auto FONT     = config::switcherFont();
-        const int  ROUNDING = config::switcherRounding();
-        const int  ICON     = config::switcherIconSize();
+        const auto   FONT     = config::switcherFont();
+        const int    ROUNDING = config::switcherRounding();
+        const double SCALE    = MONITOR->m_scale;
+        const int    ICON     = std::max(1, static_cast<int>(std::ceil(m_layout.iconSize * SCALE)));
+        const CBox   CLIP     = {m_layout.panel.x * SCALE, m_layout.panel.y * SCALE, m_layout.panel.w * SCALE, m_layout.panel.h * SCALE};
 
         auto rect = [&](const SBoxF& b, const CHyprColor& col, int round) {
-            out.emplace_back(makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = CBox{b.x, b.y, b.w, b.h}, .color = col, .round = round}));
+            out.emplace_back(makeUnique<CRectPassElement>(CRectPassElement::SRectData{
+                .box = CBox{b.x * SCALE, b.y * SCALE, b.w * SCALE, b.h * SCALE}, .color = col, .round = static_cast<int>(round * SCALE), .clipBox = CLIP}));
         };
         auto tex = [&](SP<Render::ITexture> t, const CBox& box, float a) {
-            out.emplace_back(makeUnique<CTexPassElement>(CTexPassElement::SRenderData{.tex = t, .box = box, .a = a}));
+            out.emplace_back(makeUnique<CTexPassElement>(
+                CTexPassElement::SRenderData{.tex = t, .box = CBox{box.x * SCALE, box.y * SCALE, box.w * SCALE, box.h * SCALE}, .a = a, .clipBox = CLIP}));
         };
 
         // --- panel -------------------------------------------------------------
         const auto BG = config::switcherBgColor();
-        rect(m_panel, BG.modifyA(BG.a * A), ROUNDING);
+        rect(m_layout.panel, BG.modifyA(BG.a * A), ROUNDING);
 
         // --- selection highlight ----------------------------------------------
-        if (m_selected >= 0 && m_selected < static_cast<int>(m_entries.size())) {
-            const auto&  sel  = m_entries[m_selected].box;
+        const auto selected = std::ranges::find(m_layout.tiles, static_cast<size_t>(m_selected), &STile::key);
+        if (selected != m_layout.tiles.end()) {
+            const auto&  sel  = selected->box;
             const double grow = 10.0;
 
             const auto HL = config::switcherHighlightColor();
@@ -368,34 +434,46 @@ namespace hyprspace {
         }
 
         // --- icons -------------------------------------------------------------
-        for (size_t i = 0; i < m_entries.size(); ++i) {
-            const auto& e = m_entries[i];
+        bool pendingIcons = false;
+        for (const auto& tile : m_layout.tiles) {
+            const auto& e = m_entries[tile.key];
 
             auto icon = textures().icon(e.appClass, ICON);
-            if (!icon)
+            pendingIcons |= icon.pending;
+            if (!icon.texture)
                 continue;
 
             // Unselected entries sit back slightly, as in GNOME's switcher.
-            const float ALPHA = (static_cast<int>(i) == m_selected ? 1.F : 0.65F) * A;
-            tex(icon, CBox{e.box.x, e.box.y, e.box.w, e.box.h}, ALPHA);
+            const float ALPHA = (static_cast<int>(tile.key) == m_selected ? 1.F : 0.65F) * A;
+            tex(icon.texture, CBox{tile.box.x, tile.box.y, tile.box.w, tile.box.h}, ALPHA);
         }
 
         // --- title of the selected entry ---------------------------------------
-        if (config::switcherShowTitle() && m_selected >= 0 && m_selected < static_cast<int>(m_entries.size())) {
+        if (config::switcherShowTitle() && m_layout.title.h > 0 && m_selected >= 0 && m_selected < static_cast<int>(m_entries.size())) {
             const auto& title = m_entries[m_selected].title;
 
             if (!title.empty()) {
-                auto t = textures().text(title, FONT, config::switcherTextColor(), static_cast<int>(m_titleArea.w));
+                auto t = textures().text(title, FONT, config::switcherTextColor(), std::max(1, static_cast<int>(m_layout.title.w)), SCALE);
                 if (t) {
-                    tex(t, CBox{m_titleArea.x + (m_titleArea.w - t->m_size.x) / 2.0, m_titleArea.y + (m_titleArea.h - t->m_size.y) / 2.0, t->m_size.x, t->m_size.y}, A);
+                    const auto SIZE = t->m_size / SCALE;
+                    tex(t, CBox{m_layout.title.cx() - SIZE.x / 2, m_layout.title.cy() - SIZE.y / 2, SIZE.x, SIZE.y}, A);
                 }
             }
         }
 
+        if (m_layout.pages > 1) {
+            const auto LABEL = std::format("{} / {}", m_layout.page + 1, m_layout.pages);
+            auto       t     = textures().text(LABEL, FONT, config::switcherTextColor(), std::max(1, static_cast<int>(m_layout.pageLabel.w)), SCALE);
+            if (t) {
+                const auto SIZE = t->m_size / SCALE;
+                tex(t, CBox{m_layout.pageLabel.cx() - SIZE.x / 2, m_layout.pageLabel.cy() - SIZE.y / 2, SIZE.x, SIZE.y}, A * 0.6F);
+            }
+        }
+
         // Discovery is deliberately asynchronous. Keep requesting inexpensive
-        // frames only while provisional icons remain, so completed results can
-        // replace them without ever blocking the first Alt+Tab.
-        if (textures().hasPendingIcons())
+        // frames only while visible provisional icons remain. Icons on other
+        // pages must not keep the switcher redrawing after discovery finishes.
+        if (pendingIcons)
             damage();
 
         return out;

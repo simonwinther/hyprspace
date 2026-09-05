@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+state=${HYPRSPACE_TEST_STATE:?test fixture requires an isolated state directory}
+printf '%s\n' "$*" >> "$state/calls"
+
+case "$*" in
+    '-j version')
+        case "${HYPRSPACE_TEST_VERSION:-ok}" in
+            unavailable) exit 1 ;;
+            malformed) echo '{}' ;;
+            commit) echo '{"abiHash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_aq_0.14_hu_0.14_hg_0.5_hc_0.1_hlg_0.6"}' ;;
+            library) echo '{"abiHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_aq_0.14_hu_0.15_hg_0.5_hc_0.1_hlg_0.6"}' ;;
+            *) echo '{"abiHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_aq_0.14_hu_0.14_hg_0.5_hc_0.1_hlg_0.6"}' ;;
+        esac
+        ;;
+    '-j instances')
+        echo '[{"instance":"hyprspace-test","pid":12345}]'
+        ;;
+    '-j plugin list')
+        if [[ "${HYPRSPACE_TEST_LIST:-ok}" == malformed ]]; then
+            echo '{}'
+        elif [[ -f "$state/loaded" ]]; then
+            echo '[{"name":"hyprspace"}]'
+        else
+            echo '[]'
+        fi
+        ;;
+    'plugin unload '*)
+        case "${HYPRSPACE_TEST_UNLOAD:-ok}" in
+            error) echo 'error: plugin not found'; exit 1 ;;
+            response) echo 'error: plugin not found' ;;
+            remains) echo ok ;;
+            *) rm -f -- "$state/loaded"; echo ok ;;
+        esac
+        ;;
+    'plugin load '*)
+        if [[ "${HYPRSPACE_TEST_LOAD:-ok}" == fail-new ]] && cmp -s "$3" "$state/new.so"; then
+            echo 'error: fixture load failed'
+        elif [[ "${HYPRSPACE_TEST_LOAD:-ok}" == registered-error ]]; then
+            touch "$state/loaded"
+            echo 'error: fixture load failed'
+        else
+            touch "$state/loaded"
+            echo ok
+        fi
+        ;;
+    reload) echo ok ;;
+    *) echo "unexpected fixture command: $*" >&2; exit 2 ;;
+esac

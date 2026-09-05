@@ -1,0 +1,6 @@
+.git
+build
+dist
+test/test_hyprspace
+test/test_hyprspace-asan
+**/__pycache__

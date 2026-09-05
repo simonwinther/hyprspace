@@ -3,6 +3,8 @@
 #pragma once
 
 #include "Geometry.hpp"
+#include "Input.hpp"
+#include "SwitcherLayout.hpp"
 #include "globals.hpp"
 
 #include <hyprland/src/desktop/DesktopTypes.hpp>
@@ -20,7 +22,6 @@ namespace hyprspace {
       public:
         // `forward` picks the initial step direction (Alt+Tab vs Alt+Shift+Tab).
         CSwitcher(PHLMONITOR monitor, bool forward);
-        ~CSwitcher();
 
         // Advance the selection; called for each further Alt+Tab press.
         void advance(bool forward);
@@ -45,9 +46,11 @@ namespace hyprspace {
         void onModifiersChanged(uint32_t mods);
         void onMouseMove(const Vector2D& globalPos);
         bool onMouseButton(uint32_t button, bool pressed);
-        void onScroll(double delta);
+        void onScroll(const SScrollInput& event);
 
         // --- render ---
+        void                          refreshWindows();
+        void                          reconfigure();
         std::vector<UP<IPassElement>> buildPass();
         void                          damage();
 
@@ -56,22 +59,25 @@ namespace hyprspace {
             PHLWINDOWREF window;
             std::string  title;
             std::string  appClass;
-            SBoxF        box; // icon box, monitor-local logical px
         };
 
         void collectWindows(bool forward);
-        void layoutPanel();
+        void layoutPanel(bool measureTitles = false);
+        void selectIndex(int index);
+        int  entryAt(const Vector2D& globalPos) const;
         void commit();
         void closeSelection();
 
         PHLMONITORREF       m_monitor;
         std::vector<SEntry> m_entries;
 
-        SBoxF m_panel     = {};
-        SBoxF m_titleArea = {};
-        int   m_selected  = 0;
-        int   m_hovered   = -1;
-        bool  m_closing   = false;
+        SSwitcherLayout    m_layout;
+        Vector2D           m_layoutSize;
+        double             m_titleWidth = 0;
+        CScrollAccumulator m_scroll;
+        int                m_selected = 0;
+        int                m_hovered  = -1;
+        bool               m_closing  = false;
 
         PHLANIMVAR<float> m_alpha;
 

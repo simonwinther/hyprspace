@@ -1,0 +1,50 @@
+name: Draft release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, such as v1.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # The release job checks out the same ref as these checks. Manual runs must
+  # select the existing tag in GitHub's "Use workflow from" selector as well.
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  draft:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Package the tested tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          bash scripts/dist.sh "$TAG"
+          python3 scripts/check-release.py --tag "$TAG" --notes > dist/release-notes.md
+      - name: Create draft with source and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" "dist/hyprspace-${TAG#v}.tar.gz" dist/SHA256SUMS \
+            --verify-tag --draft --title "hyprspace $TAG" --notes-file dist/release-notes.md

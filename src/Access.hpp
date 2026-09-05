@@ -1,4 +1,4 @@
-// hyprspace - controlled access to one protected Hyprland renderer method.
+// hyprspace - controlled access to protected Hyprland renderer methods.
 //
 // IHyprRenderer::renderWindow() is `protected`, but it is the only sane way to
 // rasterise an arbitrary window (including ones on hidden workspaces) into an
@@ -21,14 +21,29 @@ namespace hyprspace::hidden {
 
     PFnRenderWindow renderWindowPtr();
 
-    template <PFnRenderWindow M>
-    struct CThief {
+    template <PFnRenderWindow M> struct CThief {
         friend PFnRenderWindow renderWindowPtr() {
             return M;
         }
     };
 
     template struct CThief<&Render::IHyprRenderer::renderWindow>;
+
+    using PFnShouldBlurWindow = bool (Render::IHyprRenderer::*)(PHLWINDOW);
+
+    PFnShouldBlurWindow shouldBlurWindowPtr();
+
+    template <PFnShouldBlurWindow M> struct CBlurThief {
+        friend PFnShouldBlurWindow shouldBlurWindowPtr() {
+            return M;
+        }
+    };
+
+    template struct CBlurThief<&Render::IHyprRenderer::shouldBlur>;
+
+    inline bool shouldBlurWindow(PHLWINDOW window) {
+        return (g_pHyprRenderer.get()->*shouldBlurWindowPtr())(window);
+    }
 
     // Render `window` through Hyprland's own window renderer into whatever
     // framebuffer is currently bound.

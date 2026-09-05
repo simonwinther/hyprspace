@@ -1,4 +1,6 @@
 build/
+dist/
+__pycache__/
 test/test_hyprspace
 test/test_hyprspace-asan
 *.o

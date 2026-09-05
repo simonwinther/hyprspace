@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "Raster.hpp"
+#include "ImageCache.hpp"
 #include "globals.hpp"
 
 #include <hyprland/src/render/Texture.hpp>
@@ -20,18 +20,21 @@ namespace hyprspace {
     // that GPU memory is not held while idle.
     class CTextureCache {
       public:
+        struct SIconTexture {
+            SP<Render::ITexture> texture;
+            bool                 pending = false;
+        };
+
         // maxWidth is logical px; `scale` is the output device scale, so the
         // glyphs are rasterised at native resolution. The returned texture's
         // m_size is therefore in physical px.
         SP<Render::ITexture> text(const std::string& str, const std::string& font, const CHyprColor& color, int maxWidth = 0, double scale = 1.0);
 
         // `size` is in physical px.
-        SP<Render::ITexture> icon(const std::string& windowClass, int size);
+        SIconTexture icon(const std::string& windowClass, int size);
 
-        void clear();
-        bool hasPendingIcons() const {
-            return !m_provisionalIcons.empty();
-        }
+        void   clear();
+        void   invalidate(); // also discard decoded icons after config/theme changes
         size_t size() const {
             return m_cache.size();
         }
@@ -39,6 +42,7 @@ namespace hyprspace {
       private:
         std::unordered_map<std::string, SP<Render::ITexture>> m_cache;
         std::unordered_set<std::string>                       m_provisionalIcons;
+        CImageCache                                           m_iconImages;
     };
 
     CTextureCache& textures();

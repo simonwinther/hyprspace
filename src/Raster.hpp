@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -20,7 +21,8 @@ namespace hyprspace {
         std::vector<uint8_t> data;
 
         bool ok() const {
-            return w > 0 && h > 0 && !data.empty();
+            return w > 0 && h > 0 && stride > 0 && static_cast<size_t>(w) <= static_cast<size_t>(stride) / 4 &&
+                   static_cast<size_t>(h) <= data.size() / static_cast<size_t>(stride);
         }
     };
 
@@ -36,7 +38,7 @@ namespace hyprspace {
     SImage renderText(const std::string& text, const std::string& font, const SRgba& color, int maxWidth = 0, double scale = 1.0);
 
     // Measure without rasterising.
-    void   measureText(const std::string& text, const std::string& font, int& outW, int& outH, double scale = 1.0);
+    void measureText(const std::string& text, const std::string& font, int& outW, int& outH, double scale = 1.0);
 
     // Load an icon file (svg/svgz via librsvg, everything else via gdk-pixbuf)
     // scaled to fit size x size, centred, preserving aspect ratio.

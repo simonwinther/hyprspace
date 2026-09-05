@@ -1,0 +1,23 @@
+name: Bug report
+description: Something is not working as expected.
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include what you expected and the steps to reproduce it.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Hyprland and plugin versions
+      description: Paste hyprctl version, your hyprspace tag or commit, and whether you installed with make or hyprpm.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Relevant setup or logs
+      description: Monitor layout, fullscreen state, plugin settings, screenshots or errors. Remove private window titles and paths.

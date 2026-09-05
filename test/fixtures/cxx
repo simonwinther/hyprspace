@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Exercise Make's dependencies and publication without compiling Hyprland.
+set -euo pipefail
+state=${HYPRSPACE_TEST_STATE:?}
+if [[ "$*" == --version ]]; then
+    echo 'g++ (hyprspace test compiler) 1'
+    exit 0
+fi
+
+kind=link
+output=
+dep=
+target=
+source_file=
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -c) kind=compile; source_file=$2; shift ;;
+        -o) output=$2; shift ;;
+        -MF) dep=$2; shift ;;
+        -MT) target=$2; shift ;;
+    esac
+    shift
+done
+printf '%s\n' "$kind" >> "$state/compiler-calls"
+printf '%s\n' "$kind output" > "${output:?}"
+if [[ "$kind" == compile ]]; then
+    printf '%s: %s %s\n' "$target" "$source_file" "$state/system-header" > "${dep:?}"
+elif [[ "${HYPRSPACE_TEST_LINK:-ok}" == fail ]]; then
+    echo 'fixture linker failure' >&2
+    exit 1
+fi

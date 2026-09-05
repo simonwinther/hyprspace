@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == '-D --defined-only /proc/12345/exe' ]]; then
+    # An export with the requested name as a prefix must not count as a match.
+    if [[ "${HYPRSPACE_TEST_SYMBOLS:-ok}" == missing ]]; then
+        echo '0000000000000000 T _ZN6Render13IHyprRenderer14requiredSymbolEvExtra'
+    else
+        echo '0000000000000000 T _ZN6Render13IHyprRenderer14requiredSymbolEv'
+    fi
+else
+    exec "${HYPRSPACE_TEST_NM:?}" "$@"
+fi

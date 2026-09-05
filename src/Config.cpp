@@ -24,6 +24,7 @@ namespace hyprspace::config {
             SP<Config::Values::CBoolValue>   overviewShowLabels;
             SP<Config::Values::CBoolValue>   overviewIncludeSpecial;
             SP<Config::Values::CBoolValue>   overviewAllWorkspaces;
+            SP<Config::Values::CBoolValue>   overviewAllMonitors;
             SP<Config::Values::CColorValue>  overviewLabelColor;
             SP<Config::Values::CColorValue>  overviewTileBgColor;
             SP<Config::Values::CColorValue>  overviewTileBorderColor;
@@ -78,6 +79,7 @@ namespace hyprspace::config {
         g_values.overviewShowLabels   = reg<CBoolValue>("plugin:hyprspace:overview:workspace_labels", "show the workspace name under each tile", true);
         g_values.overviewIncludeSpecial = reg<CBoolValue>("plugin:hyprspace:overview:include_special", "include special (scratchpad) workspaces", true);
         g_values.overviewAllWorkspaces  = reg<CBoolValue>("plugin:hyprspace:overview:all_workspaces", "show every workspace on the monitor, not just the active one", true);
+        g_values.overviewAllMonitors    = reg<CBoolValue>("plugin:hyprspace:overview:all_monitors", "open the overview on every monitor at once, not just the one under the pointer", true);
         g_values.overviewLabelColor     = reg<CColorValue>("plugin:hyprspace:overview:label_color", "workspace label colour", 0xffcdd6f4);
         g_values.overviewTileBgColor    = reg<CColorValue>("plugin:hyprspace:overview:tile_bg_color", "backing plate drawn behind each workspace tile", 0xd90d0d14);
         g_values.overviewTileBorderColor = reg<CColorValue>("plugin:hyprspace:overview:tile_border_color", "hairline drawn around every workspace tile", 0x1affffff);
@@ -142,6 +144,9 @@ namespace hyprspace::config {
     }
     bool overviewAllWorkspaces() {
         return g_values.overviewAllWorkspaces ? g_values.overviewAllWorkspaces->value() : true;
+    }
+    bool overviewAllMonitors() {
+        return g_values.overviewAllMonitors ? g_values.overviewAllMonitors->value() : true;
     }
     CHyprColor overviewLabelColor() {
         return colorOf(g_values.overviewLabelColor, 0xffcdd6f4);

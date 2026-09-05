@@ -25,6 +25,7 @@ namespace hyprspace::config {
     bool        overviewShowLabels();
     bool        overviewIncludeSpecial();
     bool        overviewAllWorkspaces();
+    bool        overviewAllMonitors();
     CHyprColor  overviewLabelColor();
     CHyprColor  overviewTileBgColor();
     CHyprColor  overviewTileBorderColor();

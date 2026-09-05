@@ -19,35 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
--------------------------------------------------------------------------------
-
-ATTRIBUTION
-
-hyprspace was written with reference to two MIT-licensed projects. No code was
-copied verbatim — the current Hyprland plugin API has moved on from what either
-targets — but the following ideas were taken from them:
-
-  hyprview — https://github.com/yz778/hyprview
-  Copyright (c) 2025 yz778
-  MIT License
-
-    * Rendering each window into its own offscreen framebuffer with Hyprland's
-      own window renderer, then compositing those textures as overview tiles.
-    * Driving the open/close transition from a Hyprland animated variable so the
-      overview inherits the user's configured animation curve.
-    * Restoring the previously focused window when the overview is dismissed
-      without a selection.
-
-  hyprshell — https://github.com/H3rmt/hyprshell
-  Copyright (c) 2025 Enrico Stemmer
-  MIT License
-
-    * The shape of a GNOME-style Alt+Tab switcher: a most-recently-used window
-      list, stepping while the modifier is held, committing on modifier release
-      and cancelling on Escape.
-    * Resolving a window's app icon by matching its class against .desktop
-      entries, including the StartupWMClass fallback.
-
-Both projects are MIT licensed; their licence text is reproduced above in the
-same form it applies to this work.

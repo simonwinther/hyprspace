@@ -1,7 +1,11 @@
 #include "Overview.hpp"
 
+#include "Access.hpp"
 #include "Config.hpp"
 #include "Focus.hpp"
+#include "OverviewLayout.hpp"
+#include "PassElements.hpp"
+#include "PreviewStyle.hpp"
 #include "Texture.hpp"
 
 #include <hyprland/src/Compositor.hpp>
@@ -9,15 +13,20 @@
 #include <hyprland/src/config/shared/animation/AnimationTree.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/desktop/state/GlobalWindowController.hpp>
+#include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/layout/target/Target.hpp>
+#include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
-#include <hyprland/src/managers/animation/AnimationManager.hpp>
+#include <hyprland/src/animation/AnimationManager.hpp>
+#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/render/pass/BorderPassElement.hpp>
 #include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
+#include <hyprland/src/state/WorkspaceState.hpp>
 
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -61,7 +70,7 @@ namespace hyprspace {
             }
         }
 
-        g_pAnimationManager->createAnimation(0.F, m_progress, Config::animationTree()->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
+        Animation::mgr()->createAnimation(0.F, m_progress, Config::animationTree()->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
         m_progress->setUpdateCallback([this](auto) { damage(); });
         m_progress->setValueAndWarp(0.F);
         *m_progress = 1.F;
@@ -73,51 +82,19 @@ namespace hyprspace {
         restoreRealWindows();
 
         m_capture.clear();
-        textures().clear();
 
         // Windows on inactive workspaces were un-suspended for the overview; let
         // the compositor work out the correct state again.
-        g_pCompositor->updateSuspendedStates();
+        Desktop::globalWindowController()->updateSuspendedStates();
     }
 
-    // Where a window is drawn inside its workspace.
-    //
-    // Normally that is simply where it is. A fullscreen window is the exception:
-    // it covers the entire output, so drawing it truthfully collapses the tile
-    // to one window and hides everything else on that workspace. Hyprland keeps
-    // the layout's bounding box in m_position/m_size and only overrides
-    // m_realPosition/m_realSize while fullscreen, so the box the window returns
-    // to on un-fullscreening is still there to read — draw it there instead.
     SBoxF COverview::boxFor(const PHLWINDOW& w) const {
         const auto MONITOR = m_monitor.lock();
         if (!w || !MONITOR)
             return m_usable;
 
-        // A fullscreen window covers the whole output, so drawing it where it
-        // really is collapses its tile to that one window. Fullscreen is applied
-        // to the drawn geometry, not to the window's place in the layout, so the
-        // layout target still holds the box it returns to. m_position/m_size do
-        // not: those follow the window and read back as the fullscreen box.
-        //
-        // isFullscreen() is not usable here — it returns true for ordinary tiled
-        // windows on this Hyprland. This is the field hyprctl reports as
-        // "fullscreen".
-        if (w->m_fullscreenState.internal != FSMODE_NONE) {
-            if (const auto TARGET = w->m_target) {
-                const CBox  B = TARGET->position();
-                const SBoxF R{B.x - MONITOR->m_position.x, B.y - MONITOR->m_position.y, B.w, B.h};
-
-                if (R.w >= 1.0 && R.h >= 1.0)
-                    return R;
-            }
-
-            // No layout target to ask — a window mapped straight into fullscreen
-            // may never have had one. Centre it rather than fill the tile.
-            return insetBox(m_usable, 0.62);
-        }
-
-        const auto POS = w->m_realPosition->value() - MONITOR->m_position;
-        const auto SZ  = w->m_realSize->value();
+        const auto POS = w->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) - MONITOR->m_position;
+        const auto SZ  = w->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
 
         if (SZ.x < 1.0 || SZ.y < 1.0)
             return m_usable;
@@ -134,8 +111,8 @@ namespace hyprspace {
 
         // Group this monitor's mapped windows by workspace. Empty workspaces are
         // skipped entirely — there is nothing to look at on them.
-        for (const auto& w : g_pCompositor->m_windows) {
-            if (!w || !w->m_isMapped || w->m_fadingOut)
+        for (const auto& w : Desktop::windowState()->windows()) {
+            if (!w || !w->m_isMapped || w->isHidden())
                 continue;
             if (w->m_monitor.lock() != MONITOR)
                 continue;
@@ -146,7 +123,7 @@ namespace hyprspace {
             if (WS->m_isSpecialWorkspace && !SPECIAL)
                 continue;
 
-            const auto SIZE = w->m_realSize->value();
+            const auto SIZE = w->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
             if (SIZE.x < 1.0 || SIZE.y < 1.0)
                 continue;
 
@@ -163,12 +140,6 @@ namespace hyprspace {
             SWindowSlot slot;
             slot.window = w;
 
-            // A fullscreen window covers the whole output, including the strip
-            // the bar reserved. Tiles map the usable area, so its real geometry
-            // would be drawn hanging outside the tile it belongs to. It fills
-            // the screen, so let it fill the tile.
-            slot.rect = boxFor(w);
-
             it->windows.push_back(slot);
 
             // Clients on hidden workspaces are suspended by the compositor and
@@ -177,6 +148,74 @@ namespace hyprspace {
         }
 
         std::ranges::sort(m_entries, [](const SEntry& a, const SEntry& b) { return a.workspaceId < b.workspaceId; });
+        for (auto& entry : m_entries)
+            updateWindowLayout(entry);
+    }
+
+    void COverview::refreshWindows() {
+        const auto MONITOR = m_monitor.lock();
+        if (!MONITOR)
+            return;
+
+        // Keep workspace tiles and surviving window slots stable while clients
+        // open, close or move. Alpha belongs to the slot until it leaves us.
+        for (auto& entry : m_entries) {
+            std::erase_if(entry.windows, [&](const SWindowSlot& slot) {
+                const auto W = slot.window.lock();
+                if (W && W->m_isMapped && !W->isHidden() && W->m_monitor.lock() == MONITOR && W->m_workspace && W->m_workspace->m_id == entry.workspaceId)
+                    return false;
+                if (W && W->m_isMapped && slot.alphaHidden)
+                    W->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(slot.savedAlpha);
+                return true;
+            });
+        }
+
+        for (const auto& w : Desktop::windowState()->windows()) {
+            if (!w || !w->m_isMapped || w->isHidden() || w->m_monitor.lock() != MONITOR || !w->m_workspace)
+                continue;
+            const auto SIZE = w->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+            if (SIZE.x < 1 || SIZE.y < 1)
+                continue;
+            const auto ENTRY = std::ranges::find_if(m_entries, [&](const SEntry& entry) { return entry.workspaceId == w->m_workspace->m_id; });
+            if (ENTRY == m_entries.end() || std::ranges::any_of(ENTRY->windows, [&](const SWindowSlot& slot) { return slot.window.lock() == w; }))
+                continue;
+
+            SWindowSlot slot;
+            slot.window = w;
+            ENTRY->windows.push_back(slot);
+        }
+        hideRealWindows();
+    }
+
+    void COverview::updateWindowLayout(SEntry& entry) {
+        std::vector<SOverviewWindowInput> input;
+        entry.drawOrder.clear();
+        for (size_t i = 0; i < entry.windows.size(); ++i) {
+            auto&      slot = entry.windows[i];
+            const auto W    = slot.window.lock();
+            if (!W || !W->m_isMapped || W->isHidden() || !W->m_workspace)
+                continue;
+
+            slot.desktopRect = boxFor(W);
+            slot.fullscreen  = Fullscreen::controller()->getFullscreenModes(W).internal;
+            slot.renderLayer = slot.fullscreen != Fullscreen::FSMODE_NONE ? 1 : (W->m_isFloating && W->shouldRenderOverFullscreen() ? 2 : 0);
+            input.push_back({slot.desktopRect, slot.fullscreen != Fullscreen::FSMODE_NONE});
+            entry.drawOrder.push_back(i);
+        }
+
+        // A focus commit can change fullscreen and desktop geometry. Keep the
+        // overview endpoint fixed throughout the closing animation.
+        if (!m_closing) {
+            const auto LAYOUT    = layoutOverviewWindows(input, m_usable, m_drag.active() ? entry.previewColumns : 0);
+            entry.spread         = LAYOUT.spread;
+            entry.previewColumns = LAYOUT.columns;
+            for (size_t i = 0; i < entry.drawOrder.size(); ++i)
+                entry.windows[entry.drawOrder[i]].previewRect = LAYOUT.boxes[i];
+        }
+
+        // Match the compositor at the desktop endpoint without changing the
+        // preview order: fullscreen covers tiled windows, with permitted floats above.
+        std::stable_sort(entry.drawOrder.begin(), entry.drawOrder.end(), [&](size_t a, size_t b) { return entry.windows[a].renderLayer < entry.windows[b].renderLayer; });
     }
 
     void COverview::computeLayout() {
@@ -225,6 +264,7 @@ namespace hyprspace {
     //
     // An index of -1 anchors nothing and every tile simply collapses.
     void COverview::anchorAnimation(int entryIdx) {
+        m_animationAnchor = entryIdx;
         const SBoxF FULL = m_usable;
 
         for (size_t i = 0; i < m_entries.size(); ++i) {
@@ -270,7 +310,7 @@ namespace hyprspace {
         for (auto& e : m_entries) {
             for (auto& slot : e.windows) {
                 const auto W = slot.window.lock();
-                if (!W)
+                if (!W || slot.alphaHidden)
                     continue;
 
                 auto& av         = W->alpha(Desktop::View::WINDOW_ALPHA_FADE);
@@ -287,7 +327,7 @@ namespace hyprspace {
                 if (!slot.alphaHidden)
                     continue;
 
-                if (const auto W = slot.window.lock())
+                if (const auto W = slot.window.lock(); W && W->m_isMapped)
                     W->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(slot.savedAlpha);
 
                 slot.alphaHidden = false;
@@ -302,6 +342,17 @@ namespace hyprspace {
     SBoxF COverview::windowBoxInCell(const SBoxF& r, const SBoxF& cell) const {
         const double s = m_usable.w > 0 ? cell.w / m_usable.w : 0.0;
         return SBoxF{cell.x + (r.x - m_usable.x) * s, cell.y + (r.y - m_usable.y) * s, r.w * s, r.h * s};
+    }
+
+    SWindowPreviewGeometry COverview::geometryFor(const SEntry& entry, const SWindowSlot& slot) const {
+        const auto MONITOR = m_monitor.lock();
+        if (!MONITOR)
+            return {};
+
+        const bool  ANCHOR = m_animationAnchor >= 0 && &entry == &m_entries[m_animationAnchor];
+        const auto  CELL   = ANCHOR ? entry.target : interpolate(entry);
+        const SBoxF CLIP   = slot.fullscreen != Fullscreen::FSMODE_NONE ? SBoxF{0, 0, MONITOR->m_size.x, MONITOR->m_size.y} : m_usable;
+        return overviewWindowGeometry({windowBoxInCell(slot.previewRect, CELL), CELL}, {slot.desktopRect, CLIP}, ANCHOR, m_progress->value());
     }
 
     void COverview::selectIndex(int idx) {
@@ -340,14 +391,14 @@ namespace hyprspace {
     // tile can outlive the workspace it stands for. Recreate it on demand rather
     // than letting the tile go dead.
     PHLWORKSPACE COverview::workspaceForEntry(const SEntry& e) const {
-        if (const auto WS = g_pCompositor->getWorkspaceByID(e.workspaceId))
+        if (const auto WS = State::workspaceState()->query().id(e.workspaceId).run())
             return WS;
 
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR || e.workspaceId < 1)
             return nullptr;
 
-        return g_pCompositor->createNewWorkspace(e.workspaceId, MONITOR->m_id);
+        return State::workspaceState()->create(e.workspaceId, MONITOR->m_id);
     }
 
     // Hyprland animates a workspace change itself: the outgoing workspace
@@ -363,7 +414,7 @@ namespace hyprspace {
         if (!MONITOR)
             return;
 
-        for (const auto& WS : g_pCompositor->getWorkspacesCopy()) {
+        for (const auto& WS : State::workspaceState()->workspacesCopy()) {
             if (!WS || WS->m_monitor.lock() != MONITOR)
                 continue;
 
@@ -380,10 +431,30 @@ namespace hyprspace {
     }
 
     void COverview::commitSelection() {
+        // Everything here acts on this overview's own monitor. Several
+        // overviews can be up at once, and the one being picked from is not
+        // necessarily the monitor Hyprland considers current — the pointer
+        // moved there, but the input grab stopped focus following it — so the
+        // current-monitor actions would rearrange the screen you are not
+        // looking at.
+        const auto MONITOR = m_monitor.lock();
+        if (!MONITOR)
+            return;
+
         // A number key naming a workspace with no tile of its own still goes
         // there — it is just empty, and Hyprland creates it as needed.
         if (m_gotoWorkspace > 0) {
-            (void)Config::Actions::changeWorkspace(std::to_string(m_gotoWorkspace));
+            // One that already exists may live on another output, and moving it
+            // is Hyprland's call to make, exactly as Super+N would. One that
+            // does not exist yet belongs to the monitor whose overview asked
+            // for it rather than to whichever one holds focus.
+            const auto WS = State::workspaceState()->query().id(m_gotoWorkspace).run();
+
+            if (WS)
+                (void)Config::Actions::changeWorkspace(std::to_string(m_gotoWorkspace));
+            else if (const auto FRESH = State::workspaceState()->create(m_gotoWorkspace, MONITOR->m_id))
+                MONITOR->changeWorkspace(FRESH);
+
             return;
         }
 
@@ -394,7 +465,7 @@ namespace hyprspace {
 
         // Clicking a specific window inside a tile goes straight to it.
         if (const auto W = m_clickedWindow.lock()) {
-            focusSelection(W, config::warpCursor());
+            focusSelection(W, config::warpCursor(), true);
             return;
         }
 
@@ -403,9 +474,14 @@ namespace hyprspace {
             return;
 
         if (WS->m_isSpecialWorkspace)
-            (void)Config::Actions::toggleSpecial(WS);
-        else if (WS != m_monitor->m_activeWorkspace)
-            (void)Config::Actions::changeWorkspaceOnCurrentMonitor(WS);
+            MONITOR->setSpecialWorkspace(WS);
+        else if (WS != MONITOR->m_activeWorkspace)
+            MONITOR->changeWorkspace(WS);
+
+        if (const auto W = WS->getFocusCandidate(); W && W->m_isMapped && !W->isHidden()) {
+            focusSelection(W, config::warpCursor());
+            return;
+        }
 
         // Focus a window on the target workspace, otherwise input:follow_mouse
         // resolves the pointer's position and undoes the switch. Prefer the one
@@ -430,6 +506,7 @@ namespace hyprspace {
         if (!pressed)
             return true; // swallow releases too while we hold the grab
 
+        m_scroll.reset();
         const bool SHIFT = mods & HL_MODIFIER_SHIFT;
 
         auto       move = [&](EDirection dir) {
@@ -506,13 +583,16 @@ namespace hyprspace {
     }
 
     int COverview::tileAtLocal(const Vector2D& local) const {
-        return tileAt(m_tiles, local.x, local.y);
-    }
-
-    double COverview::tileScale(int idx) const {
-        if (idx < 0 || idx >= static_cast<int>(m_tiles.size()) || m_usable.w <= 0)
-            return 1.0;
-        return m_tiles[idx].box.w / m_usable.w;
+        for (int i = static_cast<int>(m_tiles.size()) - 1; i >= 0; --i) {
+            const auto& entry = m_entries[m_tiles[i].key];
+            if (interpolate(entry).contains(local.x, local.y))
+                return i;
+            for (const auto index : entry.drawOrder) {
+                if (previewContains(geometryFor(entry, entry.windows[index]), local.x, local.y))
+                    return i;
+            }
+        }
+        return -1;
     }
 
     PHLWINDOW COverview::windowAtLocal(const Vector2D& local) const {
@@ -525,12 +605,11 @@ namespace hyprspace {
             return nullptr;
 
         const auto& entry = m_entries[m_tiles[IDX].key];
-        const SBoxF cell  = m_tiles[IDX].box;
-
         // Topmost window wins, matching the order the tile is drawn in.
-        for (const auto& slot : entry.windows | std::views::reverse) {
-            if (windowBoxInCell(slot.rect, cell).contains(local.x, local.y))
-                return slot.window.lock();
+        for (const auto index : entry.drawOrder | std::views::reverse) {
+            const auto& slot = entry.windows[index];
+            if (const auto W = slot.window.lock(); W && W->m_isMapped && !W->isHidden() && previewContains(geometryFor(entry, slot), local.x, local.y))
+                return W;
         }
 
         return nullptr;
@@ -544,20 +623,20 @@ namespace hyprspace {
             return false;
 
         const auto& entry = m_entries[m_tiles[IDX].key];
-        const SBoxF cell  = m_tiles[IDX].box;
-
-        for (const auto& slot : entry.windows | std::views::reverse) {
-            const SBoxF b = windowBoxInCell(slot.rect, cell);
-            if (!b.contains(local.x, local.y))
+        for (const auto index : entry.drawOrder | std::views::reverse) {
+            const auto& slot     = entry.windows[index];
+            const auto  GEOMETRY = geometryFor(entry, slot);
+            if (!previewContains(GEOMETRY, local.x, local.y))
                 continue;
+            const auto& b = GEOMETRY.box;
 
             const auto W = slot.window.lock();
-            if (!W)
-                return false;
+            if (!W || !W->m_isMapped)
+                continue;
 
             // A fullscreen window has no geometry of its own to move or resize;
             // driving the layout engine at one is asking for trouble.
-            if (W->m_fullscreenState.internal != FSMODE_NONE)
+            if (Fullscreen::controller()->getFullscreenModes(W).internal != Fullscreen::FSMODE_NONE)
                 return false;
 
             m_drag             = {};
@@ -568,6 +647,7 @@ namespace hyprspace {
             m_drag.grabOffset  = Vector2D{local.x - b.x, local.y - b.y};
             m_drag.lastPos     = local;
             m_drag.box         = b;
+            m_drag.scale       = slot.desktopRect.w > 0 ? b.w / slot.desktopRect.w : 1.0;
 
             selectIndex(IDX);
             damage();
@@ -579,7 +659,7 @@ namespace hyprspace {
 
     void COverview::updateDrag(const Vector2D& local) {
         const auto W = m_drag.window.lock();
-        if (!W) {
+        if (!W || !W->m_isMapped) {
             m_drag = {};
             return;
         }
@@ -602,10 +682,9 @@ namespace hyprspace {
             m_drag.box.y      = local.y - m_drag.grabOffset.y;
             m_drag.targetTile = tileAtLocal(local);
         } else {
-            // The tile is a scaled-down monitor, so undo that scale to get the
-            // resize the pointer actually described. Hyprland's own mouse resize
-            // is incremental too, which is what keeps tiled splits sane.
-            const double S = tileScale(m_drag.sourceTile);
+            // A spread preview has its own scale inside the workspace tile.
+            // Hold the pickup scale throughout this incremental resize.
+            const double S = m_drag.scale;
             if (S > 0.0001)
                 (void)Config::Actions::resize(Vector2D{DELTA.x / S, DELTA.y / S}, true, W);
         }
@@ -621,7 +700,7 @@ namespace hyprspace {
         const bool MOVED = m_drag.moved && m_drag.mode == EDrag::MOVE;
         m_drag           = {};
 
-        if (!W || !MOVED || SRC < 0 || DST < 0 || SRC >= static_cast<int>(m_tiles.size()) || DST >= static_cast<int>(m_tiles.size())) {
+        if (!W || !W->m_isMapped || !MOVED || SRC < 0 || DST < 0 || SRC >= static_cast<int>(m_tiles.size()) || DST >= static_cast<int>(m_tiles.size())) {
             damage();
             return;
         }
@@ -640,7 +719,10 @@ namespace hyprspace {
             return;
         }
 
-        (void)Config::Actions::moveToWorkspace(WS, /* silent */ true, W);
+        if (!Config::Actions::moveToWorkspace(WS, /* silent */ true, W)) {
+            damage();
+            return;
+        }
 
         // Carry the slot across by hand instead of rebuilding the layout: the
         // tiles must not reshuffle under the pointer mid-gesture, and the slot
@@ -653,6 +735,9 @@ namespace hyprspace {
             src.erase(it);
             m_entries[DST_KEY].windows.push_back(moved);
         }
+
+        updateWindowLayout(m_entries[SRC_KEY]);
+        updateWindowLayout(m_entries[DST_KEY]);
 
         damage();
     }
@@ -670,25 +755,34 @@ namespace hyprspace {
         }
 
         const int IDX = tileAtLocal(LOCAL);
+        const auto WINDOW = windowAtLocal(LOCAL);
 
-        if (IDX == m_hovered)
+        if (IDX == m_hovered && WINDOW == m_hoveredWindow.lock())
             return;
 
         m_hovered = IDX;
+        m_hoveredWindow = WINDOW;
 
-        if (IDX >= 0 && config::followMouse())
+        if (IDX >= 0 && config::followMouse()) {
+            m_scroll.reset();
             selectIndex(IDX);
+        }
 
         damage();
     }
 
     // Scrolling steps the selection, the same order Tab walks.
-    void COverview::onScroll(double delta) {
-        if (m_tiles.empty() || m_closing || delta == 0.0)
+    void COverview::onScroll(const SScrollInput& event) {
+        if (m_tiles.empty() || m_closing || m_drag.active())
             return;
 
+        const int STEPS = m_scroll.steps(event);
+        if (STEPS == 0)
+            return;
+
+        m_clickedWindow.reset();
         const int N = static_cast<int>(m_tiles.size());
-        selectIndex(((m_selected + (delta > 0.0 ? 1 : -1)) % N + N) % N);
+        selectIndex(static_cast<int>(((static_cast<int64_t>(m_selected) + STEPS) % N + N) % N));
     }
 
     bool COverview::onMouseButton(uint32_t button, bool pressed, uint32_t mods) {
@@ -701,7 +795,14 @@ namespace hyprspace {
 
         const Vector2D LOCAL = g_pInputManager->getMouseCoordsInternal() - MONITOR->m_position;
 
+        if (pressed)
+            m_scroll.reset();
+
         if (!pressed) {
+            // Only the button that started a drag can finish it.
+            if ((m_drag.mode == EDrag::MOVE && button != MOUSE_LEFT) || (m_drag.mode == EDrag::RESIZE && button != MOUSE_RIGHT))
+                return true;
+
             // A Super+drag that never moved falls through as a plain click, so a
             // mis-grab still does the obvious thing rather than nothing.
             const bool WAS_MOVE  = m_drag.mode == EDrag::MOVE;
@@ -730,8 +831,9 @@ namespace hyprspace {
         }
 
         if (button == MOUSE_LEFT) {
-            if (m_hovered >= 0) {
-                selectIndex(m_hovered);
+            const int HIT = tileAtLocal(LOCAL);
+            if (HIT >= 0) {
+                selectIndex(HIT);
                 m_clickedWindow = windowAtLocal(LOCAL);
                 close(true);
             } else
@@ -765,29 +867,32 @@ namespace hyprspace {
         // that begins a frame later.
         if (m_closing)
             settleWorkspaceAnimations();
+        else
+            refreshWindows();
 
         m_capture.beginFrame();
+        m_needsBlur = false;
 
         for (auto& e : m_entries) {
+            updateWindowLayout(e);
             for (auto& slot : e.windows) {
                 const auto W = slot.window.lock();
-                if (!W || !W->m_isMapped)
+                if (!W || !W->m_isMapped || W->isHidden() || !W->m_workspace)
                     continue;
 
-                // Re-assert: a workspace change elsewhere can re-suspend these.
-                if (!e.isActive)
-                    W->setSuspended(false);
+                // Fullscreen can suspend other clients even on the active workspace.
+                W->setSuspended(false);
 
-                // Track live geometry, so a Super+right-drag resize and the
-                // relayout that follows a drag between workspaces are both
-                // visible in the grid as they happen.
-                slot.rect = boxFor(W);
+                slot.blur = hidden::shouldBlurWindow(W);
+                m_needsBlur |= slot.blur;
 
                 m_capture.capture(W, MONITOR);
             }
         }
 
         m_capture.endFrame();
+
+        m_hoveredWindow = m_drag.active() ? nullptr : windowAtLocal(g_pInputManager->getMouseCoordsInternal() - MONITOR->m_position);
 
         damage();
     }
@@ -822,6 +927,29 @@ namespace hyprspace {
         };
         auto logicalSize = [&](const SP<Render::ITexture>& t) { return Vector2D{t->m_size.x / SCALE, t->m_size.y / SCALE}; };
 
+        auto border = [&](const SBoxF& b, const CHyprColor& col, double width, double round) {
+            if (width <= 0)
+                return;
+            out.emplace_back(makeUnique<CBorderPassElement>(CBorderPassElement::SBorderData{
+                .box        = px(b),
+                .grad1      = Config::CGradientValueData(col),
+                .round      = static_cast<int>(round * SCALE),
+                .borderSize = std::max(1, static_cast<int>(width * SCALE)),
+                .outerRound = static_cast<int>((round + width) * SCALE),
+            }));
+        };
+        auto windowTexture = [&](const PHLWINDOW& w, SP<Render::ITexture> t, const SBoxF& b, float visibility, double round, bool blur,
+                                 std::optional<SBoxF> clip = std::nullopt) {
+            const float OPACITY = windowPreviewOpacity(w->alphaValue(Desktop::View::WINDOW_ALPHA_ACTIVE), w->m_ruleApplicator->opaque().valueOrDefault(), visibility);
+            if (OPACITY <= 0)
+                return;
+            CTexPassElement::SRenderData data{
+                .tex = t, .box = px(b), .a = OPACITY, .blurA = previewUnit(visibility), .round = static_cast<int>(round * SCALE), .blur = blur};
+            if (clip)
+                data.clipBox = px(*clip);
+            out.emplace_back(makeUnique<CWindowPreviewPassElement>(std::move(data), w));
+        };
+
         const SBoxF MONBOX{0, 0, MONITOR->m_size.x, MONITOR->m_size.y};
 
         // The window being carried is drawn last, over everything, so it is not
@@ -833,6 +961,8 @@ namespace hyprspace {
         auto outline = [&](const SBoxF& b, const CHyprColor& col, double width) {
             if (b.w < 1 || b.h < 1 || width <= 0)
                 return;
+
+            width = std::min(width, std::min(b.w, b.h) / 2.0);
 
             rect(SBoxF{b.x, b.y, b.w, width}, col);                       // top
             rect(SBoxF{b.x, b.y + b.h - width, b.w, width}, col);         // bottom
@@ -858,13 +988,13 @@ namespace hyprspace {
             const bool   DROP     = DRAGGED && static_cast<int>(i) == m_drag.targetTile && m_drag.targetTile != m_drag.sourceTile;
             const bool   HOVERED  = DROP || (!DRAGGED && static_cast<int>(i) == m_hovered);
 
-            // The active workspace starts full-screen and is already opaque; the
-            // rest fade in as the grid forms. Unselected tiles then sit back a
-            // little so the selection reads at a glance without hurting how much
-            // of each workspace you can actually make out.
-            const float  FADE  = entry.isActive ? 1.F : PROGRESS;
-            const float  ALPHA = FADE * (SELECTED || PROGRESS < 0.2F ? 1.F : 0.9F);
-            const double round = ROUNDING * PROGRESS;
+            // The zoom's anchor stays visible all the way to the desktop, also
+            // when closing into a different workspace from the original one.
+            const bool   ANCHOR = static_cast<int>(m_tiles[i].key) == m_animationAnchor;
+            const auto   STYLE  = workspacePreviewStyle(ANCHOR, SELECTED, PROGRESS);
+            const float  FADE   = STYLE.visibility;
+            const float  ALPHA  = STYLE.windowVisibility;
+            const double round  = ROUNDING * PROGRESS;
 
             // A hairline around every tile so they read as distinct cards against
             // the wallpaper, with the accent border replacing it on selection.
@@ -876,87 +1006,65 @@ namespace hyprspace {
                 const auto   COLOUR = STRONG ? config::overviewActiveBorder() : (HOVERED ? config::overviewHoverBorder() : config::overviewTileBorderColor());
                 const double W      = ACCENT ? BORDER : 1.0;
 
-                if (W > 0)
-                    rect(SBoxF{cell.x - W, cell.y - W, cell.w + W * 2.0, cell.h + W * 2.0}, COLOUR.modifyA(COLOUR.a * PROGRESS * FADE), round + W);
+                border(cell, COLOUR.modifyA(COLOUR.a * PROGRESS * FADE), W, round);
             }
 
-            // A backing plate, so a workspace's empty area reads as a screen
-            // rather than a hole punched in the dim.
+            // Fade the backing away with the zoom. Leaving it behind a full-size
+            // transparent window would change the background at the hand-off.
             const auto TILEBG = config::overviewTileBgColor();
-            rect(cell, TILEBG.modifyA(TILEBG.a * FADE), round);
+            rect(cell, TILEBG.modifyA(TILEBG.a * STYLE.plateVisibility), round);
 
-            // A fullscreen window is drawn where it will land when it stops
-            // being fullscreen, not where it actually is. Drawn literally it
-            // covers the whole tile and the overview stops answering the one
-            // question it exists to answer: where is everything. Its restored
-            // box is still readable while it is fullscreen, so use that and
-            // mark it, rather than fading it out or hiding what it covers.
-            const SWindowSlot* fsSlot = nullptr;
-            for (const auto& slot : entry.windows) {
+            for (const auto index : entry.drawOrder) {
+                const auto& slot = entry.windows[index];
                 const auto W = slot.window.lock();
-                if (W && W != DRAGGED && W->m_fullscreenState.internal != FSMODE_NONE)
-                    fsSlot = &slot;
-            }
-
-            for (const auto& slot : entry.windows) {
-                const auto W = slot.window.lock();
-                if (!W || W == DRAGGED)
+                if (!W || !W->m_isMapped || W->isHidden() || W == DRAGGED)
                     continue;
 
                 auto t = m_capture.textureFor(W);
                 if (!t)
                     continue;
 
-                SBoxF b = windowBoxInCell(slot.rect, cell);
+                const auto  GEOMETRY = geometryFor(entry, slot);
+                const auto& b        = GEOMETRY.box;
                 if (b.w < 1 || b.h < 1)
                     continue;
 
-                // The fullscreen window's texture is fullscreen-shaped while its
-                // box is not, so fit rather than stretch.
-                if (&slot == fsSlot && t->m_size.y > 0)
-                    b = fitBox(b, static_cast<double>(t->m_size.x) / t->m_size.y);
+                const float VISIBILITY = overviewWindowVisibility(W->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN), ANCHOR, PROGRESS);
+                windowTexture(W, t, b, ALPHA * VISIBILITY, round, slot.blur, GEOMETRY.clip);
 
-                // Clip to the cell: a window can reach past the usable area, and
-                // would otherwise spill over the tile's edges.
-                tex(t, b, ALPHA, round, cell);
-            }
-
-            // Say which window is the fullscreen one, since it is no longer
-            // drawn fullscreen and nothing else would give it away.
-            if (fsSlot) {
-                // Same fit the texture got, so the outline hugs what is drawn.
-                SBoxF      FSBOX = windowBoxInCell(fsSlot->rect, cell);
-                const auto FST   = m_capture.textureFor(fsSlot->window.lock());
-
-                if (FST && FST->m_size.y > 0)
-                    FSBOX = fitBox(FSBOX, static_cast<double>(FST->m_size.x) / FST->m_size.y);
-
-                if (FSBOX.w >= 1 && FSBOX.h >= 1) {
-                    const double MARK = std::max(2.0, static_cast<double>(config::overviewBorderSize()));
-                    const auto   COL  = config::overviewFullscreenBorder();
-
-                    outline(FSBOX, COL.modifyA(COL.a * FADE), MARK);
-
-                    if (PROGRESS > 0.35F) {
-                        const float BADGE_A = (PROGRESS - 0.35F) / 0.65F * FADE;
-
-                        if (auto tb = textures().text("fullscreen", FONT, COL, static_cast<int>(cell.w), SCALE)) {
-                            const auto       SZ    = logicalSize(tb);
-                            constexpr double PAD_X = 10, PAD_Y = 4, INSET = 8;
-
-                            const SBoxF      badge{
-                                     FSBOX.x + INSET + MARK,
-                                     FSBOX.y + INSET + MARK,
-                                     SZ.x + PAD_X * 2,
-                                     SZ.y + PAD_Y * 2,
-                            };
-
-                            const auto BGCOL = config::overviewTitleBgColor();
-                            rect(badge, BGCOL.modifyA(BGCOL.a * BADGE_A), badge.h / 2.0);
-                            tex(tb, SBoxF{badge.x + PAD_X, badge.y + PAD_Y, SZ.x, SZ.y}, BADGE_A);
-                        }
-                    }
+                const bool   FULLSCREEN = slot.fullscreen != Fullscreen::FSMODE_NONE;
+                const bool   HOVER      = !m_drag.active() && W == m_hoveredWindow.lock();
+                const double MARK       = FULLSCREEN || HOVER ? std::max(2, BORDER) : 1;
+                const auto   COL        = HOVER ? config::overviewActiveBorder() : (FULLSCREEN ? config::overviewFullscreenBorder() : config::overviewTileBorderColor());
+                if (FULLSCREEN || HOVER || entry.spread) {
+                    const auto&  clip = GEOMETRY.clip;
+                    const double left = std::max(b.x, clip.x), top = std::max(b.y, clip.y);
+                    outline({left, top, std::min(b.x + b.w, clip.x + clip.w) - left, std::min(b.y + b.h, clip.y + clip.h) - top}, COL.modifyA(COL.a * FADE * PROGRESS),
+                            MARK);
                 }
+
+                if (!FULLSCREEN || PROGRESS <= 0.35F)
+                    continue;
+
+                constexpr double PAD_X = 10, PAD_Y = 4, INSET = 8;
+                const int        TEXT_WIDTH = static_cast<int>(b.w - 2 * (INSET + MARK + PAD_X));
+                if (TEXT_WIDTH <= 0)
+                    continue;
+
+                const auto LABEL = slot.fullscreen == Fullscreen::FSMODE_FULLSCREEN ? "fullscreen" : "maximized";
+                const auto tb    = textures().text(LABEL, FONT, COL, TEXT_WIDTH, SCALE);
+                if (!tb)
+                    continue;
+
+                const auto SZ = logicalSize(tb);
+                if (SZ.y + 2 * (INSET + MARK + PAD_Y) > b.h)
+                    continue;
+
+                const float BADGE_A = (PROGRESS - 0.35F) / 0.65F * FADE;
+                const SBoxF badge{b.x + INSET + MARK, b.y + INSET + MARK, SZ.x + PAD_X * 2, SZ.y + PAD_Y * 2};
+                const auto  BGCOL = config::overviewTitleBgColor();
+                rect(badge, BGCOL.modifyA(BGCOL.a * BADGE_A), badge.h / 2.0);
+                tex(tb, {badge.x + PAD_X, badge.y + PAD_Y, SZ.x, SZ.y}, BADGE_A);
             }
 
             // --- workspace label ------------------------------------------------
@@ -1002,8 +1110,8 @@ namespace hyprspace {
                 };
 
                 const auto OUTLINE = config::overviewActiveBorder();
-                rect(SBoxF{box.x - BORDER, box.y - BORDER, box.w + BORDER * 2.0, box.h + BORDER * 2.0}, OUTLINE, ROUNDING + BORDER);
-                tex(t, box, 0.92F, ROUNDING);
+                border(box, OUTLINE, BORDER, ROUNDING);
+                windowTexture(DRAGGED, t, box, 0.92F, ROUNDING, hidden::shouldBlurWindow(DRAGGED));
             }
         }
 

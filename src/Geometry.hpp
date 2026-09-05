@@ -82,30 +82,36 @@ namespace hyprspace {
             return out;
 
         size_t bestCols = 1;
-        double bestW    = -1.0;
+        double bestH    = -1.0;
 
         for (size_t cols = 1; cols <= n; ++cols) {
             const size_t rows = (n + cols - 1) / cols;
 
-            // Width-limited and height-limited candidates; the cell must satisfy
-            // both, so take the smaller.
-            const double byW = (usableW - p.gap * static_cast<double>(cols - 1)) / static_cast<double>(cols);
-            const double byH = ((usableH - rowGap * static_cast<double>(rows - 1)) / static_cast<double>(rows)) * aspect;
+            // Constrain the two dimensions independently, then convert the
+            // width allowance into a height before comparing them. Keeping the
+            // candidate in height-space makes the calculation symmetric for
+            // landscape and portrait cells: an aspect below one never has to be
+            // multiplied into a width and divided back out later.
+            const double maxW = (usableW - p.gap * static_cast<double>(cols - 1)) / static_cast<double>(cols);
+            const double maxH = (usableH - rowGap * static_cast<double>(rows - 1)) / static_cast<double>(rows);
 
-            const double cellW = std::min(byW, byH);
-            if (cellW > bestW) {
-                bestW    = cellW;
+            if (maxW <= 0.0 || maxH <= 0.0)
+                continue;
+
+            const double cellH = std::min(maxH, maxW / aspect);
+            if (cellH > bestH) {
+                bestH    = cellH;
                 bestCols = cols;
             }
         }
 
-        if (bestW <= 0)
+        if (bestH <= 0)
             return out;
 
         const size_t cols   = bestCols;
         const size_t rows   = (n + cols - 1) / cols;
-        const double cellW  = bestW;
-        const double cellH  = cellW / aspect;
+        const double cellH  = bestH;
+        const double cellW  = cellH * aspect;
         const double gridH  = cellH * static_cast<double>(rows) + rowGap * static_cast<double>(rows - 1);
         const double startY = p.padding + (usableH - gridH) / 2.0;
 

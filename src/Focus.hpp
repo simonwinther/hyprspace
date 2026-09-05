@@ -16,6 +16,8 @@ namespace hyprspace {
     // silently does nothing. Hyprland's own window-cycling actions solve this by
     // warping the cursor onto the new window and replaying a synthetic motion
     // with m_forcedFocus pinned; hyprspace does the same.
-    void focusSelection(PHLWINDOW window, bool warpCursor);
+    // An explicit overview click may reveal a window that the compositor's
+    // fullscreen focus policy would otherwise redirect away from.
+    void focusSelection(PHLWINDOW window, bool warpCursor, bool revealFullscreenBlocked = false);
 
 } // namespace hyprspace

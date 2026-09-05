@@ -1,40 +1,39 @@
 // hyprspace - custom render pass elements.
 //
-// Both overlays hook Hyprland's render pass as EK_CUSTOM elements. Hyprland
-// calls draw(), we return a list of ordinary pass elements (textures, rects),
-// and the element renderer draws them with the correct damage region. No raw
-// GL calls, so this stays backend-agnostic.
+// The switcher returns ordinary texture and rect elements. Window previews use
+// the existing texture/blur compositor, advertising their blur requirements to
+// Hyprland's pass so damage and cached backgrounds remain correct.
 
 #pragma once
 
 #include "globals.hpp"
 
 #include <hyprland/src/render/pass/PassElement.hpp>
+#include <hyprland/src/render/pass/TexPassElement.hpp>
 
 namespace hyprspace {
 
-    class COverview;
     class CSwitcher;
 
-    class COverviewPassElement : public IPassElement {
+    // A captured window keeps the compositor's blur policy, while the capture
+    // itself remains independent of monitor framebuffers and blur resources.
+    class CWindowPreviewPassElement : public CTexPassElement {
       public:
-        explicit COverviewPassElement(COverview* overview) : m_overview(overview) {}
-        virtual ~COverviewPassElement() = default;
+        CWindowPreviewPassElement(SRenderData data, PHLWINDOW window);
 
-        virtual std::vector<UP<IPassElement>> draw() override;
-        virtual bool                          needsLiveBlur() override;
-        virtual bool                          needsPrecomputeBlur() override;
-        virtual std::optional<CBox>           boundingBox() override;
+        std::vector<UP<IPassElement>> draw() override;
+        bool                          needsLiveBlur() override;
+        bool                          needsPrecomputeBlur() override;
 
-        virtual const char*                   passName() override {
-            return "hyprspace::COverviewPassElement";
+        const char* passName() override {
+            return "hyprspace::CWindowPreviewPassElement";
         }
-        virtual ePassElementType type() override {
+        ePassElementType type() override {
             return EK_CUSTOM;
         }
 
       private:
-        COverview* m_overview = nullptr;
+        PHLWINDOWREF m_window;
     };
 
     class CSwitcherPassElement : public IPassElement {
@@ -47,7 +46,7 @@ namespace hyprspace {
         virtual bool                          needsPrecomputeBlur() override;
         virtual std::optional<CBox>           boundingBox() override;
 
-        virtual const char*                   passName() override {
+        virtual const char* passName() override {
             return "hyprspace::CSwitcherPassElement";
         }
         virtual ePassElementType type() override {

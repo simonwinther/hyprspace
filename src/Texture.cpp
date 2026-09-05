@@ -109,19 +109,27 @@ namespace hyprspace {
         }
     }
 
-    SP<Render::ITexture> CTextureCache::icon(const std::string& windowClass, int size) {
+    CTextureCache::SIconTexture CTextureCache::icon(const std::string& windowClass, int size) {
         const auto key    = std::format("i|{}|{}", windowClass, size);
         const auto cached = m_cache.find(key);
         const auto db     = desktopDbIfReady();
 
-        if (cached != m_cache.end() && (!m_provisionalIcons.contains(key) || !db))
-            return cached->second;
+        const bool PROVISIONAL = m_provisionalIcons.contains(key);
+        if (cached != m_cache.end() && (!PROVISIONAL || !db))
+            return {cached->second, PROVISIONAL};
+
+        if (const auto* img = m_iconImages.get(key)) {
+            auto tex     = uploadImage(*img);
+            m_cache[key] = tex;
+            m_provisionalIcons.erase(key);
+            return {tex, false};
+        }
 
         if (!db) {
             auto tex     = uploadImage(placeholderFor(windowClass, size));
             m_cache[key] = tex;
             m_provisionalIcons.insert(key);
-            return tex;
+            return {tex, true};
         }
 
         SImage img;
@@ -145,21 +153,29 @@ namespace hyprspace {
             }
         }
 
-        if (!img.ok()) {
+        const bool RESOLVED = img.ok();
+        if (!RESOLVED) {
             // Last resort: a tinted rounded square with the app's initial, which
             // still reads better in a switcher than an empty slot.
             img = placeholderFor(windowClass, size);
         }
 
-        auto tex     = uploadImage(img);
+        auto tex = uploadImage(img);
+        if (RESOLVED)
+            m_iconImages.put(key, std::move(img));
         m_cache[key] = tex;
         m_provisionalIcons.erase(key);
-        return tex;
+        return {tex, false};
     }
 
     void CTextureCache::clear() {
         m_cache.clear();
         m_provisionalIcons.clear();
+    }
+
+    void CTextureCache::invalidate() {
+        clear();
+        m_iconImages.clear();
     }
 
     CTextureCache& textures() {
