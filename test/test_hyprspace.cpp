@@ -7,6 +7,8 @@
 #include "../src/DesktopDb.hpp"
 #include "../src/Geometry.hpp"
 #include "../src/Input.hpp"
+#include "../src/Interaction.hpp"
+#include <memory>
 #include "../src/ImageCache.hpp"
 #include "../src/OverviewLayout.hpp"
 #include "../src/PreviewStyle.hpp"
@@ -136,8 +138,8 @@ static void testPortraitGridFitsOnScreen() {
 
                 // Include each tile's label band in its occupied height. A
                 // later row must not cover either the cell or its label.
-                const bool separated = a.x + a.w <= b.x + 1e-6 || b.x + b.w <= a.x + 1e-6 ||
-                    a.y + a.h + p.labelSpace <= b.y + 1e-6 || b.y + b.h + p.labelSpace <= a.y + 1e-6;
+                const bool separated =
+                    a.x + a.w <= b.x + 1e-6 || b.x + b.w <= a.x + 1e-6 || a.y + a.h + p.labelSpace <= b.y + 1e-6 || b.y + b.h + p.labelSpace <= a.y + 1e-6;
                 CHECK(separated);
             }
         }
@@ -622,8 +624,8 @@ static void testIconLoading() {
 
 static void testButtonCapture() {
     section("input: mouse releases follow their presses across overlay transitions");
-    CButtonCapture capture;
-    constexpr uint32_t LEFT = 0x110;
+    CButtonCapture     capture;
+    constexpr uint32_t LEFT  = 0x110;
     constexpr uint32_t RIGHT = 0x111;
 
     // A click that dismisses the overlay must not leak a release to the app.
@@ -1081,7 +1083,83 @@ static void testFullscreenPreviewGeometry() {
     }
 }
 
+static void testInteraction() {
+    section("interaction: logical coordinates across all directed monitor pairs");
+    const std::vector<SBoxF> monitors{{-1040, -240, 864, 1536}, {0, 0, 1920, 1024}, {2200, 100, 1280, 664}};
+    for (size_t source = 0; source < monitors.size(); ++source) {
+        for (size_t destination = 0; destination < monitors.size(); ++destination) {
+            const SBoxF preview{monitors[destination].x + 50, monitors[destination].y + 70, 300, 180};
+            auto        point = mapPreviewPoint({preview.cx(), preview.cy()}, preview, monitors[destination]);
+            CHECK(point.has_value());
+            CHECK_NEAR(point->x, monitors[destination].cx(), 1e-9);
+            CHECK_NEAR(point->y, monitors[destination].cy(), 1e-9);
+            const auto inverse = mapPreviewPoint(*point, monitors[destination], preview);
+            CHECK_NEAR(inverse->x, preview.cx(), 1e-9);
+            CHECK_NEAR(inverse->y, preview.cy(), 1e-9);
+        }
+    }
+    const auto spread = mapPreviewPoint({200, 180}, {100, 100, 200, 160}, {-1000, -200, 1000, 800});
+    CHECK_NEAR(spread->x, -500, 1e-9);
+    CHECK_NEAR(spread->y, 200, 1e-9);
+    CHECK(!mapPreviewPoint({0, 0}, {0, 0, 0, 10}, {0, 0, 10, 10}));
+    CHECK(!mapPreviewPoint({NAN, 0}, {0, 0, 10, 10}, {0, 0, 10, 10}));
+
+    section("interaction: gaps cancel drops and retain stable command identities");
+    CTargetSelection<SWorkspaceIdentity> selection;
+    SWorkspaceIdentity                   first{-1337, "named"}, second{4, "4"};
+    selection.pointer(first);
+    selection.pointer(std::nullopt);
+    CHECK(selection.command() == first);
+    CHECK(!selection.drop());
+    selection.keyboard(second);
+    CHECK(selection.command() == second);
+    selection.pointer(first);
+    CHECK(selection.command() == first);
+    CHECK(!(first == SWorkspaceIdentity{-1337, "reused"}));
+    selection.clear();
+    CHECK(!selection.command());
+
+    section("interaction: visibility restored once after monitor transfers");
+    CVisibilityLedger<std::weak_ptr<float>> visibility;
+    auto                                    window = std::make_shared<float>(0.75F);
+    auto                                    read   = [](const auto& w) { return *w; };
+    auto                                    hide   = [](const auto& w) { *w = 0; };
+    visibility.hide(window, read, hide);
+    visibility.hide(window, read, hide);
+    CHECK(visibility.size() == 1);
+    int  restores = 0;
+    auto restore  = [&](const auto& w, float alpha) {
+        *w = alpha;
+        ++restores;
+    };
+    visibility.restore(restore);
+    visibility.restore(restore);
+    CHECK(restores == 1);
+    CHECK_NEAR(*window, 0.75, 1e-9);
+    visibility.hide(window, read, hide);
+    window.reset();
+    visibility.restore(restore);
+    CHECK(restores == 1);
+
+    section("interaction: launch contexts are frozen, concurrent, expiring and one-shot");
+    CLaunchContexts<SWorkspaceIdentity> launches;
+    const auto                          now = CLaunchContexts<SWorkspaceIdentity>::Clock::now();
+    CHECK(launches.capture("a", first, now));
+    CHECK(launches.capture("b", second, now));
+    CHECK(!launches.capture("a", second, now));
+    CHECK(launches.consume("b", now) == second);
+    CHECK(launches.consume("a", now) == first);
+    CHECK(!launches.consume("a", now));
+    CHECK(!launches.consume("unknown", now));
+    CHECK(launches.capture("expired", first, now));
+    CHECK(!launches.consume("expired", now + std::chrono::minutes(3)));
+    CHECK(launches.capture("lock", first, now));
+    launches.clear();
+    CHECK(!launches.consume("lock", now));
+}
+
 int main() {
+    testInteraction();
     std::printf("hyprspace test suite\n\n");
 
     testGridUniformity();

@@ -8,6 +8,7 @@
 #include "Capture.hpp"
 #include "Geometry.hpp"
 #include "Input.hpp"
+#include "OverviewSession.hpp"
 #include "PreviewStyle.hpp"
 #include "globals.hpp"
 
@@ -43,7 +44,7 @@ namespace hyprspace {
         // A Super+drag in flight. The gesture can wander onto another output,
         // so the overview that started it keeps the pointer until it ends.
         bool dragging() const {
-            return m_drag.active();
+            return session().drag.active();
         }
 
         bool needsBlur() const {
@@ -61,9 +62,16 @@ namespace hyprspace {
         void onScroll(const SScrollInput& event);
 
         // --- render lifecycle ---
-        void                          prepareFrame(); // capture live window contents
-        std::vector<UP<IPassElement>> buildPass();    // ordinary elements appended to Hyprland's pass
-        void                          damage();
+        void                           prepareFrame(); // capture live window contents
+        std::vector<UP<IPassElement>>  buildPass();    // ordinary elements appended to Hyprland's pass
+        void                           damage();
+        std::optional<SOverviewTarget> targetAt(const Vector2D& globalPos) const;
+        std::optional<SOverviewTarget> selectedTarget() const;
+        void                           selectTarget(const SOverviewTarget& target);
+        std::vector<SOverviewTarget>   inspectTargets() const;
+        SP<Render::ITexture>           textureFor(PHLWINDOW window) const {
+            return m_capture.textureFor(window);
+        }
 
       private:
         // Desktop and preview bounds are both in monitor-local logical pixels.
@@ -73,8 +81,6 @@ namespace hyprspace {
             SBoxF                       previewRect;
             Fullscreen::eFullscreenMode fullscreen  = Fullscreen::FSMODE_NONE;
             int                         renderLayer = 0;
-            float                       savedAlpha  = 1.F;
-            bool                        alphaHidden = false;
             bool                        blur        = false;
         };
 
@@ -82,6 +88,7 @@ namespace hyprspace {
         struct SEntry {
             long                     workspaceId = 0;
             std::string              name;
+            std::string              workspaceName;
             std::vector<SWindowSlot> windows;
             std::vector<size_t>      drawOrder;
             size_t                   previewColumns = 0;
@@ -89,29 +96,6 @@ namespace hyprspace {
             bool                     isActive       = false;
             SBoxF                    target         = {}; // final cell
             SBoxF                    start          = {}; // where it animates from
-        };
-
-        // Super + drag: move a window between workspaces, or resize it in place.
-        enum class EDrag : uint8_t {
-            NONE = 0,
-            MOVE,
-            RESIZE,
-        };
-
-        struct SDrag {
-            EDrag        mode = EDrag::NONE;
-            PHLWINDOWREF window;
-            int          sourceTile = -1; // tile the window was picked up from
-            int          targetTile = -1; // tile currently under the pointer
-            Vector2D     grabOffset = {}; // pointer minus the window's top-left
-            Vector2D     lastPos    = {}; // previous pointer position, overview-local
-            SBoxF        box        = {}; // where the lifted window is drawn
-            double       scale      = 1.0; // preview pixels per desktop pixel at pickup
-            bool         moved      = false;
-
-            bool active() const {
-                return mode != EDrag::NONE;
-            }
         };
 
         void collect();
@@ -123,15 +107,13 @@ namespace hyprspace {
         void anchorAnimation(int entryIdx);
         int  committedEntry() const;
 
-        void hideRealWindows();
-        void restoreRealWindows();
         void selectIndex(int idx);
         void commit();
         void commitSelection();
         void settleWorkspaceAnimations() const;
 
         // Actual desktop bounds, independent of its overview placement.
-        SBoxF boxFor(const PHLWINDOW& w) const;
+        SBoxF                  boxFor(const PHLWINDOW& w) const;
         SWindowPreviewGeometry geometryFor(const SEntry& entry, const SWindowSlot& slot) const;
 
         SBoxF interpolate(const SEntry& e) const;
@@ -142,10 +124,6 @@ namespace hyprspace {
         // Hit test: which tile, and which window inside it.
         int       tileAtLocal(const Vector2D& local) const;
         PHLWINDOW windowAtLocal(const Vector2D& local) const;
-
-        bool beginDrag(EDrag mode, const Vector2D& local);
-        void updateDrag(const Vector2D& local);
-        void finishDrag();
 
         // The workspace a tile stands for, created if the last window was
         // dragged off it and Hyprland reaped it.
@@ -168,7 +146,6 @@ namespace hyprspace {
         bool m_needsBlur       = false;
         int  m_animationAnchor = -1;
 
-        SDrag              m_drag;
         CScrollAccumulator m_scroll;
 
         PHLWINDOWREF    m_originalFocus;

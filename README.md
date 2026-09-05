@@ -6,6 +6,13 @@ Press **Super + A** to see your workspaces and pick a window. Fullscreen and
 maximized workspaces spread their previews apart so every window stays visible.
 Hold **Alt + Tab** to cycle windows, then release Alt to focus your selection.
 
+The interactive overview keeps running while you launch applications, rearrange
+windows across monitors, resize and use normal Hyprland bindings. Walker result
+targeting uses the [companion integration](companion/README.md). The development
+implementation has nested and physical three-monitor coverage; see the
+[verification record](docs/verification/2026-09-06.md) for the tested builds and
+limits. These changes remain unreleased.
+
 ![Three workspaces with live window previews in hyprspace](docs/screenshots/overview.png)
 
 Tested with **Hyprland 0.56.2** on Arch Linux and Omarchy. The plugin uses
@@ -20,7 +27,7 @@ setup. See the [reference](docs/guide.md) for all options and controls.
 Install the build dependencies on Arch Linux:
 
 ```bash
-sudo pacman -S --needed hyprland base-devel git cairo pango gdk-pixbuf2 librsvg jq
+sudo pacman -S --needed hyprland base-devel git cairo pango gdk-pixbuf2 librsvg libei jq
 ```
 
 If a system update installed a newer Hyprland, log into that version before
@@ -83,6 +90,11 @@ use this setup on its own instead of also loading a local build. Run
 `hyprpm update` and `hyprpm reload` after a Hyprland update. The upstream
 [plugin guide](https://wiki.hypr.land/Plugins/Using-Plugins/) covers hyprpm setup.
 
+For launch contexts with hyprpm, also run `make install-assets` from a checkout
+of the matching revision and follow the [companion guide](companion/README.md).
+The plugin finds those helpers in `~/.local/share/hyprspace` when they are not
+beside the hyprpm-managed library.
+
 ## Use it
 
 | Control | Action |
@@ -91,8 +103,9 @@ use this setup on its own instead of also loading a local build. Run
 | Click a preview | Focus that window |
 | Arrows or Tab, then Enter | Select and open a workspace |
 | 1 through 9, or 0 | Open workspace 1 through 10 |
-| Super + left drag | Move a window to another workspace |
+| Super + left drag | Rearrange a window or move it across workspaces and outputs |
 | Super + right drag | Resize a window in its preview |
+| Super + L | Cycle dwindle/scrolling on the indicated workspace |
 | Alt + Tab / Alt + Shift + Tab | Cycle windows forward / backward |
 | Release Alt | Focus the selected window |
 | Escape | Dismiss either overlay without selecting |
@@ -114,6 +127,7 @@ content. See [capture details](docs/screenshots/README.md).
 ## Configuration and development
 
 - [Controls, configuration and known limitations](docs/guide.md)
+- [Interactive session, launch contexts and verification](docs/interactive.md)
 - [Example Hyprland configuration](contrib/hyprspace.conf)
 - [Build checks and contributing](CONTRIBUTING.md)
 - [Release process](docs/releasing.md) and [changelog](CHANGELOG.md)

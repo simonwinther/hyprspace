@@ -12,7 +12,7 @@ SRCS := test_hyprspace.cpp ../src/DesktopDb.cpp ../src/Raster.cpp
 run: $(BIN)
 	./$(BIN)
 
-$(BIN): $(SRCS) ../src/Geometry.hpp ../src/OverviewLayout.hpp ../src/Input.hpp ../src/SwitcherLayout.hpp ../src/ImageCache.hpp ../src/PreviewStyle.hpp ../src/DesktopDb.hpp ../src/Raster.hpp
+$(BIN): $(SRCS) ../src/Geometry.hpp ../src/OverviewLayout.hpp ../src/Input.hpp ../src/Interaction.hpp ../src/SwitcherLayout.hpp ../src/ImageCache.hpp ../src/PreviewStyle.hpp ../src/DesktopDb.hpp ../src/Raster.hpp
 	$(CXX) $(CXXFLAGS) $(SRCS) -o $@ $(LDLIBS)
 
 # Same suite under AddressSanitizer, to catch out-of-bounds in the layout and

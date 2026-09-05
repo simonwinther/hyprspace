@@ -4,6 +4,15 @@ Releases contain source code and SHA-256 checksums. Users build against their
 own Hyprland installation. The release workflow creates a draft after all CI
 jobs pass; publishing that draft is a separate maintainer action.
 
+## Interactive overview release gate
+
+The interactive overview remains unreleased until the final plugin and pinned
+companions pass every automated suite and the physical/application checks in
+[docs/interactive.md](interactive.md#verification). Host test counts or the
+metadata check alone do not satisfy this gate. Attach the nested JSON results,
+companion compatibility record and physical-session observations to the release
+review. Do not change compatibility pins based only on a successful compilation.
+
 ## Prepare a version
 
 1. Set the same `X.Y.Z` version in `hyprpm.toml` and `src/Version.hpp`.

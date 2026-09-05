@@ -1,0 +1,359 @@
+--- /dev/null
++++ b/internal/comm/handlers/activationcontext_test.go
+@@ -0,0 +1,51 @@
++package handlers
++
++import (
++	"encoding/json"
++	"io"
++	"net"
++	"testing"
++	"time"
++
++	"github.com/abenz1267/elephant/v2/internal/providers"
++	"github.com/abenz1267/elephant/v2/pkg/pb/pb"
++	"google.golang.org/protobuf/proto"
++)
++
++func TestActivationContextAndLegacyProvider(t *testing.T) {
++	name := "fixture"
++	previous := providers.Providers
++	defer func() { providers.Providers = previous }()
++	for _, contextual := range []bool{false, true} {
++		for _, format := range []uint8{0, 1} {
++			called := 0
++			provider := providers.Provider{Name: &name, Activate: func(single bool, id, action, query, args string, f uint8, conn net.Conn) { called++ }}
++			if contextual {
++				provider.ActivateWithContext = func(single bool, id, action, query, args string, f uint8, conn net.Conn, context string) {
++					called++
++					if context != "opaque-request" || args != "original arguments" || action != "run" {
++						t.Errorf("lost activation context or arguments")
++					}
++				}
++			}
++			providers.Providers = map[string]providers.Provider{name: provider}
++			req := &pb.ActivateRequest{Provider: name, Identifier: "id", Action: "run", Arguments: "original arguments", Context: "opaque-request"}
++			data, _ := proto.Marshal(req)
++			if format == 1 {
++				data, _ = json.Marshal(req)
++			}
++			server, client := net.Pipe()
++			client.SetDeadline(time.Now().Add(time.Second))
++			done := make(chan struct{})
++			go func() { (&ActivateRequest{}).Handle(format, 0, server, data); server.Close(); close(done) }()
++			if _, err := io.ReadAll(client); err != nil {
++				t.Fatal(err)
++			}
++			client.Close()
++			<-done
++			if called != 1 {
++				t.Fatalf("activation count = %d", called)
++			}
++		}
++	}
++}
+--- a/internal/comm/handlers/activationrequesthandler.go
++++ b/internal/comm/handlers/activationrequesthandler.go
+@@ -40,7 +40,11 @@
+ 	}
+ 
+ 	if p, ok := providers.Providers[provider]; ok {
+-		p.Activate(req.Single, req.Identifier, req.Action, req.Query, req.Arguments, format, conn)
++		if p.ActivateWithContext != nil {
++			p.ActivateWithContext(req.Single, req.Identifier, req.Action, req.Query, req.Arguments, format, conn, req.Context)
++		} else {
++			p.Activate(req.Single, req.Identifier, req.Action, req.Query, req.Arguments, format, conn)
++		}
+ 
+ 		var buffer bytes.Buffer
+ 		buffer.Write([]byte{ActivationFinished})
+--- a/internal/providers/desktopapplications/activate.go
++++ b/internal/providers/desktopapplications/activate.go
+@@ -7,7 +7,6 @@
+ 	"log/slog"
+ 	"net"
+ 	"os"
+-	"os/exec"
+ 	"path/filepath"
+ 	"slices"
+ 	"strings"
+@@ -29,6 +28,10 @@
+ )
+ 
+ func Activate(single bool, identifier, action string, query string, args string, format uint8, conn net.Conn) {
++	ActivateWithContext(single, identifier, action, query, args, format, conn, "")
++}
++
++func ActivateWithContext(single bool, identifier, action string, query string, args string, format uint8, conn net.Conn, context string) {
+ 	switch action {
+ 	case ActionPinUp:
+ 		movePin(identifier, false)
+@@ -81,7 +84,7 @@
+ 			toRun = common.WrapWithTerminal(toRun)
+ 		}
+ 
+-		cmd := exec.Command("sh", "-c", strings.TrimSpace(fmt.Sprintf("%s %s %s", prefix, toRun, args)))
++		cmd := common.ContextCommand(context, strings.TrimSpace(fmt.Sprintf("%s %s %s", prefix, toRun, args)))
+ 
+ 		if files[parts[0]].Path != "" {
+ 			cmd.Dir = files[parts[0]].Path
+@@ -91,7 +94,7 @@
+ 			Setsid: true,
+ 		}
+ 
+-		if config.WMIntegration && wmi != nil {
++		if context == "" && config.WMIntegration && wmi != nil {
+ 			appid := files[parts[0]].StartupWMClass
+ 
+ 			if !slices.Contains(config.SingleInstanceApps, appid) || !slices.Contains(wmi.GetCurrentWindows(), appid) {
+--- a/internal/providers/load.go
++++ b/internal/providers/load.go
+@@ -23,6 +23,7 @@
+ }
+ 
+ type Provider struct {
++	ActivateWithContext  func(bool, string, string, string, string, uint8, net.Conn, string)
+ 	Name                 *string
+ 	Available            func() bool
+ 	PrintDoc             func(bool)
+@@ -135,6 +136,10 @@
+ 						slog.Error("providers", "load", err, "provider", path)
+ 					}
+ 
++					var activateWithContext func(bool, string, string, string, string, uint8, net.Conn, string)
++					if contextual, lookupErr := p.Lookup("ActivateWithContext"); lookupErr == nil {
++						activateWithContext, _ = contextual.(func(bool, string, string, string, string, uint8, net.Conn, string))
++					}
+ 					activateFunc, err := p.Lookup("Activate")
+ 					if err != nil {
+ 						slog.Error("providers", "load", err, "provider", path)
+@@ -180,6 +185,7 @@
+ 						Setup:                setupFunc.(func()),
+ 						LoadConfig:           loadConfigFunc.(func()),
+ 						Name:                 name.(*string),
++						ActivateWithContext:  activateWithContext,
+ 						Activate:             activateFunc.(func(bool, string, string, string, string, uint8, net.Conn)),
+ 						Query:                queryFunc.(func(net.Conn, string, bool, bool, uint8) []*pb.QueryResponse_Item),
+ 						NamePretty:           namePretty.(*string),
+--- a/internal/providers/runner/setup.go
++++ b/internal/providers/runner/setup.go
+@@ -10,7 +10,6 @@
+ 	"log/slog"
+ 	"net"
+ 	"os"
+-	"os/exec"
+ 	"path/filepath"
+ 	"slices"
+ 	"strings"
+@@ -78,7 +77,7 @@
+ 			if _, err := os.Stat(p); err != nil {
+ 				continue
+ 			}
+-			
++
+ 			walkFn := func(path string, d fs.DirEntry, err error) error {
+ 				info, serr := os.Stat(path)
+ 				if info == nil || serr != nil {
+@@ -157,6 +156,10 @@
+ )
+ 
+ func Activate(single bool, identifier, action string, query string, args string, format uint8, conn net.Conn) {
++	ActivateWithContext(single, identifier, action, query, args, format, conn, "")
++}
++
++func ActivateWithContext(single bool, identifier, action string, query string, args string, format uint8, conn net.Conn, context string) {
+ 	switch action {
+ 	case history.ActionDelete:
+ 		h.Remove(identifier)
+@@ -180,7 +183,7 @@
+ 			run = common.WrapWithTerminal(run)
+ 		}
+ 
+-		cmd := exec.Command("sh", "-c", run)
++		cmd := common.ContextCommand(context, run)
+ 
+ 		cmd.SysProcAttr = &syscall.SysProcAttr{
+ 			Setsid: true,
+--- a/internal/providers/websearch/setup.go
++++ b/internal/providers/websearch/setup.go
+@@ -7,7 +7,6 @@
+ 	"net"
+ 	"net/url"
+ 	"os"
+-	"os/exec"
+ 	"slices"
+ 	"strconv"
+ 	"strings"
+@@ -131,9 +130,13 @@
+ )
+ 
+ func Activate(single bool, identifier, action string, query string, args string, format uint8, conn net.Conn) {
++	ActivateWithContext(single, identifier, action, query, args, format, conn, "")
++}
++
++func ActivateWithContext(single bool, identifier, action string, query string, args string, format uint8, conn net.Conn, context string) {
+ 	switch action {
+ 	case ActionOpenURL:
+-		cmd := exec.Command("sh", "-c", strings.TrimSpace(fmt.Sprintf("%s %s %s", common.LaunchPrefix(), config.Command, shellescape.Quote(identifier))))
++		cmd := common.ContextCommand(context, strings.TrimSpace(fmt.Sprintf("%s %s %s", common.LaunchPrefix(), config.Command, shellescape.Quote(identifier))))
+ 
+ 		cmd.SysProcAttr = &syscall.SysProcAttr{
+ 			Setsid: true,
+@@ -179,7 +182,7 @@
+ 			q = strings.ReplaceAll(os.ExpandEnv(config.Engines[i].URL), "%TERM%", url.QueryEscape(strings.TrimSpace(args)))
+ 		}
+ 
+-		run(query, identifier, q)
++		run(query, identifier, q, context)
+ 	default:
+ 		q := ""
+ 
+@@ -208,12 +211,12 @@
+ 			q = strings.ReplaceAll(q, "%TERM%", url.QueryEscape(strings.TrimSpace(query)))
+ 		}
+ 
+-		run(query, identifier, q)
+-	}
+-}
+-
+-func run(query, identifier, q string) {
+-	cmd := exec.Command("sh", "-c", strings.TrimSpace(fmt.Sprintf("%s %s %s", common.LaunchPrefix(), config.Command, shellescape.Quote(q))))
++		run(query, identifier, q, context)
++	}
++}
++
++func run(query, identifier, q, context string) {
++	cmd := common.ContextCommand(context, strings.TrimSpace(fmt.Sprintf("%s %s %s", common.LaunchPrefix(), config.Command, shellescape.Quote(q))))
+ 
+ 	cmd.SysProcAttr = &syscall.SysProcAttr{
+ 		Setsid: true,
+--- /dev/null
++++ b/pkg/common/launchcontext.go
+@@ -0,0 +1,21 @@
++package common
++
++import (
++	"os/exec"
++	"strings"
++)
++
++// ContextCommand preserves the original shell program and every argument.
++// Context is per activation request, never a shared provider environment.
++func ContextCommand(context, command string) *exec.Cmd {
++	if context == "" || len(context) > 128 || strings.IndexFunc(context, func(r rune) bool {
++		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-')
++	}) >= 0 {
++		return exec.Command("sh", "-c", command)
++	}
++	helper, err := exec.LookPath("hyprspace-launch")
++	if err != nil {
++		return exec.Command("sh", "-c", command)
++	}
++	return exec.Command(helper, "--context", context, "--", "sh", "-c", command)
++}
+--- /dev/null
++++ b/pkg/common/launchcontext_test.go
+@@ -0,0 +1,45 @@
++package common
++
++import (
++	"os"
++	"path/filepath"
++	"reflect"
++	"sync"
++	"testing"
++)
++
++func TestContextCommandPreservesRequests(t *testing.T) {
++	directory := t.TempDir()
++	helper := filepath.Join(directory, "hyprspace-launch")
++	if err := os.WriteFile(helper, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("PATH", directory+":/usr/bin:/bin")
++	t.Setenv("HYPRSPACE_LAUNCH_TOKEN", "parent-unchanged")
++	program := "printf '%s' 'spaces; $(literal)'; uwsm-app -- app 'a b'"
++	var workers sync.WaitGroup
++	for _, token := range []string{"first-destination", "second-destination"} {
++		workers.Add(1)
++		go func(token string) {
++			defer workers.Done()
++			cmd := ContextCommand(token, program)
++			want := []string{helper, "--context", token, "--", "sh", "-c", program}
++			if !reflect.DeepEqual(cmd.Args, want) {
++				t.Errorf("args = %#v", cmd.Args)
++			}
++			if _, err := cmd.Output(); err != nil {
++				t.Error(err)
++			}
++		}(token)
++	}
++	workers.Wait()
++	if os.Getenv("HYPRSPACE_LAUNCH_TOKEN") != "parent-unchanged" {
++		t.Fatal("shared environment changed")
++	}
++	for _, token := range []string{"", "bad token", "$(touch nope)"} {
++		cmd := ContextCommand(token, program)
++		if !reflect.DeepEqual(cmd.Args, []string{"sh", "-c", program}) {
++			t.Errorf("native fallback args = %#v", cmd.Args)
++		}
++	}
++}
+--- a/pkg/pb/activate.proto
++++ b/pkg/pb/activate.proto
+@@ -11,4 +11,5 @@
+   string query = 4;
+   string arguments = 5;
+   bool single = 6;
++  string context = 7;
+ }
+--- a/pkg/pb/pb/activate.pb.go
++++ b/pkg/pb/pb/activate.pb.go
+@@ -1,7 +1,7 @@
+ // Code generated by protoc-gen-go. DO NOT EDIT.
+ // versions:
+-// 	protoc-gen-go v1.36.7
+-// 	protoc        v6.32.1
++// 	protoc-gen-go v1.36.11
++// 	protoc        v7.35.1
+ // source: activate.proto
+ 
+ package pb
+@@ -29,6 +29,7 @@
+ 	Query         string                 `protobuf:"bytes,4,opt,name=query,proto3" json:"query,omitempty"`
+ 	Arguments     string                 `protobuf:"bytes,5,opt,name=arguments,proto3" json:"arguments,omitempty"`
+ 	Single        bool                   `protobuf:"varint,6,opt,name=single,proto3" json:"single,omitempty"`
++	Context       string                 `protobuf:"bytes,7,opt,name=context,proto3" json:"context,omitempty"`
+ 	unknownFields protoimpl.UnknownFields
+ 	sizeCache     protoimpl.SizeCache
+ }
+@@ -105,11 +106,18 @@
+ 	return false
+ }
+ 
++func (x *ActivateRequest) GetContext() string {
++	if x != nil {
++		return x.Context
++	}
++	return ""
++}
++
+ var File_activate_proto protoreflect.FileDescriptor
+ 
+ const file_activate_proto_rawDesc = "" +
+ 	"\n" +
+-	"\x0eactivate.proto\x12\x02pb\"\xb1\x01\n" +
++	"\x0eactivate.proto\x12\x02pb\"\xcb\x01\n" +
+ 	"\x0fActivateRequest\x12\x1a\n" +
+ 	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x1e\n" +
+ 	"\n" +
+@@ -118,7 +126,8 @@
+ 	"\x06action\x18\x03 \x01(\tR\x06action\x12\x14\n" +
+ 	"\x05query\x18\x04 \x01(\tR\x05query\x12\x1c\n" +
+ 	"\targuments\x18\x05 \x01(\tR\targuments\x12\x16\n" +
+-	"\x06single\x18\x06 \x01(\bR\x06singleB\x06Z\x04./pbb\x06proto3"
++	"\x06single\x18\x06 \x01(\bR\x06single\x12\x18\n" +
++	"\acontext\x18\a \x01(\tR\acontextB\x06Z\x04./pbb\x06proto3"
+ 
+ var (
+ 	file_activate_proto_rawDescOnce sync.Once

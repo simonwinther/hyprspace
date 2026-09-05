@@ -4,6 +4,8 @@ PLUGIN_DIR ?= $(PREFIX)/share/hyprspace
 BUILD_DIR  ?= build
 TARGET     := $(BUILD_DIR)/hyprspace.so
 BUILD_CONFIG := $(BUILD_DIR)/.build-config
+PROTOCOL_DIR := $(shell pkg-config --variable=pkgdatadir wayland-protocols)
+INTEGRATION_ARGS ?=
 
 SRCS := \
 	src/main.cpp \
@@ -12,6 +14,9 @@ SRCS := \
 	src/DesktopDb.cpp \
 	src/Focus.cpp \
 	src/Overview.cpp \
+	src/OverviewSession.cpp \
+	src/CompositorHooks.cpp \
+	src/Launch.cpp \
 	src/PassElements.cpp \
 	src/Raster.cpp \
 	src/Switcher.cpp \
@@ -20,7 +25,7 @@ SRCS := \
 OBJS := $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
 
-PKGS := pixman-1 libdrm hyprland pangocairo cairo gdk-pixbuf-2.0 librsvg-2.0 libinput libudev wayland-server xkbcommon
+PKGS := pixman-1 libdrm hyprland pangocairo cairo gdk-pixbuf-2.0 librsvg-2.0 libinput libudev libeis-1.0 wayland-server xkbcommon
 
 # Hyprland plugins must be built with the same compiler and flags as the
 # compositor; -fno-gnu-unique matters for g++ so symbols can be unloaded.
@@ -37,11 +42,22 @@ override CXXFLAGS += $(shell pkg-config --cflags $(PKGS))
 override LDFLAGS += -shared
 LDLIBS   += $(shell pkg-config --libs pangocairo cairo gdk-pixbuf-2.0 librsvg-2.0)
 
-.PHONY: all clean install uninstall check test format reload release-check dist FORCE
+.PHONY: all clean install install-assets assets uninstall check test integration-test integration-fixtures companions format reload release-check dist FORCE
 
 PLUGIN_SO := $(abspath $(PLUGIN_DIR))/hyprspace.so
 
-all: $(TARGET)
+all: $(TARGET) assets
+
+assets:
+	mkdir -p "$(BUILD_DIR)/launch-bin"
+	bash scripts/atomic-output.sh "$(BUILD_DIR)/hyprspace-launch" install -m 0755 contrib/hyprspace-launch
+	@for name in uwsm-app uwsm app2unit; do ln -sfn ../hyprspace-launch "$(BUILD_DIR)/launch-bin/$$name"; done
+
+install-assets: assets
+	mkdir -p "$(PLUGIN_DIR)/launch-bin" "$(PREFIX)/bin"
+	bash scripts/atomic-output.sh "$(PLUGIN_DIR)/hyprspace-launch" install -m 0755 contrib/hyprspace-launch
+	@for name in uwsm-app uwsm app2unit; do ln -sfn ../hyprspace-launch "$(PLUGIN_DIR)/launch-bin/$$name"; done
+	ln -sfn "$(abspath $(PLUGIN_DIR))/hyprspace-launch" "$(PREFIX)/bin/hyprspace-launch"
 
 $(TARGET): $(OBJS) scripts/atomic-output.sh
 	bash scripts/atomic-output.sh "$@" $(CXX) $(LDFLAGS) $(OBJS) $(LDLIBS) -o
@@ -79,7 +95,7 @@ check: $(TARGET)
 # compositor and takes it down with SIGBUS. rename(2) replaces the directory
 # entry instead: the old inode stays alive and mapped until the plugin is
 # properly unloaded, so installing over a live plugin is harmless.
-install: check
+install: check install-assets
 	bash scripts/atomic-output.sh "$(PLUGIN_SO)" install -m 0755 "$(TARGET)"
 	@echo ""
 	@echo "Installed to $(PLUGIN_SO)"
@@ -98,16 +114,38 @@ install: check
 # a plugin already in memory stays in memory. The binary has to be unloaded
 # before the new one is loaded, and the unload has to happen before the file is
 # replaced so Hyprland closes the handle it actually opened.
-reload: $(TARGET)
+reload: $(TARGET) install-assets
 	bash scripts/reload.sh "$(abspath $(TARGET))" "$(PLUGIN_SO)"
 
 uninstall:
-	rm -f $(PLUGIN_DIR)/hyprspace.so
-	-rmdir $(PLUGIN_DIR) 2>/dev/null || true
+	rm -f -- "$(PLUGIN_DIR)/hyprspace.so" "$(PLUGIN_DIR)/hyprspace-launch"
+	@for name in uwsm-app uwsm app2unit; do rm -f -- "$(PLUGIN_DIR)/launch-bin/$$name"; done
+	@if [ "$$(readlink "$(PREFIX)/bin/hyprspace-launch")" = "$(abspath $(PLUGIN_DIR))/hyprspace-launch" ]; then rm -f -- "$(PREFIX)/bin/hyprspace-launch"; fi
+	-rmdir -- "$(PLUGIN_DIR)/launch-bin" "$(PLUGIN_DIR)" 2>/dev/null || true
 
-test:
+test: assets
 	$(MAKE) -C test run
 	bash test/test_build.sh
+	python3 test/test_launch_helper.py
+
+integration-fixtures:
+	mkdir -p "$(BUILD_DIR)"
+	wayland-scanner client-header test/integration/virtual-pointer.xml "$(BUILD_DIR)/virtual-pointer.h"
+	wayland-scanner private-code test/integration/virtual-pointer.xml "$(BUILD_DIR)/virtual-pointer.c"
+	$(CC) -I"$(BUILD_DIR)" test/integration/pointer.c "$(BUILD_DIR)/virtual-pointer.c" -lwayland-client -o "$(BUILD_DIR)/test-pointer"
+	wayland-scanner client-header "$(PROTOCOL_DIR)/stable/xdg-shell/xdg-shell.xml" "$(BUILD_DIR)/xdg-shell.h"
+	wayland-scanner private-code "$(PROTOCOL_DIR)/stable/xdg-shell/xdg-shell.xml" "$(BUILD_DIR)/xdg-shell.c"
+	wayland-scanner client-header "$(PROTOCOL_DIR)/staging/xdg-activation/xdg-activation-v1.xml" "$(BUILD_DIR)/xdg-activation.h"
+	wayland-scanner private-code "$(PROTOCOL_DIR)/staging/xdg-activation/xdg-activation-v1.xml" "$(BUILD_DIR)/xdg-activation.c"
+	wayland-scanner client-header "$(PROTOCOL_DIR)/staging/ext-session-lock/ext-session-lock-v1.xml" "$(BUILD_DIR)/session-lock.h"
+	wayland-scanner private-code "$(PROTOCOL_DIR)/staging/ext-session-lock/ext-session-lock-v1.xml" "$(BUILD_DIR)/session-lock.c"
+	$(CC) -I"$(BUILD_DIR)" test/integration/activation.c "$(BUILD_DIR)/xdg-shell.c" "$(BUILD_DIR)/xdg-activation.c" "$(BUILD_DIR)/session-lock.c" -lwayland-client -o "$(BUILD_DIR)/test-activation"
+
+integration-test: all integration-fixtures
+	python3 test/integration/run.py $(INTEGRATION_ARGS)
+
+companions:
+	python3 scripts/build-companions.py
 
 release-check:
 	python3 scripts/check-release.py
@@ -117,6 +155,10 @@ dist: release-check
 
 clean:
 	rm -f -- $(OBJS) $(DEPS) "$(TARGET)" "$(BUILD_CONFIG)"
+	rm -f -- "$(BUILD_DIR)/hyprspace-launch" "$(BUILD_DIR)/test-pointer" "$(BUILD_DIR)/test-activation"
+	@for name in uwsm-app uwsm app2unit; do rm -f -- "$(BUILD_DIR)/launch-bin/$$name"; done
+	@for name in virtual-pointer xdg-shell xdg-activation session-lock; do rm -f -- "$(BUILD_DIR)/$$name.h" "$(BUILD_DIR)/$$name.c"; done
+	@rmdir -- "$(BUILD_DIR)/launch-bin" 2>/dev/null || true
 	@rmdir -- "$(BUILD_DIR)" 2>/dev/null || true
 	$(MAKE) -C test clean
 

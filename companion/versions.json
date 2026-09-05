@@ -1,0 +1,12 @@
+{
+  "walker": {
+    "version": "2.17.0",
+    "archive": "https://codeload.github.com/abenz1267/walker/tar.gz/refs/tags/v2.17.0",
+    "sha256": "c3498742a9866422b2947340a515eeb7932333bb8f99b171d159c0a7ece0a12f"
+  },
+  "elephant": {
+    "version": "2.22.0",
+    "archive": "https://codeload.github.com/abenz1267/elephant/tar.gz/refs/tags/v2.22.0",
+    "sha256": "c6caa61727e4b5c3981099943b4b616c338a6e1b4e33b5e1d32078b8e4dbe120"
+  }
+}

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- One overview session now coordinates targeting, visibility and native dragging
+  across outputs. Empty active and persistent workspaces are included.
+- Render before foreground layers and cursors, with scoped input/cursor ownership.
+- Route ordinary bindings through the native matcher and provide synchronous
+  workspace layout cycling.
+- Add per-request launch contexts, exact XDG surface correlation and pinned
+  Walker/Elephant companion patches with an isolated build workflow.
+- Add nested compositor comparisons, foreground/launch/lifecycle tests and
+  opt-in physical monitor and application checks.
+
 ## 1.0.0
 
 hyprspace adds a live workspace overview and an Alt+Tab switcher to Hyprland.

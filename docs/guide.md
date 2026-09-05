@@ -91,13 +91,13 @@ keyboard grab, which makes it a reliable escape hatch.
 | `Enter` / `Space` | Switch to the selected workspace and close |
 | `Tab` / `Shift+Tab` | Next / previous workspace |
 | `←` `↓` `↑` `→` | Move to the nearest tile in that direction |
-| `Ctrl+h/j/k/l`, `h/j/k/l` | Same, vim style |
+| `h/j/k/l` | Same, vim style |
 | `1` through `9`, `0` | Go to that workspace at once, no Enter needed (`0` = workspace 10) |
 | `Home` / `End` | First / last tile |
 | Mouse move | Hover highlights, and selects when `follow_mouse` is on |
 | Left click | Go there. Clicking a *window* inside a tile focuses that window; clicking empty space dismisses |
 | Right click | Close without selecting |
-| `Super` + drag left | Pick a window up and drop it on another workspace tile |
+| `Super` + drag left | Rearrange a window or move it to any workspace tile on any output |
 | `Super` + drag right | Resize that window in place, scaled into the tile |
 | Scroll wheel | Step the selection |
 
@@ -109,9 +109,19 @@ still contains the overview or switcher. While the switcher has Alt held,
 `Alt+Print` deliberately invokes the configured *plain* `Print` binding instead;
 on Omarchy this takes a screenshot rather than opening its screen-recorder menu.
 
-The overview binding toggles: pressing it again closes. Super-modified keys are
-passed through to Hyprland while the overview is up, so the rest of your Super
-shortcuts still work, and so the second `Super+A` reaches the dispatcher.
+The overview binding toggles: pressing it again closes. Unmodified navigation
+and Shift+Tab belong to the overview. Other keys run through Hyprland's native
+binding matcher with the indicated window or workspace established first.
+Ctrl/Super combinations, repeat/release bindings, submaps and keyboard-specific
+binding settings retain their native matching behavior. Unbound keys are
+suppressed while the overview owns input. Super+L uses `hyprspace:layoutcycle`
+from the example configuration to select dwindle or scrolling synchronously.
+Launching, moving, resizing and changing layouts keep the overview open.
+
+Walker and other foreground layers retain keyboard focus while pointer movement
+outside their input regions updates the overview target. See the
+[interactive overview and companion integration](interactive.md) for launch
+correlation, compatibility and verification details.
 
 When a workspace has a fullscreen or maximized window and other windows, its
 previews spread into separate rows inside the tile. Every preview keeps its
@@ -131,8 +141,9 @@ During the zoom, every preview on the opening or closing workspace moves between
 its overview position and its actual desktop bounds. Fullscreen clipping follows
 the same animation, including the area reserved by panels. Hover outlines, clicks
 and drag pickup use the displayed bounds, and resizing uses the picked-up
-preview's scale. As on the desktop, fullscreen windows cannot be dragged or
-resized directly.
+preview's scale. Valid drops run Hyprland's native drag lifecycle, including its
+fullscreen transitions and layout-specific placement rules. Escape cancels a
+provisional drag; releasing between tiles cancels the move.
 
 Workspace 10's tile is labelled **0**, because `0` is the key that goes there,
 both here and in Hyprland's own `workspace` binds.
@@ -233,7 +244,7 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:all_monitors` | bool | `true` | Open on every monitor at once rather than only the one under the pointer |
 | `overview:font` | string | `Sans 12` | Pango font description |
 
-Empty workspaces are never shown because there is nothing on them to look at.
+Empty active workspaces and configured persistent workspaces are included.
 
 #### Multiple monitors
 
@@ -243,10 +254,13 @@ Picking a workspace on one screen dismisses the others without changing what
 they were showing. A monitor with nothing on it still dims, because one screen
 left bright next to the others reads as a bug rather than as emptiness.
 
-The pointer decides who is listening. Keys go to the overview under it, hover
-highlights only that screen's tiles, and a `Super` + drag that crosses an edge
-keeps belonging to the overview it started in. Windows never move between
-monitors this way. A drag only rearranges the screen it began on.
+One session owns all views and the active drag. A drag preview follows the
+pointer across outputs, including their offsets, scale and rotation. The source
+and destination use workspace identities and weak window references. Tile
+positions stay fixed during the drag while window membership is reconciled.
+The last valid target is retained over gaps and foreground UI for commands;
+gaps never become valid drop destinations. Keyboard focus navigation updates
+the selected window until the pointer moves again.
 
 Committing always acts on the monitor you picked from, not on the one Hyprland
 still calls focused. That distinction matters here: the overview holds the
@@ -292,7 +306,7 @@ Retune those in your `animations` block to change the feel.
               │   input.mouse.move / .button
    Hyprland ──┤
               │   render.pre        → capture live window textures
-              └── render.stage      → LAST_MOMENT: add the overlay pass element
+              └── render.stage      → POST_WINDOWS: add the overlay pass element
 ```
 
 * **Live tiles.** On every frame, each visible window is rendered into its own
@@ -307,15 +321,15 @@ Retune those in your `animations` block to change the feel.
   closing zoom, and the destination workspace stays visible through the hand-off.
 * **Hiding the real windows.** Rather than painting over the desktop, the
   overview warps every collected window to zero alpha, which makes Hyprland's
-  normal pass skip them. What remains underneath is the wallpaper and your bar,
-  which then get dimmed. That is what makes it read like the GNOME overview
-  instead of a panel floating over a screenshot.
+  normal pass skip them. The session records and restores each window's previous
+  fade alpha once, even if it transfers between outputs. Foreground layer surfaces
+  and the compositor cursor render after the overview.
 * **Drawing.** Panels and labels use ordinary texture, border and rect pass
   elements. Window previews advertise their blur requirements to Hyprland's
   render pass and use its existing OpenGL texture/blur compositor without custom
   shaders. If blur resources are unavailable, previews retain their opacity and
   draw without blur. Plugin-owned pass elements are removed before unloading.
-* **Layout.** One tile per non-empty workspace, every tile shaped like the
+* **Layout.** One tile per populated, active or persistent workspace, every tile shaped like the
   monitor's *usable* area (the output minus whatever the bar reserved). Mapping
   the full output instead would leave an empty strip along the top of every
   tile where the bar sits, which is the single most obvious way to make this
@@ -400,22 +414,18 @@ also re-checks the full ABI string at load time and refuses to initialise on a
 mismatch, with a notification telling you to rebuild. Binaries predating the
 embedded ABI record must be rebuilt before installation.
 
-What is *not* covered by automated tests: anything requiring a live compositor:
-rendering, input grabs, focus commits. Those were verified by hand against a
-running Hyprland 0.55.2 session (overview open/close/toggle, keyboard navigation,
-Enter and Escape in both overlays, workspace switching on commit, focus surviving
-`follow_mouse`, loading from a real config with bindings registered, and a
-rapid-toggle stress run confirming no window is left hidden and the compositor
-stays up). The subsequent stability changes also have build, ABI, host-test and
-sanitizer coverage on 0.56.2, with guarded reload and basic overlay use exercised
-in a running session. These checks do not cover every compositor configuration.
+The nested integration runner compares every directed pair of three outputs
+(including same-workspace drops) against native gestures in dwindle, scrolling
+and master. It also exercises foreground input, cursor rendering, asynchronous
+launches, exact XDG surface correlation, rules, lock and unload. The runner creates
+its own compositor, input devices, application fixtures, config and D-Bus session.
+It never loads the development plugin into the host compositor. Test artifacts
+include logs, screenshots and JSON results in the printed temporary directory.
 
-Fullscreen overview changes were also checked in a nested 0.56.2 session with
-live tiled and floating windows. Those checks covered fullscreen and maximized
-previews, Escape, selecting windows under all three fullscreen focus policies,
-resizing, moving a preview between workspaces and closing a window while the
-overview remained open. The test clients and temporary output were removed
-after verification.
+[Verification instructions and release gates](interactive.md#verification)
+describe the automated and physical suites. The
+[dated verification record](verification/2026-09-06.md) records the tested builds,
+results and limits.
 
 ---
 
@@ -451,9 +461,11 @@ hyprpm remove hyprspace
 
 Finally, remove the checkout: `rm -rf ~/dev/hyprspace`.
 
-hyprspace writes no state, no cache and no files outside its install path. It
-does not change any Hyprland setting; the window alpha it uses to hide windows
-during the overview is restored when the overview closes, and on plugin unload.
+The launch interface creates a private socket in this compositor's runtime
+directory and removes it on unload. Launch contexts live only in memory. Window
+fade alpha and cursor ownership are restored when the overview closes and on
+unload. Workspace and window actions use ordinary compositor state; layout-cycle
+changes are dynamic and follow Hyprland's normal config reload behavior.
 
 ---
 
@@ -467,9 +479,10 @@ during the overview is restored when the overview closes, and on plugin unload.
   render, config and event APIs all moved in the 0.55 cycle. For the same
   reason, hyprview and hyprshell's Hyprland-facing code could not be reused
   directly; see [NOTICE.md](../NOTICE.md) for what was taken from each.
-* **Output transforms are untested.** Portrait-shaped logical layouts are
-  covered, but pass-element transform maths for compositor-rotated outputs
-  (`transform != 0`) has not been exercised.
+* **Compatibility is limited to the tested compositor and companion versions.**
+  Nested tests cover portrait rotation and fractional scaling; physical tests
+  cover the three-output setup with hardware and software cursors. Other GPU,
+  compositor and launcher versions need their own validation.
 * **Windows on hidden workspaces show their last frame briefly.** They are
   un-suspended when the overview opens, but a client needs a frame or two to
   redraw, so the first moments can show stale content for those tiles.
@@ -483,10 +496,10 @@ during the overview is restored when the overview closes, and on plugin unload.
 * **Windows with no resolvable icon get an initial-letter placeholder.** This is
   common for terminals launched with an unusual class and for Electron apps that
   do not set `StartupWMClass`.
-* **The keyboard grab translates keycodes using the seat's active keyboard
-  keymap.** Events injected by a virtual-keyboard client that installs its own
-  keymap (`wtype`) may translate to the wrong keysym. Physical keyboards and
-  uinput-based tools (`ydotool`) are unaffected.
+* **Uncorrelated launches retain native placement.** If a reused process discards
+  activation information, hyprspace does not infer a destination from its app ID,
+  PID alone or the next window to appear. Walker result targeting requires the
+  [pinned companion patches](../companion/README.md).
 * **The switcher's ordering comes from Hyprland's window history**, so a
   freshly-started session where nothing has been focused yet falls back to
   compositor window order rather than true most-recently-used.

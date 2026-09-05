@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Per-request launch context client. Never changes a service's environment."""
+
+import os
+from pathlib import Path
+import re
+import shutil
+import socket
+import sys
+
+
+def request(message):
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    instance = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if not runtime or not instance or "/" in instance:
+        return ""
+    path = str(Path(runtime) / "hypr" / instance / "hyprspace.sock")
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as connection:
+            connection.settimeout(0.3)
+            connection.connect(path)
+            connection.sendall(message.encode())
+            return connection.recv(65536).decode()
+    except (OSError, UnicodeError):
+        return ""
+
+
+def launch_environment(token):
+    env = os.environ.copy()
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,128}", token):
+        previous = env.pop("HYPRSPACE_LAUNCH_TOKEN", None)
+        if previous and env.get("XDG_ACTIVATION_TOKEN") == previous:
+            env.pop("XDG_ACTIVATION_TOKEN", None)
+        return env
+    env.update(
+        HYPRSPACE_LAUNCH_TOKEN=token,
+        XDG_ACTIVATION_TOKEN=token,
+        HL_INITIAL_WORKSPACE_TOKEN="",
+    )
+    shim = str(Path(__file__).resolve().parent / "launch-bin")
+    paths = env.get("PATH", os.defpath).split(os.pathsep)
+    env["PATH"] = os.pathsep.join([shim] + [path for path in paths if path != shim])
+    return env
+
+
+def forward_service(name, args):
+    """Keep the service launcher and its options, attach context to its payload."""
+    helper = Path(__file__).resolve()
+    original = None
+    for directory in os.environ.get("PATH", os.defpath).split(os.pathsep):
+        candidate = shutil.which(name, path=directory or ".")
+        if candidate and Path(candidate).resolve() != helper:
+            original = candidate
+            break
+    if not original:
+        raise SystemExit(f"hyprspace-launch: cannot find {name}")
+    token = os.environ.get("HYPRSPACE_LAUNCH_TOKEN", "")
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,128}", token):
+        os.execv(original, [original, *args])
+    # Omarchy's launchers use an explicit --. Simple app2unit invocations
+    # without options are equivalent. Unknown option forms keep native routing.
+    if "--" in args:
+        split = args.index("--") + 1
+    elif args and not args[0].startswith("-") and name != "uwsm":
+        split = 0
+    else:
+        os.execv(original, [original, *args])
+    if name == "uwsm" and (not args or args[0] != "app"):
+        os.execv(original, [original, *args])
+    # Desktop IDs and their action suffixes must still be interpreted by the
+    # service launcher. They are not executable paths for this helper.
+    if split >= len(args) or re.search(r"\.desktop(?::.*)?$", args[split]):
+        os.execv(original, [original, *args])
+    # The helper executes after the daemon/service boundary. It reinstates the
+    # exact per-launch context, while the original shell payload stays intact.
+    rewritten = (
+        args[:split] + [str(helper), "--launch-token", token, "--"] + args[split:]
+    )
+    os.execv(original, [original, *rewritten])
+
+
+def main():
+    name = Path(sys.argv[0]).name
+    if name in {"uwsm-app", "uwsm", "app2unit"}:
+        forward_service(name, sys.argv[1:])
+        return
+    args = sys.argv[1:]
+    if args in (["--capture"], ["--status"]):
+        print(request(args[0][2:]))
+        return
+    token = ""
+    if len(args) >= 2 and args[0] in {"--context", "--launch-token"}:
+        token = request("consume " + args[1]) if args[0] == "--context" else args[1]
+        args = args[2:]
+    elif args and args[0] == "--":
+        token = request("consume " + request("capture"))
+    if not args or args[0] != "--" or len(args) == 1:
+        raise SystemExit(
+            "usage: hyprspace-launch [--context TOKEN] -- COMMAND [ARG ...]"
+        )
+    os.execvpe(args[1], args[1:], launch_environment(token))
+
+
+if __name__ == "__main__":
+    main()

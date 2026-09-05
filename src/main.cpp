@@ -12,6 +12,13 @@
 #include "Config.hpp"
 #include "Input.hpp"
 #include "Overview.hpp"
+#include "OverviewSession.hpp"
+#include "CompositorHooks.hpp"
+#include "Launch.hpp"
+#include <hyprland/src/layout/algorithm/Algorithm.hpp>
+#include <hyprland/src/layout/algorithm/TiledAlgorithm.hpp>
+#include <hyprland/src/layout/space/Space.hpp>
+#include <hyprland/src/layout/supplementary/WorkspaceAlgoMatcher.hpp>
 #include "PassElements.hpp"
 #include "Switcher.hpp"
 #include "Texture.hpp"
@@ -26,6 +33,10 @@
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
+#include <hyprland/src/managers/SessionLockManager.hpp>
+#include <hyprland/src/protocols/InputCapture.hpp>
+#include <hyprland/src/desktop/state/ViewState.hpp>
+#include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -46,11 +57,7 @@ using namespace hyprspace;
 
 namespace {
 
-    // One overview per monitor. By default they open and close as a set, but
-    // each is an independent instance: it captures, lays out and commits only
-    // its own output's workspaces.
-    std::vector<std::unique_ptr<COverview>> g_overviews;
-    std::unique_ptr<CSwitcher>              g_switcher;
+    std::unique_ptr<CSwitcher> g_switcher;
 
     // Print Screen starts an external layer-shell UI (Omarchy uses a frozen
     // hyprpicker surface plus slurp). While that UI exists, it must sit above
@@ -90,16 +97,18 @@ namespace {
         CHyprSignalListener renderPre;
         CHyprSignalListener renderStage;
         CHyprSignalListener monitorRemoved;
+        CHyprSignalListener monitorAdded;
         CHyprSignalListener configReloaded;
         CHyprSignalListener layerOpened;
         CHyprSignalListener layerClosed;
+        CHyprSignalListener sessionLock;
     };
 
     SListeners g_listeners;
 
     // Something is on screen and has to be drawn.
     bool active() {
-        return !g_overviews.empty() || g_switcher;
+        return !session().views.empty() || g_switcher;
     }
 
     // The texture cache is shared by every overlay, so it can only be dropped
@@ -120,7 +129,7 @@ namespace {
     // next Alt+Tab or Super+A silently does nothing, and text typed in that
     // window never reaches the app.
     bool overviewLive() {
-        return std::ranges::any_of(g_overviews, [](const auto& o) { return !o->closing(); });
+        return std::ranges::any_of(session().views, [](const auto& o) { return !o->closing(); });
     }
 
     bool switcherLive() {
@@ -135,7 +144,7 @@ namespace {
         if (!monitor)
             return nullptr;
 
-        for (const auto& o : g_overviews) {
+        for (const auto& o : session().views) {
             if (o->monitor() == monitor)
                 return o.get();
         }
@@ -155,30 +164,45 @@ namespace {
     // recently opened one keeps the keyboard rather than the keystroke falling
     // on the floor.
     COverview* keyboardOverview() {
-        const auto POINTER_MONITOR = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run();
-        if (auto* o = liveOverviewOn(POINTER_MONITOR))
-            return o;
-
-        for (const auto& o : g_overviews | std::views::reverse) {
-            if (!o->closing())
-                return o.get();
-        }
-
-        return nullptr;
+        return session().keyboardView();
     }
 
-    // The overview the pointer is talking to: the one under it, unless another
-    // has a Super+drag in flight. A drag that wanders onto the next output has
-    // to keep receiving motion and its own button release, or the window it
-    // picked up is stranded mid-air.
     COverview* pointerOverview() {
-        for (const auto& o : g_overviews) {
-            if (!o->closing() && o->dragging())
-                return o.get();
-        }
+        const auto pos = g_pInputManager->getMouseCoordsInternal();
+        for (const auto& view : session().views)
+            if (!view->closing() && view->targetAt(pos))
+                return view.get();
+        return liveOverviewOn(State::monitorState()->query().vec(pos).run());
+    }
 
-        const auto POINTER_MONITOR = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run();
-        return liveOverviewOn(POINTER_MONITOR);
+    bool foregroundPointer() {
+        const auto pos = g_pInputManager->getMouseCoordsInternal();
+        const auto mon = State::monitorState()->query().vec(pos).run();
+        if (!mon)
+            return false;
+        Vector2D local;
+        PHLLS    layer;
+        auto     hit = Desktop::viewState()->hitTest();
+        for (auto level : {ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ZWLR_LAYER_SHELL_V1_LAYER_TOP}) {
+            if (hit.layerPopupSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer) ||
+                hit.layerSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer))
+                return true;
+        }
+        std::vector<PHLLSREF> panels;
+        for (auto level : {ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM, ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND})
+            for (const auto& candidate : mon->m_layerSurfaceLayers[level])
+                if (candidate && candidate->m_namespace.starts_with("waybar"))
+                    panels.push_back(candidate);
+        if (hit.layerPopupSurfaceAt(pos, &panels, &local, &layer) || hit.layerSurfaceAt(pos, &panels, &local, &layer))
+            return true;
+        return false;
+    }
+
+    bool foregroundKeyboard() {
+        if (g_pSeatManager->m_seatGrab || PROTO::inputCapture->isCaptured() || !g_pInputManager->m_exclusiveLSes.empty())
+            return true;
+        const auto surface = Desktop::View::CWLSurface::fromResource(g_pSeatManager->m_state.keyboardFocus.lock());
+        return surface && Desktop::View::CLayerSurface::fromView(surface->view());
     }
 
     PHLMONITOR targetMonitor() {
@@ -347,7 +371,7 @@ namespace {
                 g_pHyprRenderer->damageMonitor(MONITOR);
         }
 
-        for (const auto& o : g_overviews) {
+        for (const auto& o : session().views) {
             if (const auto MONITOR = o->monitor())
                 g_pHyprRenderer->damageMonitor(MONITOR);
         }
@@ -396,7 +420,7 @@ namespace {
     }
 
     bool yieldingInput() {
-        return g_externalUi.pending || g_externalUi.active;
+        return g_externalUi.pending || g_externalUi.active || g_pSeatManager->m_seatGrab || PROTO::inputCapture->isCaptured();
     }
 
     void onLayerOpened(PHLLS layer) {
@@ -427,28 +451,34 @@ namespace {
     }
 
     void destroyOverviews() {
-        for (const auto& o : g_overviews) {
+        for (const auto& o : session().views) {
             if (const auto MON = o->monitor())
                 g_pHyprRenderer->damageMonitor(MON);
         }
 
-        g_overviews.clear();
+        session().stopInput();
+        session().views.clear();
+        session().restoreVisibility();
         releaseIdleResources();
     }
 
     void destroyOverviewOn(const PHLMONITOR& monitor) {
-        const auto REMOVED = std::erase_if(g_overviews, [&](const auto& o) { return o->monitor() == monitor; });
+        const auto REMOVED = std::erase_if(session().views, [&](const auto& o) { return o->monitor() == monitor; });
         if (REMOVED == 0)
             return;
 
         if (monitor)
             g_pHyprRenderer->damageMonitor(monitor);
+        if (session().views.empty()) {
+            session().stopInput();
+            session().restoreVisibility();
+        }
 
         releaseIdleResources();
     }
 
     void reapFinishedOverviews() {
-        const auto REMOVED = std::erase_if(g_overviews, [](const auto& o) {
+        const auto REMOVED = std::erase_if(session().views, [](const auto& o) {
             if (!o->finished())
                 return false;
 
@@ -458,14 +488,18 @@ namespace {
             return true;
         });
 
-        if (REMOVED > 0)
+        if (REMOVED > 0) {
+            if (session().views.empty())
+                session().restoreVisibility();
             releaseIdleResources();
+        }
     }
 
     // Begin the closing animation everywhere. Nothing is torn down here; the
     // instances are reaped once their animations land.
     void closeOverviews() {
-        for (const auto& o : g_overviews) {
+        session().stopInput();
+        for (const auto& o : session().views) {
             if (!o->closing())
                 o->close(false);
         }
@@ -475,7 +509,7 @@ namespace {
     // dismissed the rest go with it. Leaving half the desktop in overview after
     // a workspace has already been picked is nobody's idea of a result.
     void syncOverviewClose() {
-        if (!std::ranges::any_of(g_overviews, [](const auto& o) { return o->closing(); }))
+        if (!std::ranges::any_of(session().views, [](const auto& o) { return o->closing(); }))
             return;
 
         closeOverviews();
@@ -487,6 +521,7 @@ namespace {
 
         const auto MON = g_switcher->monitor();
         g_switcher.reset();
+        session().ownCursor(false);
 
         if (MON)
             g_pHyprRenderer->damageMonitor(MON);
@@ -533,7 +568,7 @@ namespace {
             return;
         }
 
-        if (yieldingInput())
+        if (yieldingInput() || foregroundKeyboard())
             return;
 
         if (!ownsInput())
@@ -565,12 +600,9 @@ namespace {
             return;
         }
 
-        // Super-modified keys keep reaching Hyprland's keybinds. That is what
-        // makes the overview's own binding a toggle — the second Super+A has to
-        // get through to the dispatcher to close it — and it leaves the rest of
-        // your Super shortcuts working while the overview is up. The switcher is
-        // exempt: it is driven by Alt and lives for a fraction of a second.
-        if (overviewLive() && !switcherLive() && (MODS & HL_MODIFIER_META))
+        // The actual matcher hook has the event's keyboard and owns overview
+        // navigation and binding routing. This listener handles the switcher.
+        if (overviewLive() && !switcherLive())
             return;
 
         // Otherwise the overlay owns the keyboard entirely: nothing reaches
@@ -592,30 +624,28 @@ namespace {
     }
 
     void onMouseMove(Vector2D pos, Event::SCallbackInfo& info) {
-        if (yieldingInput() || !ownsInput())
+        if (!ownsInput()) {
+            session().ownCursor(false);
             return;
-
+        }
+        const bool foreground = yieldingInput() || foregroundPointer();
+        session().ownCursor(!foreground);
+        if (foreground) {
+            session().selection.pointer(std::nullopt);
+            return;
+        }
         info.cancelled = true;
-
-        if (switcherLive()) {
+        if (switcherLive())
             g_switcher->onMouseMove(pos);
-            return;
-        }
-
-        // Every overview hears the motion, not just the one under the pointer:
-        // the ones it left have to drop their hover highlight, and a drag in
-        // flight has to keep tracking the pointer after it crosses an edge.
-        for (const auto& o : g_overviews) {
-            if (!o->closing())
-                o->onMouseMove(pos);
-        }
+        else
+            session().pointer(pos);
     }
 
     // Scroll belongs to the overlay while one is up. Without this the wheel
     // falls through to whatever sits underneath, so scrolling over the switcher
     // silently scrolls the page behind it.
     void onMouseAxis(IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
-        if (yieldingInput() || !ownsInput())
+        if (yieldingInput() || foregroundPointer() || !ownsInput())
             return;
 
         info.cancelled = true;
@@ -632,13 +662,15 @@ namespace {
 
         if (switcherLive())
             g_switcher->onScroll(SCROLL);
-        else if (auto* o = pointerOverview())
+        else if (auto* o = pointerOverview()) {
             o->onScroll(SCROLL);
+            session().keyboard(*o);
+        }
     }
 
     void onMouseButton(IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
         const bool PRESSED    = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
-        const bool OWNS_INPUT = !yieldingInput() && ownsInput();
+        const bool OWNS_INPUT = !yieldingInput() && (session().drag.active() || !foregroundPointer()) && ownsInput();
 
         if (!g_mouseButtons.consume(event.button, PRESSED, OWNS_INPUT))
             return;
@@ -651,6 +683,9 @@ namespace {
             g_switcher->onMouseButton(event.button, PRESSED);
             return;
         }
+
+        if (session().button(event.button, PRESSED, currentMods()))
+            return;
 
         if (auto* o = pointerOverview()) {
             o->onMouseButton(event.button, PRESSED, currentMods());
@@ -666,6 +701,18 @@ namespace {
     // ------------------------------------------------------------ render ----
 
     void onRenderPre(PHLMONITOR monitor) {
+        if (overviewLive()) {
+            const bool own = !yieldingInput() && !foregroundPointer();
+            if (own != session().cursorOwned()) {
+                session().ownCursor(own);
+                if (own)
+                    session().pointer(g_pInputManager->getMouseCoordsInternal());
+                else
+                    session().selection.pointer(std::nullopt);
+            }
+        }
+        if (session().drag.active() && (!session().drag.window || !session().drag.window->m_isMapped))
+            session().cancelDrag();
         if (g_switcher && !g_switcher->closing() && g_switcher->monitor() == monitor)
             g_switcher->refreshWindows();
 
@@ -706,11 +753,8 @@ namespace {
             return;
         }
 
-        // Normally hyprspace is deliberately last, above bars and notifications.
-        // A screenshot selector is the one exception: draw before top/overlay
-        // layers so its frozen preview and selection UI remain visible above us.
-        const auto WANTED_STAGE = g_externalUi.active ? RENDER_POST_WINDOWS : RENDER_LAST_MOMENT;
-        if (stage != WANTED_STAGE)
+        // Foreground layers and both cursor paths are queued afterward.
+        if (stage != RENDER_POST_WINDOWS)
             return;
 
         const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
@@ -729,9 +773,16 @@ namespace {
 
         if (g_switcher && g_switcher->monitor() == MONITOR)
             g_pHyprRenderer->m_renderPass.add(makeUnique<CSwitcherPassElement>(g_switcher.get()));
+
+        // Some Waybar configurations use the bottom layer. Requeue those
+        // panels through the native renderer above the overview's backdrop.
+        // Top/overlay panels and all popups are already queued afterward.
+        if (overviewOn(MONITOR) || (g_switcher && g_switcher->monitor() == MONITOR))
+            hooks::renderPanels(MONITOR);
     }
 
     void onMonitorRemoved(PHLMONITOR monitor) {
+        session().monitorRemoved(monitor);
         destroyOverviewOn(monitor);
         if (g_switcher && g_switcher->monitor() == monitor)
             destroySwitcher();
@@ -773,13 +824,15 @@ namespace {
             // ones that dimmed reads as a glitch rather than as emptiness.
             for (const auto& MONITOR : State::monitorState()->monitors()) {
                 if (MONITOR && MONITOR->m_enabled && !MONITOR->isMirror())
-                    g_overviews.push_back(std::make_unique<COverview>(MONITOR));
+                    session().views.push_back(std::make_unique<COverview>(MONITOR));
             }
         } else if (const auto MONITOR = targetMonitor())
-            g_overviews.push_back(std::make_unique<COverview>(MONITOR));
+            session().views.push_back(std::make_unique<COverview>(MONITOR));
 
-        if (g_overviews.empty())
+        if (session().views.empty())
             return {.success = false, .error = "hyprspace: no monitor"};
+
+        session().begin();
 
         return {.success = true};
     }
@@ -805,11 +858,30 @@ namespace {
             return {.success = true}; // nothing to switch between
 
         g_switcher = std::move(sw);
+        session().ownCursor(true);
 
         // If the dispatcher was reached without Alt held (e.g. bound to a plain
         // key), there will never be an Alt release to commit on. Fall back to
         // committing on Enter/click, which onKey already handles.
         return {.success = true};
+    }
+
+    SDispatchResult dispatchLayoutCycle(std::string) {
+        if (overviewLive() && !foregroundKeyboard())
+            if (const auto target = session().selection.command())
+                hooks::atDesktopPoint(session().desktopPoint(*target), [] { session().establishTarget(); });
+        const auto mon    = Desktop::focusState()->monitor();
+        const auto target = overviewLive() ? session().selection.command() : std::nullopt;
+        const auto ws =
+            target ? session().workspace(*target) : (mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr);
+        if (!ws || !ws->m_space || !ws->m_space->algorithm())
+            return {.success = false, .error = "hyprspace: no workspace for layout cycle"};
+        const auto& tiled  = ws->m_space->algorithm()->tiledAlgo();
+        const auto  name   = Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(&typeid(*tiled.get()));
+        const auto  next   = name == "dwindle" ? "scrolling" : "dwindle";
+        const auto  result = HyprlandAPI::invokeHyprctlCommand("keyword", "workspace " + ws->getConfigName() + ", layout:" + next);
+        session().damage();
+        return {.success = result == "ok" || result == "ok\n", .error = result == "ok" || result == "ok\n" ? "" : result};
     }
 
     SDispatchResult dispatchClose(std::string) {
@@ -842,11 +914,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[hyprspace] Hyprland ABI mismatch, rebuild the plugin");
     }
 
+    if (!BUILT.starts_with("efb50993780079460b0cbed1363e2166a2de1d9f_"))
+        throw std::runtime_error("[hyprspace] interactive hooks require Hyprland 0.56.2; see docs/interactive.md");
+
+    g_overviewSession = std::make_unique<COverviewSession>();
     config::registerAll();
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:overview", dispatchOverview);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:switch", dispatchSwitch);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:close", dispatchClose);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:layoutcycle", dispatchLayoutCycle);
 
     auto& bus = Event::bus()->m_events;
 
@@ -857,6 +934,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_listeners.renderPre      = bus.render.pre.listen(onRenderPre);
     g_listeners.renderStage    = bus.render.stage.listen(onRenderStage);
     g_listeners.monitorRemoved = bus.monitor.removed.listen(onMonitorRemoved);
+    g_listeners.monitorAdded   = bus.monitor.added.listen([](PHLMONITOR mon) {
+        if (overviewLive() && config::overviewAllMonitors() && !mon->isMirror() && !overviewOn(mon))
+            session().views.push_back(std::make_unique<COverview>(mon));
+    });
     g_listeners.configReloaded = bus.config.reloaded.listen([] {
         textures().invalidate();
         if (g_switcher)
@@ -864,6 +945,21 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     });
     g_listeners.layerOpened    = bus.layer.opened.listen(onLayerOpened);
     g_listeners.layerClosed    = bus.layer.closed.listen(onLayerClosed);
+
+    g_listeners.sessionLock = g_pSessionLockManager->m_events.lock.listen([] {
+        destroyOverviews();
+        destroySwitcher();
+        finishExternalUi();
+        launch::clear();
+    });
+    hooks::install([] { return overviewLive() && !switcherLive() && !yieldingInput() && !foregroundKeyboard(); },
+                   [] { return overviewLive() && !switcherLive() && !yieldingInput(); });
+    try {
+        launch::install();
+    } catch (...) {
+        hooks::uninstall();
+        throw;
+    }
 
     // Filesystem discovery starts early but never runs on the compositor thread.
     // In the unlikely event Alt+Tab wins the race, it gets instant placeholders
@@ -889,7 +985,10 @@ APICALL EXPORT void PLUGIN_EXIT() {
     destroyOverviews();
     destroySwitcher();
 
+    launch::uninstall();
+    hooks::uninstall();
     g_listeners = {};
+    g_overviewSession.reset();
     g_swallowedPresses.clear();
     g_mouseButtons.clear();
     if (g_externalUi.timeout)

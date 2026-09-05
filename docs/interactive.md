@@ -1,0 +1,167 @@
+# Interactive overview
+
+The overview is one session with a view on each output. Commands resolve to a
+workspace identity and an optional weak window reference, plus a desktop point
+mapped from the visible preview. Empty active and configured persistent
+workspaces are included. Monitor offsets, scale, rotation, reserved areas and
+separated fullscreen previews are part of that mapping.
+
+Pointer motion selects a destination. Over a foreground layer or a gap, commands
+retain the last valid destination. Dropping in a gap cancels the move. Keyboard
+focus navigation selects its resulting window until pointer motion resumes.
+An empty part of a tile targets that workspace's last focused eligible window,
+or no window if the workspace is empty.
+
+## Input and rendering
+
+Both overlays render at `RENDER_POST_WINDOWS`. Hyprland draws top/overlay layers,
+their popups, notifications and the cursor afterward. Cursor ownership is scoped
+to overview input and restores the previous overrides on handoff and dismissal.
+Normal pointer focus is re-established on close.
+Waybar panels configured on the bottom/background layer are also queued through
+the native layer renderer above the overview.
+
+Unmodified navigation and Shift+Tab stay with the overview. Other keys pass once
+through the real keybinding matcher. Device maps, modifiers, repeats, releases and
+submaps stay under native control. The chosen workspace/window is established
+before running an action; native focus warps are suppressed during that action.
+Launching, moving, resizing and changing layouts keep the overview open.
+
+Walker owns typing, paste, navigation and activation while its layer has keyboard
+focus. Moving outside Walker still updates the destination. Layer pointer events
+use native routing. The companion restricts Walker's transparent, output-sized
+layer input region to its visible panel while the overview is active, restoring
+the ordinary region on dismissal or plugin loss. Escape closes Walker first;
+closing or crashing the layer restores overview input. Screenshot-selector
+handoff and exclusive grabs retain
+their existing native routes. Session locking immediately ends the overview.
+
+`contrib/hyprspace.conf` retains Super+A and replaces Super+L's asynchronous shell
+layout query with `hyprspace:layoutcycle`. This chooses dwindle or scrolling on the
+indicated workspace. Outside the overview it acts on the active workspace.
+
+## Drag lifecycle
+
+Super+left and Super+right create provisional move/resize previews. The session
+owns one drag across all outputs, including preview portions crossing output
+edges. The destination tile and insertion point are highlighted. Collection uses
+stable workspace identities while tile positions remain fixed during a drag.
+
+A valid release replays pickup and drop in Hyprland's native drag controller at
+mapped desktop coordinates. Layout algorithms, floating pickup offsets, grouping
+and fullscreen transitions use that lifecycle. Resizing flushes its final motion
+after one output refresh interval to respect native motion coalescing. Escape,
+window disappearance, output removal, closing and unload cancel pending work.
+
+Window fade visibility is saved once per session and restored once, even when a
+window transfers between views. Weak references prevent restoration to destroyed
+windows or actions on recycled monitor-local tile indices.
+
+## Launch protocol
+
+The plugin requires Hyprland **0.56.2**, commit
+`efb50993780079460b0cbed1363e2166a2de1d9f`, and the exact library ABI embedded by
+the existing build checks. Internal hooks are isolated in `CompositorHooks.cpp`
+and `Launch.cpp` and restored on unload. Other commits are refused.
+
+The private `SOCK_SEQPACKET` socket is:
+
+```
+$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/hyprspace.sock
+```
+
+It is mode 0600, checks peer UID, bounds concurrent clients and requests, and
+expires contexts after two minutes. Each connection sends one packet:
+
+| Request | Reply |
+|---|---|
+| `capture` | Opaque one-shot destination token, or empty |
+| `consume TOKEN` | Correlated launch/activation token, or empty |
+| `active` | `1` while an unlocked overview is active, or empty |
+| `status` | Local diagnostic JSON with targets, previews and visibility |
+
+Walker captures at result activation, not when its UI opens. Direct application
+bindings capture through the synchronous dispatcher scope. The destination is
+frozen before asynchronous execution. The helper installs per-child
+`HYPRSPACE_LAUNCH_TOKEN` and `XDG_ACTIVATION_TOKEN`; it never changes compositor,
+launcher-service or global environments.
+
+A new process can correlate its mapped window through its launch environment.
+For an existing process, the plugin wraps native XDG activation callbacks and
+retains native validation, associating the token with the exact requested
+surface. Requests before mapping are retained weakly until that surface maps.
+Only a correlated new window receives placement. Explicit workspace or monitor
+rules win. Reused existing windows always follow native activation.
+
+Applications and service wrappers that discard correlation retain native
+placement. The plugin never matches the next arbitrary window, app ID or an
+existing process's PID to guess a launch. See the [companion build guide](../companion/README.md).
+
+## Verification
+
+See the [2026-09-06 verification record](verification/2026-09-06.md) for completed
+checks, exact builds and remaining scope limits.
+
+Host checks cover mapping, target retention, workspace identities, concurrent
+one-shot contexts, cancellation and visibility restoration, alongside the existing
+geometry/render-policy checks. Build/reload fixtures and helper process tests run
+with `make test`; host sanitizers run with `make -C test asan`.
+
+The nested suite requires a working parent Wayland session, Hyprland 0.56.2,
+hyprctl, wtype, grim, Python GObject bindings for GTK3/GtkLayerShell, Pillow,
+wayland-scanner and wayland-protocols. It creates a private compositor, D-Bus
+session, three outputs and disposable clients. Only that compositor's own host
+windows are positioned and resized, keeping each output visible so Wayland frame
+callbacks continue. The host plugin and user configuration are not replaced.
+
+```sh
+make integration-fixtures
+python3 test/integration/run.py --companions build/companions/bin --firefox
+```
+
+`--quick` reduces the layout matrix; `--only` selects a suite during debugging.
+The full matrix compares all nine directed source/destination pairs for dwindle,
+scrolling and master against native gestures, including portrait rotation,
+fractional scaling, negative offsets and gaps. Further suites cover foreground
+input/cursor rendering, launch correlation, explicit rules, lock, reload/unload,
+floating/fullscreen/maximized/grouped states and the patched Walker UI.
+`--firefox` uses a private browser profile and D-Bus session to verify a new window
+in an already running Firefox process and native reuse of an existing window.
+`--discord /path/to/Discord` checks existing-process reuse with a private Discord
+profile. Neither application check signs into an account or uses a personal
+profile; application startup still requires its normal runtime services.
+The Discord fixture connects to the parent's audio services and opens its main
+window through ordinary activation before testing contextual window reuse.
+Keyboard checks include Super+A/B/J/L and Super+Shift+A, Ctrl bindings, repeats,
+releases, submaps, empty-workspace focus and input restoration. Lifecycle checks
+cover empty destinations, workspace transfers and cancellation on window/output
+removal. Diagnostics also check for duplicate native layout membership.
+
+Results, screenshots and failure diagnostics remain in the printed temporary
+directory. A run without `--companions` does not verify the Walker/Elephant UI.
+Host sanitizers cover the host harness, not the compositor's loaded plugin.
+
+The opt-in physical suite is `test/integration/physical.py --run` (run with Python
+inside a private `dbus-run-session`). It requires the matching plugin already
+loaded on three physical outputs. It compares all 27 layout/output pairs using
+temporary workspaces, checks both cursor modes on every output, saves screenshots,
+and restores active workspaces, focus and cursor settings. It re-reads the user's
+configuration to remove temporary workspace rules; run it when transient runtime
+configuration can be reloaded.
+
+The same physical script accepts `--firefox` and `--discord /path/to/Discord` to
+run application checks instead of the layout matrix, also inside a private
+`dbus-run-session`. The `--launcher` mode instead requires the **current desktop
+D-Bus session** to reach the installed Walker, Elephant and notification services.
+It uses a temporary desktop entry to verify a delayed launch through the service
+launcher, shows and closes its own notification, and cancels the installed Print
+screenshot selector with Escape. Its desktop entry and fixture windows are
+removed afterward. Run launcher mode separately from the private application
+checks.
+
+This work is not released. Before release, all automated suites must pass on the
+final binary and companion builds. Separately record a physical three-monitor
+pass with hardware and software cursors, the installed Waybar/notification and
+screenshot-selector setup, and existing Firefox/Discord processes. Nested
+protocol fixtures establish correlation behavior but do not replace those
+application-specific and physical-session checks.
