@@ -114,6 +114,10 @@ The overview opens on all monitors by default, with each showing its own
 workspaces. Alt+Tab stays on the current workspace unless you change
 `switcher:current_workspace_only`.
 
+In a scrolling workspace, use the wheel or two-finger scrolling to pan its preview.
+Edge arrows reveal hidden columns. Page Up/Page Down select columns and Enter
+opens the selection; Tab/Shift+Tab still move between workspaces.
+
 ![A fullscreen browser alongside the other windows on its workspace](docs/screenshots/fullscreen.png)
 
 Fullscreen and maximized windows keep their desktop state while you browse the

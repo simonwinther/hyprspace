@@ -503,6 +503,7 @@ namespace {
             if (!o->closing())
                 o->close(false);
         }
+        hooks::syncKeyboardFocus();
     }
 
     // The overview is a modal picker, so the moment one of them commits or is
@@ -650,21 +651,19 @@ namespace {
 
         info.cancelled = true;
 
-        if (event.axis != WL_POINTER_AXIS_VERTICAL_SCROLL)
-            return;
-
         const SScrollInput SCROLL{
-            .delta    = event.delta,
-            .value120 = event.deltaDiscrete,
-            .timeMs   = event.timeMs,
-            .wheel    = event.source == WL_POINTER_AXIS_SOURCE_WHEEL || event.source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT,
+            .delta      = event.delta,
+            .value120   = event.deltaDiscrete,
+            .timeMs     = event.timeMs,
+            .wheel      = event.source == WL_POINTER_AXIS_SOURCE_WHEEL || event.source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT,
+            .horizontal = event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL,
         };
 
-        if (switcherLive())
-            g_switcher->onScroll(SCROLL);
-        else if (auto* o = pointerOverview()) {
+        if (switcherLive()) {
+            if (!SCROLL.horizontal)
+                g_switcher->onScroll(SCROLL);
+        } else if (auto* o = pointerOverview()) {
             o->onScroll(SCROLL);
-            session().keyboard(*o);
         }
     }
 
@@ -701,6 +700,7 @@ namespace {
     // ------------------------------------------------------------ render ----
 
     void onRenderPre(PHLMONITOR monitor) {
+        hooks::syncKeyboardFocus();
         if (overviewLive()) {
             const bool own = !yieldingInput() && !foregroundPointer();
             if (own != session().cursorOwned()) {
@@ -718,6 +718,7 @@ namespace {
 
         // Reap finished overlays before anything else touches them.
         reapFinishedOverviews();
+        session().reconcileVisibility();
         if (g_switcher && g_switcher->finished())
             destroySwitcher();
 
@@ -735,6 +736,7 @@ namespace {
 
         if (auto* o = overviewOn(monitor))
             o->prepareFrame();
+        session().refreshPointerTarget();
     }
 
     void onRenderStage(eRenderStage stage) {
@@ -953,7 +955,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         launch::clear();
     });
     hooks::install([] { return overviewLive() && !switcherLive() && !yieldingInput() && !foregroundKeyboard(); },
-                   [] { return overviewLive() && !switcherLive() && !yieldingInput(); });
+                   [] { return overviewLive() && !switcherLive() && !yieldingInput(); },
+                   [](PHLMONITOR monitor) { return isOverlayMonitor(monitor) && !yieldingInput(); });
     try {
         launch::install();
     } catch (...) {

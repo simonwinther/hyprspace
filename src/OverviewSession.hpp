@@ -44,8 +44,11 @@ namespace hyprspace {
         void         begin();
         void         stopInput();
         void         restoreVisibility();
+        void         reconcileVisibility();
+        bool         covers(PHLMONITOR monitor) const;
         void         hideWindow(PHLWINDOW window);
         void         pointer(const Vector2D& pos);
+        void         refreshPointerTarget();
         void         keyboard(COverview& view);
         void         followKeyboardFocus();
         bool         button(uint32_t button, bool pressed, uint32_t mods);

@@ -98,8 +98,23 @@ class Physical(Suite):
             self.ctl("dispatch", "focusmonitor", name)
             self.ctl("dispatch", "workspace", str(self.base + i))
         self.ctl("dispatch", "focusmonitor", self.names[destination])
-        self.spawn(["python3", str(CLIENT), "hs-A", "hs-B", "hs-C"])
-        wait_for(lambda: len(self.windows()) == 3)
+        monitor = next(
+            m for m in self.data("monitors") if m["name"] == self.names[destination]
+        )
+        point = (
+            monitor["x"] + monitor["reserved"][0] + 30,
+            monitor["y"] + monitor["reserved"][1] + 30,
+        )
+        self.move(point)
+        # Native dwindle insertion depends on pointer position and map order.
+        # Seed both before comparing a desktop gesture with its overview peer.
+        for count, title in enumerate(("hs-A", "hs-B", "hs-C"), 1):
+            self.spawn(["python3", str(CLIENT), title])
+            wait_for(lambda: len(self.windows()) == count)
+            self.ctl(
+                "dispatch", "focuswindow", "address:" + self.windows()[title]["address"]
+            )
+            self.move(self.point(self.windows()[title], 0.5, 0.5))
         for title, index in (
             ("hs-A", source),
             ("hs-B", destination),
@@ -119,14 +134,43 @@ class Physical(Suite):
         for layout in ("dwindle", "scrolling", "master"):
             for source, destination in itertools.product(range(3), repeat=2):
                 self.setup(layout, source, destination)
+                initial = self.geometry()
+                pickup = self.point(self.windows()["hs-A"])
+                drop = self.point(self.windows()["hs-B"], 0.25, 0.45)
+                for title, point in (("hs-A", pickup), ("hs-B", drop)):
+                    window = self.windows()[title]
+                    monitor = next(
+                        m for m in self.data("monitors") if m["id"] == window["monitor"]
+                    )
+                    width, height = monitor["width"], monitor["height"]
+                    if monitor["transform"] % 2:
+                        width, height = height, width
+                    assert (
+                        monitor["x"]
+                        <= point[0]
+                        < monitor["x"] + width / monitor["scale"]
+                    )
+                    assert (
+                        monitor["y"]
+                        <= point[1]
+                        < monitor["y"] + height / monitor["scale"]
+                    )
                 self.drag(
-                    self.point(self.windows()["hs-A"]),
-                    self.point(self.windows()["hs-B"], 0.25, 0.45),
+                    pickup,
+                    drop,
                     False,
                 )
                 expected = self.geometry()
                 assert expected["hs-A"][0] == self.base + destination
                 self.setup(layout, source, destination)
+                assert self.geometry() == initial, (
+                    "different starting layouts",
+                    layout,
+                    source,
+                    destination,
+                    initial,
+                    self.geometry(),
+                )
                 self.ctl("dispatch", "hyprspace:overview", "on")
                 time.sleep(0.2)
                 self.drag(
@@ -164,7 +208,8 @@ class Physical(Suite):
                 monitor = next(
                     m for m in self.data("monitors") if m["id"] == window["monitor"]
                 )
-                self.move(self.preview_point(title))
+                point = self.preview_point(title)
+                self.move(point)
                 time.sleep(0.15)
                 monitor = next(
                     m for m in self.data("monitors") if m["id"] == window["monitor"]
@@ -172,7 +217,8 @@ class Physical(Suite):
                 assert monitor["hardwareCursorsInUse"] == (software == 0)
                 first = self.root / f'cursor-{software}-{monitor["name"]}-first.png'
                 second = self.root / f'cursor-{software}-{monitor["name"]}-second.png'
-                point = self.preview_point(title)
+                # Preview geometry can settle after the warp. Crop around the
+                # coordinate we actually sent, not a recomputed tile point.
                 self.run("grim", "-s", "1", "-c", "-o", monitor["name"], str(first))
                 self.move(self.preview_point(title, 0.7, 0.4))
                 self.run("grim", "-s", "1", "-c", "-o", monitor["name"], str(second))
@@ -195,6 +241,75 @@ class Physical(Suite):
                 "-o",
                 monitor["name"],
                 str(self.root / f'overview-{monitor["name"]}.png'),
+            )
+
+    def scrolling(self):
+        from regressions import arrow, center, tile
+
+        for index, name in enumerate(self.names):
+            self.setup("scrolling", index, index)
+            self.ctl(
+                "keyword", "workspace", f"{self.base+index},layoutopt:direction:right"
+            )
+            first = min(
+                self.windows(), key=lambda title: self.windows()[title]["at"][0]
+            )
+            self.ctl(
+                "dispatch", "focuswindow", "address:" + self.windows()[first]["address"]
+            )
+            self.ctl("dispatch", "hyprspace:overview", "on")
+            time.sleep(0.25)
+            box = tile(self, self.base + index)
+            self.move(center(box))
+            before = self.windows()[first]["at"][0]
+            self.scroll()
+            wait_for(lambda: self.windows()[first]["at"][0] < before)
+            before = self.windows()[first]["at"][0]
+            self.scroll(delta=-8, discrete=0, axis=1, source=1)
+            wait_for(lambda: self.windows()[first]["at"][0] > before)
+            self.scroll(delta=0, discrete=0, axis=1, source=1)
+            for _ in range(12):
+                self.scroll(delta=-15, discrete=-1)
+            self.move(arrow(box, True, True))
+            self.button(1)
+            self.button(0)
+            assert self.status()["live"]
+            selected = self.status()["target"]["window"]
+            assert selected != "0x0"
+            self.run("wtype", "-k", "Page_Up", "-k", "Page_Down")
+            assert self.status()["target"]["window"] == selected
+            self.run("wtype", "-k", "Return")
+            wait_for(lambda: not self.status()["live"])
+            assert self.data("activewindow")["address"] == selected
+            self.check(
+                f"physical {name}: wheel, touchpad, edge arrow and keyboard scrolling"
+            )
+
+    def resizes(self):
+        for index, name in enumerate(self.names):
+            self.setup("dwindle", index, index)
+            monitor = next(m for m in self.data("monitors") if m["name"] == name)
+            address = self.windows()["hs-A"]["address"]
+            self.ctl("dispatch", "setfloating", "address:" + address)
+            self.ctl(
+                "dispatch", "resizewindowpixel", "exact 320 240,address:" + address
+            )
+            self.ctl(
+                "dispatch",
+                "movewindowpixel",
+                f'exact {monitor["x"]+100} {monitor["y"]+100},address:{address}',
+            )
+            self.ctl("dispatch", "hyprspace:overview", "on")
+            time.sleep(0.2)
+            pickup = self.preview_point("hs-A", 0.7, 0.7)
+            self.drag(pickup, (pickup[0] + 25, pickup[1] + 20), True, button=273)
+            wait_for(
+                lambda: self.windows()["hs-A"]["size"][0] > 340
+                and self.windows()["hs-A"]["size"][1] > 260
+            )
+            assert self.status()["modifiers"] == 0
+            self.check(
+                f"physical {name}: committed resize survives immediate Super release"
             )
 
     def launcher(self):
@@ -293,15 +408,47 @@ class Physical(Suite):
                 != 0
             ), "another screenshot selection is running"
             self.ctl("keyword", "input:resolve_binds_by_sym", "true")
-            self.run("wtype", "-k", "Print")
-            wait_for(lambda: self.layer("slurp") or self.layer("selection"))
-            assert self.status()["live"] and not self.status()["keyboard_owned"]
-            self.run("wtype", "-k", "Escape")
-            wait_for(
-                lambda: not self.layer("slurp")
-                and not self.layer("selection")
-                and not self.layer("hyprpicker")
-            )
+
+            def selectors():
+                return [
+                    layer
+                    for monitor in self.data("layers").values()
+                    for levels in monitor["levels"].values()
+                    for layer in levels
+                    if layer["namespace"] in ("slurp", "selection", "hyprpicker")
+                ]
+
+            assert not selectors(), "another screenshot overlay is running"
+            try:
+                self.run("wtype", "-k", "Print")
+                # Layer creation precedes mapping and keyboard focus. Wait for
+                # every selector's map animation goal before sending Escape.
+                wait_for(
+                    lambda: sum(
+                        layer["namespace"] in ("slurp", "selection")
+                        and layer["alpha"] > 0
+                        and layer["w"] > 0
+                        and layer["h"] > 0
+                        for layer in selectors()
+                    )
+                    == len(self.names)
+                )
+                assert self.status()["live"] and not self.status()["keyboard_owned"]
+                # slurp 1.5 sets running=true after its startup roundtrips;
+                # an Escape during them can be overwritten by initialization.
+                time.sleep(0.15)
+                self.run("wtype", "-k", "Escape")
+                wait_for(lambda: not selectors())
+            finally:
+                remaining = selectors()
+                (self.root / "selector-teardown.json").write_text(
+                    json.dumps(remaining, indent=2)
+                )
+                for pid in {layer["pid"] for layer in remaining}:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
             wait_for(lambda: self.status()["keyboard_owned"])
             assert self.status()["live"]
             self.check(
@@ -383,6 +530,8 @@ def main():
                 suite.discord(args.discord)
         else:
             suite.matrix()
+            suite.resizes()
+            suite.scrolling()
             suite.cursors()
     except Exception:
         (suite.root / "failure.json").write_text(

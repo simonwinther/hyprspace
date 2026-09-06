@@ -13,6 +13,7 @@
 #include "../src/OverviewLayout.hpp"
 #include "../src/PreviewStyle.hpp"
 #include "../src/Raster.hpp"
+#include "../src/Scrolling.hpp"
 #include "../src/SwitcherLayout.hpp"
 
 #include <algorithm>
@@ -714,6 +715,31 @@ static void testScrollAccumulator() {
     CHECK(wheel(std::numeric_limits<int32_t>::min()) == -32);
 }
 
+static void testScrollViewport() {
+    section("scrolling: continuous preview motion, bounded wheel steps and usable edge controls");
+    CHECK_NEAR(scrollDistance({.delta = 15, .value120 = 120}, 400), 0.25, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = -3.75, .value120 = -30}, 400), -0.0625, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = 3.75}, 400), 0.0625, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = 20, .wheel = false}, 400), 0.05, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = 20, .wheel = false}, 200), 0.1, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = 0, .wheel = false}, 400), 0, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = 1000, .wheel = false}, 400), 1, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = -1000, .wheel = false}, 400), -1, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = NAN}, 400), 0, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = 15}, 0), 0, 1e-9);
+    CHECK_NEAR(scrollDistance({.delta = 15}, INFINITY), 0, 1e-9);
+    for (auto cell : {SBoxF{10, 20, 400, 240}, SBoxF{-800, -200, 240, 400}, SBoxF{0, 0, 30, 20}})
+        for (bool horizontal : {false, true}) {
+            const auto controls = scrollControls(cell, horizontal);
+            for (auto box : {controls.previous, controls.next}) {
+                CHECK(cell.contains(box.x, box.y));
+                CHECK(cell.contains(box.x + box.w - 0.01, box.y + box.h - 0.01));
+                CHECK(box.w > 0 && box.h > 0);
+            }
+            CHECK(!controls.previous.contains(controls.next.cx(), controls.next.cy()));
+        }
+}
+
 static void testSwitcherLayout() {
     section("switcher: bounded pages keep every selection reachable on landscape and portrait outputs");
     for (const auto& screen : std::vector<SBoxF>{{0, 0, 1920, 1080}, {0, 0, 1080, 1920}, {0, 0, 800, 600}, {0, 0, 320, 240}, {0, 0, 60, 45}}) {
@@ -1113,8 +1139,15 @@ static void testInteraction() {
     CHECK(!selection.drop());
     selection.keyboard(second);
     CHECK(selection.command() == second);
+    selection.refresh(first);
+    CHECK(selection.command() == second);
+    CHECK(selection.drop() == first);
+    CHECK(!selection.followsPointer());
     selection.pointer(first);
     CHECK(selection.command() == first);
+    selection.refresh(second);
+    CHECK(selection.command() == second);
+    CHECK(selection.followsPointer());
     CHECK(!(first == SWorkspaceIdentity{-1337, "reused"}));
     selection.clear();
     CHECK(!selection.command());
@@ -1137,9 +1170,24 @@ static void testInteraction() {
     CHECK(restores == 1);
     CHECK_NEAR(*window, 0.75, 1e-9);
     visibility.hide(window, read, hide);
+    auto outside = std::make_shared<float>(0.4F);
+    visibility.hide(outside, read, hide);
+    visibility.restoreIf([&](const auto& w) { return w == outside; }, restore);
+    CHECK_NEAR(*window, 0, 1e-9);
+    CHECK_NEAR(*outside, 0.4, 1e-6);
+    CHECK(restores == 2);
+    visibility.restoreIf([&](const auto& w) { return w == outside; }, restore);
+    CHECK(restores == 2);
+    visibility.hide(outside, read, hide);
+    CHECK_NEAR(*outside, 0, 1e-9);
+    visibility.restore(restore);
+    CHECK(restores == 4);
+    CHECK_NEAR(*window, 0.75, 1e-9);
+    CHECK_NEAR(*outside, 0.4, 1e-6);
+    visibility.hide(window, read, hide);
     window.reset();
     visibility.restore(restore);
-    CHECK(restores == 1);
+    CHECK(restores == 4);
 
     section("interaction: launch contexts are frozen, concurrent, expiring and one-shot");
     CLaunchContexts<SWorkspaceIdentity> launches;
@@ -1183,6 +1231,7 @@ int main() {
     testIconLoading();
     testButtonCapture();
     testScrollAccumulator();
+    testScrollViewport();
     testSwitcherLayout();
     testImageCache();
     testPreviewStyle();

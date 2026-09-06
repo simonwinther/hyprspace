@@ -40,12 +40,14 @@ namespace hyprspace {
         if (!selection.command() && !views.empty())
             keyboard(*views.front());
         ownCursor(true);
+        hooks::syncKeyboardFocus();
     }
 
     void COverviewSession::stopInput() {
         cancelDrag();
         hooks::cancelPlacement();
         ownCursor(false);
+        hooks::syncKeyboardFocus();
     }
 
     void COverviewSession::hideWindow(PHLWINDOW w) {
@@ -60,8 +62,24 @@ namespace hyprspace {
                 w->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(alpha);
         });
         Desktop::globalWindowController()->updateSuspendedStates();
+        hooks::syncKeyboardFocus();
         if (g_overviewSession.get() == this && !live() && !g_pSessionLockManager->isSessionLocked())
             g_pInputManager->simulateMouseMovement();
+    }
+
+    bool COverviewSession::covers(PHLMONITOR monitor) const {
+        return monitor && std::ranges::any_of(views, [&](const auto& view) { return view->monitor() == monitor; });
+    }
+
+    void COverviewSession::reconcileVisibility() {
+        m_visibility.restoreIf([&](const auto& w) { return !covers(w->m_monitor.lock()); },
+                               [](const auto& w, float alpha) {
+                                   if (w->m_isMapped) {
+                                       w->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(alpha);
+                                       g_pHyprRenderer->damageWindow(w);
+                                       w->setSuspended(!w->m_workspace || !w->m_workspace->isVisible());
+                                   }
+                               });
     }
 
     void COverviewSession::ownCursor(bool own) {
@@ -114,6 +132,16 @@ namespace hyprspace {
         damage();
     }
 
+    void COverviewSession::refreshPointerTarget() {
+        if (!live() || !m_cursorOwned)
+            return;
+        selection.refresh(hit(m_pointer));
+        if (selection.followsPointer())
+            for (const auto& view : views)
+                if (!view->closing())
+                    view->onMouseMove(m_pointer);
+    }
+
     COverview* COverviewSession::keyboardView() const {
         if (const auto& target = selection.command(); target)
             for (const auto& view : views)
@@ -126,13 +154,13 @@ namespace hyprspace {
     }
 
     PHLWORKSPACE COverviewSession::workspace(const SOverviewTarget& target) const {
-        const auto mon = target.monitor.lock();
-        if (!mon || !mon->m_enabled)
-            return nullptr;
         const auto ws = State::workspaceState()->query().id(target.workspace.id).run();
         // Do not resolve a re-used named ID to a different workspace.
         if (ws)
-            return ws->m_name == target.workspace.name ? ws : nullptr;
+            return ws->m_name == target.workspace.name && ws->m_monitor && ws->m_monitor->m_enabled ? ws : nullptr;
+        const auto mon = target.monitor.lock();
+        if (!mon || !mon->m_enabled)
+            return nullptr;
         return State::workspaceState()->create(target.workspace.id, mon->m_id, target.workspace.name);
     }
 

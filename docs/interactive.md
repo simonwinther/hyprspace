@@ -19,13 +19,30 @@ their popups, notifications and the cursor afterward. Cursor ownership is scoped
 to overview input and restores the previous overrides on handoff and dismissal.
 Normal pointer focus is re-established on close.
 Waybar panels configured on the bottom/background layer are also queued through
-the native layer renderer above the overview.
+the native layer renderer above the overview. A scoped native hit-test adapter
+promotes those panels during pointer routing, then restores the compositor's layer
+lists and fullscreen policy. Popup and grab handling stays native.
 
 Unmodified navigation and Shift+Tab stay with the overview. Other keys pass once
 through the real keybinding matcher. Device maps, modifiers, repeats, releases and
 submaps stay under native control. The chosen workspace/window is established
 before running an action; native focus warps are suppressed during that action.
 Launching, moving, resizing and changing layouts keep the overview open.
+Application seat keyboard focus is cleared while the overview owns input, while
+Hyprland's own focus and binding state continue to update. This suppresses keys,
+modifier notifications and focus-enter delivery. IME modifier forwarding is also
+suppressed during ownership; native focus and modifiers resume on dismissal,
+handoff or unload, respecting lock and grab restrictions.
+
+Wheel and two-finger input over a scrolling workspace move the native tape within
+its bounds. Wheel fractions remain proportional; finger deltas map into logical
+preview distance. Scroll factors come from the device that emitted the event.
+Edge arrows reveal the closest hidden column using native fit/center behavior.
+Page Up/Page Down select the previous/next column in screen order, keeping that
+window selected until the pointer moves. Enter focuses it and closes. Workspace
+direction overrides, reversed layouts and animation frames use the same geometry
+for rendering and hit testing. Fullscreen previews remain independently exposed
+and do not need viewport scrolling. Other layouts keep their tile wheel navigation.
 
 Walker owns typing, paste, navigation and activation while its layer has keyboard
 focus. Moving outside Walker still updates the destination. Layer pointer events
@@ -50,12 +67,16 @@ stable workspace identities while tile positions remain fixed during a drag.
 A valid release replays pickup and drop in Hyprland's native drag controller at
 mapped desktop coordinates. Layout algorithms, floating pickup offsets, grouping
 and fullscreen transitions use that lifecycle. Resizing flushes its final motion
-after one output refresh interval to respect native motion coalescing. Escape,
+after one output refresh interval to respect native motion coalescing. A key
+release during that interval preserves the committed resize and still runs native
+release bindings. Escape,
 window disappearance, output removal, closing and unload cancel pending work.
 
-Window fade visibility is saved once per session and restored once, even when a
-window transfers between views. Weak references prevent restoration to destroyed
-windows or actions on recycled monitor-local tile indices.
+Window fade visibility is saved once per session. Moving between covered views
+retains that value; moving outside all covered outputs restores it immediately.
+Returning to a covered output hides the window again without replacing the saved
+value. Dismissal restores only windows still hidden by the session. Weak references
+prevent restoration to destroyed windows or actions on recycled tile indices.
 
 ## Launch protocol
 
@@ -99,8 +120,9 @@ existing process's PID to guess a launch. See the [companion build guide](../com
 
 ## Verification
 
-See the [2026-09-06 verification record](verification/2026-09-06.md) for completed
-checks, exact builds and remaining scope limits.
+See the [audit-fix verification record](verification/2026-09-06-audit-fixes.md) for
+the current build and checks, and the [initial record](verification/2026-09-06.md)
+for the companion rollout and remaining scope limits.
 
 Host checks cover mapping, target retention, workspace identities, concurrent
 one-shot contexts, cancellation and visibility restoration, alongside the existing
@@ -120,6 +142,14 @@ python3 test/integration/run.py --companions build/companions/bin --firefox
 ```
 
 `--quick` reduces the layout matrix; `--only` selects a suite during debugging.
+`--only audit` runs the input/visibility/launch regressions, and `--only scrolling`
+runs viewport controls across all directions and outputs. Both are included in
+the full suite. The repeat test measures a synchronous native resize, so completion
+of an already launched child process cannot be mistaken for a stuck repeat timer.
+Drag fixtures explicitly hold their virtual keyboard modifier until mouse release;
+they do not rely on a fixed-duration keypress. Physical comparisons seed pointer
+position and window mapping order, require identical starting geometry, and reject
+off-screen gesture coordinates before comparing results.
 The full matrix compares all nine directed source/destination pairs for dwindle,
 scrolling and master against native gestures, including portrait rotation,
 fractional scaling, negative offsets and gaps. Further suites cover foreground
@@ -145,6 +175,7 @@ The opt-in physical suite is `test/integration/physical.py --run` (run with Pyth
 inside a private `dbus-run-session`). It requires the matching plugin already
 loaded on three physical outputs. It compares all 27 layout/output pairs using
 temporary workspaces, checks both cursor modes on every output, saves screenshots,
+exercises wheel, touchpad, arrow and keyboard viewport controls,
 and restores active workspaces, focus and cursor settings. It re-reads the user's
 configuration to remove temporary workspace rules; run it when transient runtime
 configuration can be reloaded.

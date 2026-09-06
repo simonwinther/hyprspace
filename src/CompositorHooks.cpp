@@ -7,18 +7,25 @@
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/layout/algorithm/Algorithm.hpp>
+#include <hyprland/src/layout/algorithm/tiled/scrolling/ScrollingAlgorithm.hpp>
 #include <hyprland/src/layout/space/Space.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
+#include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/pointer/PointerController.hpp>
 #include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
+#include <hyprland/src/protocols/InputMethodV2.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
 #include <hyprland/src/plugins/HookSystem.hpp>
+#include <hyprutils/utils/ScopeGuard.hpp>
 
 #include <any>
 #include <stdexcept>
@@ -26,9 +33,13 @@
 namespace hyprspace::hooks {
     namespace {
         CFunctionHook *                          keyHook = nullptr, *inputHook = nullptr, *focusHook = nullptr, *coordsHook = nullptr, *warpHook = nullptr;
+        CFunctionHook *                          pointerHook = nullptr, *imeModsHook = nullptr, *axisHook = nullptr, *mouseBindHook = nullptr;
+        double                                   axisScale  = 1.0;
+        bool                                     keyRelease = false;
         std::optional<Vector2D>                  desktopPoint;
         std::function<bool()>                    ownsKeyboard;
         std::function<bool()>                    launchEnabled;
+        std::function<bool(PHLMONITOR)>          promotePanels;
         decltype(CKeybindManager::m_dispatchers) dispatchers;
         int                                      dispatchDepth = 0;
 
@@ -62,6 +73,109 @@ namespace hyprspace::hooks {
         WP<Layout::ITarget>                       resizeTarget;
         Vector2D                                  resizePickup;
         WP<CWLSurfaceResource>                    layerKeyboard;
+        bool                                      keyboardSuspended = false;
+
+        bool windowSurface(const SP<CWLSurfaceResource>& surface) {
+            const auto owner = Desktop::View::CWLSurface::fromResource(surface);
+            return owner && Desktop::View::CWindow::fromView(owner->view());
+        }
+
+        bool mappedKeyboardLayer() {
+            const auto owner = Desktop::View::CWLSurface::fromResource(g_pSeatManager->m_state.keyboardFocus.lock());
+            const auto layer = owner ? Desktop::View::CLayerSurface::fromView(owner->view()) : nullptr;
+            return layer && layer->m_mapped;
+        }
+
+        // The renderer promotes these panels for the overview. Give the native
+        // pointer route the same order, including its fullscreen and popup
+        // handling. Restore every compositor field before returning.
+        class CPromotedPanels {
+          public:
+            explicit CPromotedPanels(PHLMONITOR monitor) : monitor(monitor) {
+                if (!monitor || desktopPoint || dispatchDepth || !promotePanels || !promotePanels(monitor))
+                    return;
+                std::vector<PHLLSREF> promoted;
+                for (auto level : {ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM}) {
+                    auto& layers = monitor->m_layerSurfaceLayers[level];
+                    for (size_t i = 0; i < layers.size(); ++i) {
+                        const auto layer = layers[i].lock();
+                        if (!layer || !layer->m_mapped || !layer->m_namespace.starts_with("waybar"))
+                            continue;
+                        saved.push_back({layer, level, i, layer->m_aboveFullscreen});
+                        promoted.emplace_back(layer);
+                        layer->m_layer           = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
+                        layer->m_aboveFullscreen = true;
+                    }
+                    std::erase_if(layers, [&](const auto& layer) { return std::ranges::contains(promoted, layer); });
+                }
+                auto& top = monitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP];
+                top.insert(top.begin(), promoted.begin(), promoted.end());
+            }
+            ~CPromotedPanels() {
+                if (!monitor)
+                    return;
+                auto& top = monitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP];
+                for (const auto& entry : saved) {
+                    std::erase(top, PHLLSREF{entry.layer});
+                    entry.layer->m_layer           = entry.level;
+                    entry.layer->m_aboveFullscreen = entry.aboveFullscreen;
+                    auto& layers                   = monitor->m_layerSurfaceLayers[entry.level];
+                    if (entry.layer->m_mapped && entry.layer->m_monitor == monitor && !std::ranges::contains(layers, entry.layer))
+                        layers.insert(layers.begin() + std::min(entry.index, layers.size()), entry.layer);
+                }
+            }
+
+          private:
+            struct SSaved {
+                PHLLS    layer;
+                uint32_t level;
+                size_t   index;
+                bool     aboveFullscreen;
+            };
+            PHLMONITOR          monitor;
+            std::vector<SSaved> saved;
+        };
+
+        void pointerMove(CInputManager* self, uint32_t time, bool refocus, bool mouse, std::optional<Vector2D> overridePos) {
+            using Fn = void (*)(CInputManager*, uint32_t, bool, bool, std::optional<Vector2D>);
+            CPromotedPanels panels(State::monitorState()->query().vec(overridePos.value_or(self->getMouseCoordsInternal())).run());
+            reinterpret_cast<Fn>(pointerHook->m_original)(self, time, refocus, mouse, overridePos);
+        }
+
+        void pointerAxis(CInputManager* self, IPointer::SAxisEvent event, SP<IPointer> pointer) {
+            using Fn              = void (*)(CInputManager*, IPointer::SAxisEvent, SP<IPointer>);
+            const double previous = axisScale;
+            const double touchpad = *CConfigValue<Config::FLOAT>("input:touchpad:scroll_factor");
+            axisScale             = touchpad <= 0 || event.source == WL_POINTER_AXIS_SOURCE_FINGER ? touchpad : *CConfigValue<Config::FLOAT>("input:scroll_factor");
+            if (pointer && pointer->m_scrollFactor)
+                axisScale = *pointer->m_scrollFactor;
+            // The seat's last moving mouse can be a different device from the
+            // wheel/touchpad producing this event. Use the native source.
+            try {
+                reinterpret_cast<Fn>(axisHook->m_original)(self, event, pointer);
+            } catch (...) {
+                axisScale = previous;
+                throw;
+            }
+            axisScale = previous;
+        }
+
+        void imeModifiers(CInputMethodKeyboardGrabV2* self, uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group) {
+            using Fn = void (*)(CInputMethodKeyboardGrabV2*, uint32_t, uint32_t, uint32_t, uint32_t);
+            if (!keyboardOwned())
+                reinterpret_cast<Fn>(imeModsHook->m_original)(self, depressed, latched, locked, group);
+        }
+
+        bool ensureMouseBindState(CKeybindManager* self) {
+            using Fn = bool (*)(CKeybindManager*);
+            // The mouse release already committed this resize. A subsequent
+            // modifier release must not end its native drag before the final
+            // coalesced motion runs on the next frame. Keep native key-release
+            // matching, while other key presses retain native cancellation.
+            if (keyRelease && resizeTimer && resizeTarget && g_layoutManager->dragController()->target() == resizeTarget)
+                return false;
+            return reinterpret_cast<Fn>(mouseBindHook->m_original)(self);
+        }
 
         class CKeepLayerKeyboard {
           public:
@@ -90,6 +204,12 @@ namespace hyprspace::hooks {
             using Fn = void (*)(CSeatManager*, SP<CWLSurfaceResource>);
             if (!layerKeyboard.expired())
                 return;
+            if (launchEnabled && launchEnabled() && windowSurface(surface)) {
+                keyboardSuspended = true;
+                if (!mappedKeyboardLayer())
+                    reinterpret_cast<Fn>(focusHook->m_original)(self, nullptr);
+                return;
+            }
             reinterpret_cast<Fn>(focusHook->m_original)(self, surface);
         }
 
@@ -116,6 +236,8 @@ namespace hyprspace::hooks {
             case XKB_KEY_l:
             case XKB_KEY_Home:
             case XKB_KEY_End:
+            case XKB_KEY_Page_Up:
+            case XKB_KEY_Page_Down:
                 return true;
             default:
                 return false;
@@ -124,6 +246,7 @@ namespace hyprspace::hooks {
 
         void keyboardInput(CInputManager* self, const IKeyboard::SKeyEvent& event, SP<IKeyboard> keyboard) {
             using Fn = void (*)(CInputManager*, const IKeyboard::SKeyEvent&, SP<IKeyboard>);
+            syncKeyboardFocus();
             std::erase_if(ignoredKeys, [](const auto& key) { return key.keyboard.expired(); });
             const auto key = std::ranges::find_if(ignoredKeys, [&](const auto& saved) { return saved.keyboard == keyboard && saved.code == event.keycode; });
             if (event.state == WL_KEYBOARD_KEY_STATE_RELEASED && key != ignoredKeys.end()) {
@@ -141,11 +264,13 @@ namespace hyprspace::hooks {
         }
 
         bool onKey(CKeybindManager* self, std::any event, SP<IKeyboard> keyboard) {
-            using Fn            = bool (*)(CKeybindManager*, std::any, SP<IKeyboard>);
-            const auto original = reinterpret_cast<Fn>(keyHook->m_original);
-            const auto e        = std::any_cast<IKeyboard::SKeyEvent>(event);
-            const bool pressed  = e.state == WL_KEYBOARD_KEY_STATE_PRESSED;
-            const bool owned    = ownsKeyboard && ownsKeyboard();
+            using Fn                                     = bool (*)(CKeybindManager*, std::any, SP<IKeyboard>);
+            const auto                          original = reinterpret_cast<Fn>(keyHook->m_original);
+            const auto                          e        = std::any_cast<IKeyboard::SKeyEvent>(event);
+            const bool                          pressed  = e.state == WL_KEYBOARD_KEY_STATE_PRESSED;
+            const bool                          previous = std::exchange(keyRelease, !pressed);
+            const Hyprutils::Utils::CScopeGuard restore([previous] { keyRelease = previous; });
+            const bool                          owned = ownsKeyboard && ownsKeyboard();
             std::erase_if(keys, [](const auto& key) { return key.keyboard.expired(); });
             auto it = std::ranges::find_if(keys, [&](const auto& key) { return key.keyboard == keyboard && key.code == e.keycode; });
             if (!pressed && it != keys.end()) {
@@ -242,11 +367,164 @@ namespace hyprspace::hooks {
         return ownsKeyboard && ownsKeyboard();
     }
 
+    double scrollFactor() {
+        return axisScale;
+    }
+
+    void syncKeyboardFocus() {
+        if (!focusHook)
+            return;
+        using Fn            = void (*)(CSeatManager*, SP<CWLSurfaceResource>);
+        const auto original = reinterpret_cast<Fn>(focusHook->m_original);
+        if (keyboardOwned()) {
+            if (windowSurface(g_pSeatManager->m_state.keyboardFocus.lock())) {
+                keyboardSuspended = true;
+                original(g_pSeatManager.get(), nullptr);
+            }
+            return;
+        }
+        // A foreground layer or grab keeps native ownership. Restore the
+        // compositor's latest focus only after overview ownership ends.
+        if (keyboardSuspended && (!launchEnabled || !launchEnabled())) {
+            keyboardSuspended = false;
+            if (!g_pSeatManager->m_state.keyboardFocus) {
+                const auto surface = Desktop::focusState()->surface();
+                const auto grab    = g_pSeatManager->m_seatGrab;
+                if (surface && !g_pSessionLockManager->isSessionLocked() && (!grab || !grab->m_keyboard || grab->accepts(surface)))
+                    original(g_pSeatManager.get(), surface);
+                if (auto keyboard = g_pSeatManager->m_keyboard.lock())
+                    g_pInputManager->onKeyboardMod(keyboard);
+            }
+        }
+    }
+
     void renderPanels(PHLMONITOR monitor) {
         for (auto level : {ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM})
             for (const auto& layer : monitor->m_layerSurfaceLayers[level])
                 if (layer && layer->m_namespace.starts_with("waybar"))
                     (g_pHyprRenderer.get()->*member(SRenderLayer{}))(layer.lock(), monitor, Time::steadyNow(), false, false);
+    }
+
+    namespace {
+        struct SScrolling {
+            Layout::Tiled::CScrollingAlgorithm* algorithm = nullptr;
+            SP<Layout::Tiled::SScrollingData>   data;
+        };
+
+        SScrolling scrolling(const SOverviewTarget& target) {
+            const auto ws = session().workspace(target);
+            if (!ws || !ws->m_space || !ws->m_space->algorithm())
+                return {};
+            const auto algorithm = dynamic_cast<Layout::Tiled::CScrollingAlgorithm*>(ws->m_space->algorithm()->tiledAlgo().get());
+            const auto column    = algorithm ? algorithm->getColumnAtViewportCenter() : nullptr;
+            return {algorithm, column ? column->scrollingData.lock() : nullptr};
+        }
+
+        std::pair<double, double> scrollBounds(const SScrolling& scroll) {
+            const auto   area            = scroll.algorithm->usableArea();
+            const auto&  controller      = scroll.data->controller;
+            const double size            = scroll.algorithm->primaryViewportSize();
+            const bool   fullscreenOnOne = *CConfigValue<Config::INTEGER>("scrolling:fullscreen_on_one_column");
+            const double extent          = controller->calculateMaxExtent(area, fullscreenOnOne);
+            double       first = 0, last = std::max(0.0, extent - size);
+            if (*CConfigValue<Config::INTEGER>("scrolling:focus_fit_method") == 0 && !scroll.data->columns.empty()) {
+                first        = std::min(first, -(size - controller->calculateStripSize(0, area, fullscreenOnOne)) / 2);
+                const auto i = scroll.data->columns.size() - 1;
+                last = std::max(last, controller->calculateStripStart(i, area, fullscreenOnOne) - (size - controller->calculateStripSize(i, area, fullscreenOnOne)) / 2);
+            }
+            return {first, last};
+        }
+    } // namespace
+
+    std::optional<SScrollViewport> scrollingViewport(const SOverviewTarget& target) {
+        const auto scroll = scrolling(target);
+        if (!scroll.algorithm)
+            return std::nullopt;
+        if (!scroll.data)
+            return SScrollViewport{};
+        const auto&  controller      = scroll.data->controller;
+        const bool   fullscreenOnOne = *CConfigValue<Config::INTEGER>("scrolling:fullscreen_on_one_column");
+        const double size            = scroll.algorithm->primaryViewportSize();
+        const double extent          = controller->calculateMaxExtent(scroll.algorithm->usableArea(), fullscreenOnOne);
+        const double offset          = controller->getOffset();
+        const bool   before = offset > 0.5, after = extent - size - offset > 0.5;
+        return SScrollViewport{controller->isPrimaryHorizontal(), controller->isReversed() ? after : before, controller->isReversed() ? before : after};
+    }
+
+    bool panWorkspace(const SOverviewTarget& target, double distance) {
+        const auto scroll = scrolling(target);
+        if (!scroll.algorithm || !scroll.data || session().drag.active() || !std::isfinite(distance))
+            return false;
+        const auto& controller = scroll.data->controller;
+        if (controller->getScrollInhibitor().isInhibited)
+            return false;
+        const auto [first, last] = scrollBounds(scroll);
+        const double before      = controller->getOffset();
+        const double delta       = std::clamp(distance, -1.0, 1.0) * scroll.algorithm->primaryViewportSize() * (controller->isReversed() ? -1 : 1);
+        const double after       = std::clamp(before + delta, first, last);
+        // Native movement updates geometry, fullscreen visibility and damage.
+        scroll.algorithm->moveTape(before - after);
+        session().damage();
+        return after != before;
+    }
+
+    bool stepWorkspace(const SOverviewTarget& target, int direction, bool fromSelection) {
+        const auto scroll = scrolling(target);
+        if (!scroll.algorithm || !scroll.data || scroll.data->columns.empty() || session().drag.active())
+            return false;
+        const auto& controller = scroll.data->controller;
+        if (controller->getScrollInhibitor().isInhibited)
+            return false;
+        const int step   = (direction < 0 ? -1 : 1) * (controller->isReversed() ? -1 : 1);
+        auto      column = scroll.algorithm->getColumnAtViewportCenter();
+        if (fromSelection) {
+            const auto w = target.window.lock();
+            if (const auto data = w ? scroll.algorithm->dataFor(w->layoutTarget(), true) : nullptr)
+                column = data->column.lock();
+        }
+        auto index = scroll.data->idx(column);
+        if (index < 0)
+            return false;
+        if (fromSelection)
+            index = std::clamp<int64_t>(index + step, 0, scroll.data->columns.size() - 1);
+        else {
+            const auto   area = scroll.algorithm->usableArea();
+            const bool   full = *CConfigValue<Config::INTEGER>("scrolling:fullscreen_on_one_column");
+            const double size = scroll.algorithm->primaryViewportSize(), offset = controller->getOffset();
+            double       nearest = std::numeric_limits<double>::max();
+            for (size_t i = 0; i < scroll.data->columns.size(); ++i) {
+                const double start  = controller->calculateStripStart(i, area, full) - offset;
+                const double end    = start + controller->calculateStripSize(i, area, full);
+                const double hidden = step > 0 ? end - size : -start;
+                if (hidden > 0.5 && hidden < nearest) {
+                    nearest = hidden;
+                    index   = i;
+                }
+            }
+        }
+        column = scroll.data->columns[index];
+        PHLWINDOW window;
+        if (auto data = column->lastFocusedTarget.lock(); data && data->target)
+            window = data->target->window();
+        if (!window || !window->m_isMapped || window->isHidden())
+            for (const auto& data : column->targetDatas)
+                if (data->target && Desktop::View::validMapped(data->target->window())) {
+                    window = data->target->window();
+                    break;
+                }
+        if (!window)
+            return false;
+        CKeepLayerKeyboard keepLayer(!keyboardOwned());
+        auto               selected = target;
+        selected.window             = window;
+        session().selection.keyboard(selected);
+        atDesktopPoint(window->middle(), [&] {
+            session().establishTarget();
+            scroll.data->centerOrFitCol(column);
+            scroll.data->recalculate();
+        });
+        session().followKeyboardFocus();
+        return true;
     }
 
     CFunctionHook* attach(const std::string& name, const std::string& signature, void* callback) {
@@ -332,15 +610,20 @@ namespace hyprspace::hooks {
         return true;
     }
 
-    void install(std::function<bool()> owner, std::function<bool()> launching) {
+    void install(std::function<bool()> owner, std::function<bool()> launching, std::function<bool(PHLMONITOR)> panels) {
         ownsKeyboard  = std::move(owner);
         launchEnabled = std::move(launching);
+        promotePanels = std::move(panels);
         try {
-            keyHook    = hook("onKeyEvent", "CKeybindManager::onKeyEvent(", reinterpret_cast<void*>(onKey));
-            inputHook  = hook("onKeyboardKey", "CInputManager::onKeyboardKey(", reinterpret_cast<void*>(keyboardInput));
-            focusHook  = hook("setKeyboardFocus", "CSeatManager::setKeyboardFocus(", reinterpret_cast<void*>(keyboardFocus));
-            coordsHook = hook("getMouseCoordsInternal", "CInputManager::getMouseCoordsInternal(", reinterpret_cast<void*>(mouseCoords));
-            warpHook   = hook("warpTo", "Pointer::CPointerController::warpTo(", reinterpret_cast<void*>(warp));
+            keyHook       = hook("onKeyEvent", "CKeybindManager::onKeyEvent(", reinterpret_cast<void*>(onKey));
+            inputHook     = hook("onKeyboardKey", "CInputManager::onKeyboardKey(", reinterpret_cast<void*>(keyboardInput));
+            focusHook     = hook("setKeyboardFocus", "CSeatManager::setKeyboardFocus(", reinterpret_cast<void*>(keyboardFocus));
+            coordsHook    = hook("getMouseCoordsInternal", "CInputManager::getMouseCoordsInternal(", reinterpret_cast<void*>(mouseCoords));
+            warpHook      = hook("warpTo", "Pointer::CPointerController::warpTo(", reinterpret_cast<void*>(warp));
+            pointerHook   = hook("mouseMoveUnified", "CInputManager::mouseMoveUnified(", reinterpret_cast<void*>(pointerMove));
+            axisHook      = hook("onMouseWheel", "CInputManager::onMouseWheel(", reinterpret_cast<void*>(pointerAxis));
+            imeModsHook   = hook("sendMods", "CInputMethodKeyboardGrabV2::sendMods(", reinterpret_cast<void*>(imeModifiers));
+            mouseBindHook = hook("ensureMouseBindState", "CKeybindManager::ensureMouseBindState(", reinterpret_cast<void*>(ensureMouseBindState));
             for (auto& [name, dispatcher] : g_pKeybindManager->m_dispatchers) {
                 if (name.starts_with("hyprspace:") || name == "movecursor")
                     continue;
@@ -399,16 +682,24 @@ namespace hyprspace::hooks {
     void uninstall() {
         cancelPlacement();
         ownCursor(false);
+        ownsKeyboard  = {};
+        launchEnabled = {};
+        syncKeyboardFocus();
         for (auto& [name, dispatcher] : dispatchers)
             g_pKeybindManager->m_dispatchers[name] = std::move(dispatcher);
         dispatchers.clear();
-        for (auto handle : {keyHook, inputHook, focusHook, coordsHook, warpHook})
+        for (auto handle : {keyHook, inputHook, focusHook, coordsHook, warpHook, pointerHook, imeModsHook, axisHook, mouseBindHook})
             if (handle)
                 HyprlandAPI::removeFunctionHook(PHANDLE, handle);
         keyHook = inputHook = focusHook = coordsHook = warpHook = nullptr;
+        pointerHook = imeModsHook = axisHook = mouseBindHook = nullptr;
+        axisScale                                            = 1.0;
+        keyRelease                                           = false;
         desktopPoint.reset();
-        ownsKeyboard  = {};
-        launchEnabled = {};
+        ownsKeyboard      = {};
+        launchEnabled     = {};
+        promotePanels     = {};
+        keyboardSuspended = false;
         keys.clear();
         ignoredKeys.clear();
         layerKeyboard.reset();

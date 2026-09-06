@@ -3,6 +3,9 @@
 #include "Access.hpp"
 #include "Config.hpp"
 #include "Focus.hpp"
+#include "CompositorHooks.hpp"
+#include <hyprland/src/config/ConfigValue.hpp>
+#include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/config/shared/workspace/WorkspaceRuleManager.hpp>
 #include "OverviewLayout.hpp"
 #include "PassElements.hpp"
@@ -368,14 +371,7 @@ namespace hyprspace {
     // tile can outlive the workspace it stands for. Recreate it on demand rather
     // than letting the tile go dead.
     PHLWORKSPACE COverview::workspaceForEntry(const SEntry& e) const {
-        if (const auto WS = State::workspaceState()->query().id(e.workspaceId).run())
-            return WS;
-
-        const auto MONITOR = m_monitor.lock();
-        if (!MONITOR || e.workspaceId < 1)
-            return nullptr;
-
-        return State::workspaceState()->create(e.workspaceId, MONITOR->m_id);
+        return session().workspace({.workspace = {e.workspaceId, e.workspaceName}, .monitor = m_monitor});
     }
 
     // Hyprland animates a workspace change itself: the outgoing workspace
@@ -551,6 +547,13 @@ namespace hyprspace {
             selectIndex(static_cast<int>(m_tiles.size()) - 1);
             return true;
 
+        case XKB_KEY_Page_Up:
+        case XKB_KEY_Page_Down:
+            if (m_selected >= 0 && m_selected < static_cast<int>(m_tiles.size()) && scrollingFor(m_entries[m_tiles[m_selected].key]))
+                if (auto target = selectedTarget())
+                    hooks::stepWorkspace(*target, sym == XKB_KEY_Page_Up ? -1 : 1, true);
+            return true;
+
         default:
             break;
         }
@@ -599,6 +602,9 @@ namespace hyprspace {
     PHLWINDOW COverview::windowAtLocal(const Vector2D& local) const {
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR)
+            return nullptr;
+
+        if (scrollControlAt(local))
             return nullptr;
 
         const int IDX = tileAtLocal(local);
@@ -658,14 +664,49 @@ namespace hyprspace {
         const auto mon = monitor();
         if (!mon || m_selected < 0 || m_selected >= static_cast<int>(m_tiles.size()))
             return std::nullopt;
-        const auto& entry  = m_entries[m_tiles[m_selected].key];
-        auto        target = targetAt(mon->m_position + Vector2D{interpolate(entry).cx(), interpolate(entry).cy()});
-        if (target) {
-            target->window = m_clickedWindow;
-            if (auto w = target->window.lock(); w && (!w->m_workspace || w->m_workspace->m_id != entry.workspaceId))
-                target->window.reset();
+        const auto&     entry = m_entries[m_tiles[m_selected].key];
+        SOverviewTarget target{.workspace = {entry.workspaceId, entry.workspaceName}, .monitor = mon};
+        target.preview    = interpolate(entry);
+        target.desktopBox = m_usable;
+        target.monitorBox = m_usable;
+        if (auto w = m_clickedWindow.lock(); w && w->m_isMapped && !w->isHidden() && w->m_workspace && w->m_workspace->m_id == entry.workspaceId) {
+            for (const auto& slot : entry.windows)
+                if (slot.window == w) {
+                    target.window     = w;
+                    target.preview    = geometryFor(entry, slot).box;
+                    target.desktopBox = slot.desktopRect;
+                    break;
+                }
+        }
+        target.desktop = mon->m_position + Vector2D{target.desktopBox.cx(), target.desktopBox.cy()};
+        for (auto* box : {&target.preview, &target.desktopBox, &target.monitorBox}) {
+            box->x += mon->m_position.x;
+            box->y += mon->m_position.y;
         }
         return target;
+    }
+
+    std::optional<SScrollViewport> COverview::scrollingFor(const SEntry& entry) const {
+        if (entry.spread || m_closing || session().drag.active())
+            return std::nullopt;
+        return hooks::scrollingViewport({.workspace = {entry.workspaceId, entry.workspaceName}, .monitor = m_monitor});
+    }
+
+    std::optional<std::pair<int, int>> COverview::scrollControlAt(const Vector2D& local) const {
+        if (m_closing || session().drag.active() || m_progress->value() < 0.95F)
+            return std::nullopt;
+        for (int i = static_cast<int>(m_tiles.size()) - 1; i >= 0; --i) {
+            const auto& entry = m_entries[m_tiles[i].key];
+            const auto  state = scrollingFor(entry);
+            if (!state)
+                continue;
+            const auto controls = scrollControls(interpolate(entry), state->horizontal);
+            if (state->previous && controls.previous.contains(local.x, local.y))
+                return std::pair{i, -1};
+            if (state->next && controls.next.contains(local.x, local.y))
+                return std::pair{i, 1};
+        }
+        return std::nullopt;
     }
 
     std::vector<SOverviewTarget> COverview::inspectTargets() const {
@@ -710,6 +751,11 @@ namespace hyprspace {
         const int  IDX    = tileAtLocal(LOCAL);
         const auto WINDOW = windowAtLocal(LOCAL);
 
+        if (IDX >= 0 && config::followMouse()) {
+            selectIndex(IDX);
+            m_clickedWindow = WINDOW;
+        }
+
         if (IDX == m_hovered && WINDOW == m_hoveredWindow.lock())
             return;
 
@@ -724,11 +770,31 @@ namespace hyprspace {
         damage();
     }
 
-    // Scrolling steps the selection, the same order Tab walks.
+    // Pan scrolling workspaces in place; other layouts keep tile navigation.
     void COverview::onScroll(const SScrollInput& event) {
         if (m_tiles.empty() || m_closing || session().drag.active())
             return;
 
+        const auto mon = monitor();
+        if (!mon)
+            return;
+        const auto pos   = g_pInputManager->getMouseCoordsInternal();
+        const auto local = pos - mon->m_position;
+        const int  index = tileAtLocal(local);
+        if (index >= 0) {
+            const auto& entry = m_entries[m_tiles[index].key];
+            if (auto state = scrollingFor(entry)) {
+                selectIndex(index);
+                session().pointer(pos);
+                const auto target = targetAt(pos);
+                const auto cell   = interpolate(entry);
+                if (target)
+                    hooks::panWorkspace(*target, scrollDistance(event, state->horizontal ? cell.w : cell.h) * hooks::scrollFactor());
+                return;
+            }
+        }
+        if (event.horizontal)
+            return;
         const int STEPS = m_scroll.steps(event);
         if (STEPS == 0)
             return;
@@ -736,6 +802,7 @@ namespace hyprspace {
         m_clickedWindow.reset();
         const int N = static_cast<int>(m_tiles.size());
         selectIndex(static_cast<int>(((static_cast<int64_t>(m_selected) + STEPS) % N + N) % N));
+        session().keyboard(*this);
     }
 
     bool COverview::onMouseButton(uint32_t button, bool pressed, uint32_t mods) {
@@ -755,6 +822,12 @@ namespace hyprspace {
             return true;
 
         if (button == MOUSE_LEFT) {
+            if (const auto control = scrollControlAt(LOCAL)) {
+                selectIndex(control->first);
+                if (auto target = selectedTarget())
+                    hooks::stepWorkspace(*target, control->second, false);
+                return true;
+            }
             const int HIT = tileAtLocal(LOCAL);
             if (HIT >= 0) {
                 selectIndex(HIT);
@@ -990,6 +1063,34 @@ namespace hyprspace {
                 const auto  BGCOL = config::overviewTitleBgColor();
                 rect(badge, BGCOL.modifyA(BGCOL.a * BADGE_A), badge.h / 2.0);
                 tex(tb, {badge.x + PAD_X, badge.y + PAD_Y, SZ.x, SZ.y}, BADGE_A);
+            }
+
+            if (const auto state = scrollingFor(entry); state && PROGRESS >= 0.95F) {
+                const auto controls = scrollControls(cell, state->horizontal);
+                const auto pointer  = g_pInputManager->getMouseCoordsInternal() - MONITOR->m_position;
+                const auto ink      = config::overviewActiveBorder();
+                auto       arrow    = [&](const SBoxF& box, const char* label) {
+                    const bool hover = box.contains(pointer.x, pointer.y);
+                    rect(box, config::overviewTitleBgColor().modifyA(FADE), box.w / 2);
+                    border(box, (hover ? ink : config::overviewTileBorderColor()).modifyA(FADE), hover ? 2 : 1, box.w / 2);
+                    if (auto text = textures().text(label, FONT, ink, static_cast<int>(box.w), SCALE)) {
+                        const auto size = logicalSize(text);
+                        tex(text, {box.cx() - size.x / 2, box.cy() - size.y / 2, size.x, size.y}, FADE);
+                    }
+                };
+                if (state->previous)
+                    arrow(controls.previous, state->horizontal ? "←" : "↑");
+                if (state->next)
+                    arrow(controls.next, state->horizontal ? "→" : "↓");
+                if (SELECTED && (state->previous || state->next) && cell.w >= 200 && cell.h >= 130) {
+                    if (auto hint = textures().text("PgUp / PgDn · Enter", FONT, config::overviewLabelColor(), static_cast<int>(cell.w - 80), SCALE)) {
+                        const auto   size = logicalSize(hint);
+                        const double top  = cell.y + (state->horizontal ? 8 : controls.previous.h + 20);
+                        const SBoxF  box{cell.cx() - size.x / 2 - 8, top, size.x + 16, size.y + 8};
+                        rect(box, config::overviewTitleBgColor().modifyA(FADE), 8);
+                        tex(hint, {box.x + 8, box.y + 4, size.x, size.y}, FADE);
+                    }
+                }
             }
 
             // --- workspace label ------------------------------------------------

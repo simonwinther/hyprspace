@@ -132,7 +132,12 @@ integration-fixtures:
 	mkdir -p "$(BUILD_DIR)"
 	wayland-scanner client-header test/integration/virtual-pointer.xml "$(BUILD_DIR)/virtual-pointer.h"
 	wayland-scanner private-code test/integration/virtual-pointer.xml "$(BUILD_DIR)/virtual-pointer.c"
-	$(CC) -I"$(BUILD_DIR)" test/integration/pointer.c "$(BUILD_DIR)/virtual-pointer.c" -lwayland-client -o "$(BUILD_DIR)/test-pointer"
+	wayland-scanner client-header test/integration/virtual-keyboard.xml "$(BUILD_DIR)/virtual-keyboard.h"
+	wayland-scanner private-code test/integration/virtual-keyboard.xml "$(BUILD_DIR)/virtual-keyboard.c"
+	$(CC) -I"$(BUILD_DIR)" test/integration/pointer.c "$(BUILD_DIR)/virtual-pointer.c" "$(BUILD_DIR)/virtual-keyboard.c" -lwayland-client -lxkbcommon -lm -o "$(BUILD_DIR)/test-pointer"
+	wayland-scanner client-header test/integration/input-method.xml "$(BUILD_DIR)/input-method.h"
+	wayland-scanner private-code test/integration/input-method.xml "$(BUILD_DIR)/input-method.c"
+	$(CC) -I"$(BUILD_DIR)" test/integration/ime.c "$(BUILD_DIR)/input-method.c" -lwayland-client -o "$(BUILD_DIR)/test-ime"
 	wayland-scanner client-header "$(PROTOCOL_DIR)/stable/xdg-shell/xdg-shell.xml" "$(BUILD_DIR)/xdg-shell.h"
 	wayland-scanner private-code "$(PROTOCOL_DIR)/stable/xdg-shell/xdg-shell.xml" "$(BUILD_DIR)/xdg-shell.c"
 	wayland-scanner client-header "$(PROTOCOL_DIR)/staging/xdg-activation/xdg-activation-v1.xml" "$(BUILD_DIR)/xdg-activation.h"
@@ -155,9 +160,9 @@ dist: release-check
 
 clean:
 	rm -f -- $(OBJS) $(DEPS) "$(TARGET)" "$(BUILD_CONFIG)"
-	rm -f -- "$(BUILD_DIR)/hyprspace-launch" "$(BUILD_DIR)/test-pointer" "$(BUILD_DIR)/test-activation"
+	rm -f -- "$(BUILD_DIR)/hyprspace-launch" "$(BUILD_DIR)/test-pointer" "$(BUILD_DIR)/test-activation" "$(BUILD_DIR)/test-ime"
 	@for name in uwsm-app uwsm app2unit; do rm -f -- "$(BUILD_DIR)/launch-bin/$$name"; done
-	@for name in virtual-pointer xdg-shell xdg-activation session-lock; do rm -f -- "$(BUILD_DIR)/$$name.h" "$(BUILD_DIR)/$$name.c"; done
+	@for name in virtual-pointer virtual-keyboard input-method xdg-shell xdg-activation session-lock; do rm -f -- "$(BUILD_DIR)/$$name.h" "$(BUILD_DIR)/$$name.c"; done
 	@rmdir -- "$(BUILD_DIR)/launch-bin" 2>/dev/null || true
 	@rmdir -- "$(BUILD_DIR)" 2>/dev/null || true
 	$(MAKE) -C test clean

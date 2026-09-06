@@ -1,9 +1,10 @@
 # Screenshots
 
-These PNGs were captured with `grim` from hyprspace running in a separate
-Hyprland 0.56.2 session on 2026-09-05. They show real plugin rendering with
-local demo content. The overview images are 1920 x 1080; the switcher image is
-a 1060 x 500 region captured around the panel. The images have no added labels
+The overview, fullscreen and switcher PNGs were captured with `grim` from
+hyprspace running in a separate Hyprland 0.56.2 session on 2026-09-05. They show
+real plugin rendering with local demo content. The overview images are
+1920 x 1080; the switcher image is a 1060 x 500 region captured around the panel.
+The images have no added labels
 or composited interface elements.
 
 | File | Content |
@@ -11,10 +12,15 @@ or composited interface elements.
 | [overview.png](overview.png) | Three workspaces with source code, notes and build checks |
 | [fullscreen.png](fullscreen.png) | A fullscreen Chromium window, Ghostty with Neovim, and Files on one workspace |
 | [switcher.png](switcher.png) | App icons and the selected window title |
+| [scrolling-controls.png](scrolling-controls.png) | Scrolling columns with edge arrows and the Page Up/Page Down hint |
 
 The browser displays [demo.html](demo.html), which uses local HTML and CSS
 without external assets. The editor displays this repository's source and
 configuration. Files displays a temporary folder containing those demo files.
+
+The scrolling image was captured on 2026-09-06 during the isolated Hyprland
+0.56.2 integration suite. It keeps the original 960 x 600 pixels and shows
+disposable GTK test windows without personal content.
 
 ## Capture replacements
 

@@ -94,12 +94,24 @@ keyboard grab, which makes it a reliable escape hatch.
 | `h/j/k/l` | Same, vim style |
 | `1` through `9`, `0` | Go to that workspace at once, no Enter needed (`0` = workspace 10) |
 | `Home` / `End` | First / last tile |
+| `Page Up` / `Page Down` | Previous / next column in a scrolling workspace; Enter opens the selection |
 | Mouse move | Hover highlights, and selects when `follow_mouse` is on |
 | Left click | Go there. Clicking a *window* inside a tile focuses that window; clicking empty space dismisses |
 | Right click | Close without selecting |
 | `Super` + drag left | Rearrange a window or move it to any workspace tile on any output |
 | `Super` + drag right | Resize that window in place, scaled into the tile |
-| Scroll wheel | Step the selection |
+| Wheel / two-finger scroll | Pan the scrolling workspace under the pointer; other layouts step the workspace selection |
+| Edge arrows inside a scrolling tile | Reveal the next hidden column and keep the overview open |
+
+Scrolling previews accept horizontal and vertical wheel/trackpad input. Wheel
+detents move a quarter viewport and high-resolution detents retain their fraction;
+touchpad movement is continuous. Native scroll factors and each workspace's layout
+direction apply. Edge arrows appear only where columns extend beyond the preview.
+Page Up moves left/up and Page Down moves right/down, including reversed layouts.
+Tab and Shift+Tab still select workspaces. Clicking a window always focuses it
+and closes the overview, including a partially visible window.
+
+![Scrolling columns with edge arrows and a keyboard navigation hint](screenshots/scrolling-controls.png)
 
 Screenshot, volume, brightness and media keys are passed through to the system
 while either overlay is up. When `Print` opens an interactive screenshot picker,
@@ -113,8 +125,9 @@ The overview binding toggles: pressing it again closes. Unmodified navigation
 and Shift+Tab belong to the overview. Other keys run through Hyprland's native
 binding matcher with the indicated window or workspace established first.
 Ctrl/Super combinations, repeat/release bindings, submaps and keyboard-specific
-binding settings retain their native matching behavior. Unbound keys are
-suppressed while the overview owns input. Super+L uses `hyprspace:layoutcycle`
+binding settings retain their native matching behavior. Unbound keys and
+application modifier events are suppressed while the overview owns input.
+Super+L uses `hyprspace:layoutcycle`
 from the example configuration to select dwindle or scrolling synchronously.
 Launching, moving, resizing and changing layouts keep the overview open.
 
@@ -166,11 +179,11 @@ both here and in Hyprland's own `workspace` binds.
 | Mouse move, click | Hover selects when `follow_mouse` is on; click commits the pointed-at window |
 | Scroll wheel | Step through the list |
 
-Every other key is swallowed while an overlay is up. There is deliberately
-nowhere to type.
+Other unbound keys are swallowed while the switcher owns input.
 
-High-resolution wheels accumulate partial detents before moving the selection;
-touchpad and continuous scrolling advance in controlled steps. Each overlay
+When stepping tiles or switcher entries, high-resolution wheels accumulate
+partial detents before moving the selection; touchpad and continuous scrolling
+advance in controlled steps. Each overlay
 keeps its own scroll state, and a new gesture starts without leftover movement.
 
 Large switcher lists stay within the screen and show a small page counter when
@@ -421,10 +434,15 @@ launches, exact XDG surface correlation, rules, lock and unload. The runner crea
 its own compositor, input devices, application fixtures, config and D-Bus session.
 It never loads the development plugin into the host compositor. Test artifacts
 include logs, screenshots and JSON results in the printed temporary directory.
+Audit regressions cover protocol-level key/modifier isolation, IME handoff,
+overlapping bottom panels and popups, launch destinations after output removal,
+and visibility when a window leaves a single-monitor overview. Scrolling checks
+cover all four directions, wheel and finger input, bounds, arrows, keyboard
+selection, inactive workspaces, foreground typing and animated pointer targeting.
 
 [Verification instructions and release gates](interactive.md#verification)
 describe the automated and physical suites. The
-[dated verification record](verification/2026-09-06.md) records the tested builds,
+[dated verification record](verification/2026-09-06-audit-fixes.md) records the tested builds,
 results and limits.
 
 ---

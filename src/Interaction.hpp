@@ -36,12 +36,20 @@ namespace hyprspace {
     template <typename Target> class CTargetSelection {
       public:
         void pointer(std::optional<Target> hit) {
+            m_followsPointer = true;
+            refresh(std::move(hit));
+        }
+        void refresh(std::optional<Target> hit) {
             m_hit = hit;
-            if (hit)
+            if (hit && m_followsPointer)
                 m_selected = hit;
         }
         void keyboard(Target target) {
-            m_selected = std::move(target);
+            m_followsPointer = false;
+            m_selected       = std::move(target);
+        }
+        bool followsPointer() const {
+            return m_followsPointer;
         }
         const std::optional<Target>& command() const {
             return m_selected;
@@ -52,10 +60,12 @@ namespace hyprspace {
         void clear() {
             m_hit.reset();
             m_selected.reset();
+            m_followsPointer = true;
         }
 
       private:
         std::optional<Target> m_hit, m_selected;
+        bool                  m_followsPointer = true;
     };
 
     template <typename WeakWindow> class CVisibilityLedger {
@@ -64,14 +74,26 @@ namespace hyprspace {
             auto w = window.lock();
             if (!w)
                 return;
-            if (std::ranges::none_of(m_saved, [&](const auto& saved) { return saved.first.lock() == w; }))
-                m_saved.emplace_back(window, read(w));
+            auto saved = std::ranges::find_if(m_saved, [&](const auto& entry) { return entry.window.lock() == w; });
+            if (saved == m_saved.end())
+                saved = m_saved.emplace(m_saved.end(), SEntry{window, read(w), false});
+            saved->hidden = true;
             hideWindow(w);
         }
+        template <typename Predicate, typename Restore> void restoreIf(Predicate release, Restore restoreWindow) {
+            std::erase_if(m_saved, [&](auto& entry) {
+                auto w = entry.window.lock();
+                if (!w)
+                    return true;
+                if (entry.hidden && release(w)) {
+                    restoreWindow(w, entry.alpha);
+                    entry.hidden = false;
+                }
+                return false;
+            });
+        }
         template <typename Restore> void restore(Restore restoreWindow) {
-            for (const auto& [window, alpha] : m_saved)
-                if (auto w = window.lock())
-                    restoreWindow(w, alpha);
+            restoreIf([](const auto&) { return true; }, restoreWindow);
             m_saved.clear();
         }
         size_t size() const {
@@ -79,7 +101,12 @@ namespace hyprspace {
         }
 
       private:
-        std::vector<std::pair<WeakWindow, float>> m_saved;
+        struct SEntry {
+            WeakWindow window;
+            float      alpha;
+            bool       hidden;
+        };
+        std::vector<SEntry> m_saved;
     };
 
     // Per-request, bounded and expiring. Capture and consumption are separate:

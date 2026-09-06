@@ -160,7 +160,7 @@ namespace hyprspace::launch {
                 }
                 target->warpPositionSize();
             });
-            if (session().live())
+            if (session().live() && session().covers(w->m_monitor.lock()))
                 session().hideWindow(w);
             session().damage();
         }

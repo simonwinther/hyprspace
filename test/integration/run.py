@@ -73,13 +73,17 @@ class Suite:
                     pass
                 self.finish()
                 raise
-        self.pointer = self.spawn(
-            [str(REPO / "build/test-pointer")],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            text=True,
-        )
-        assert self.pointer.stdout.readline().strip() == "ready"
+        try:
+            self.pointer = self.spawn(
+                [str(REPO / "build/test-pointer")],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            assert self.pointer.stdout.readline().strip() == "ready"
+        except Exception:
+            self.finish()
+            raise
 
     def spawn(self, command, **kwargs):
         kwargs.setdefault("stdout", subprocess.DEVNULL)
@@ -251,20 +255,25 @@ bindm = SUPER,mouse:273,resizewindow
             y = monitor["y"] + monitor["reserved"][1] + offset
             for dispatch, args in [
                 ("setfloating", "address:" + window["address"]),
-                ("resizewindowpixel", "exact 960 600,address:" + window["address"]),
                 ("movewindowpixel", f'exact {x} {y},address:{window["address"]}'),
+                ("resizewindowpixel", "exact 960 600,address:" + window["address"]),
             ]:
                 subprocess.run(
                     ["hyprctl", "dispatch", dispatch, args],
                     check=True,
                     stdout=subprocess.DEVNULL,
                 )
-        wait_for(
-            lambda: all(
-                (monitor["width"], monitor["height"]) == (960, 600)
-                for monitor in self.data("monitors")
+        try:
+            wait_for(
+                lambda: all(
+                    (monitor["width"], monitor["height"]) == (960, 600)
+                    for monitor in self.data("monitors")
+                )
             )
-        )
+        except AssertionError as error:
+            raise OutputUnavailable(
+                "nested outputs did not acknowledge their host window sizes"
+            ) from error
         with config.open("a") as output:
             output.write("""monitor = WAYLAND-1,960x600@60,0x0,1
 monitor = WAYLAND-2,960x600@60,-1000x-200,1.25,transform,1
@@ -355,22 +364,38 @@ monitor = WAYLAND-3,960x600@60,2200x100,1.5
         self.pointer.stdin.flush()
         assert self.pointer.stdout.readline().strip() == "ok"
 
+    def scroll(self, delta=15, discrete=1, axis=0, source=0):
+        self.pointer.stdin.write(f"axis {axis} {delta} {discrete} {source}\n")
+        self.pointer.stdin.flush()
+        assert self.pointer.stdout.readline().strip() == "ok"
+
     def drag(self, source, destination, overview, cancel=False, button=272):
         self.move(source)
-        keyboard = self.spawn(["wtype", "-M", "logo", "-s", "650", "-m", "logo"])
-        time.sleep(0.08)
-        self.button(1, button)
-        if overview:
-            assert self.status()["dragging"]
-        self.move(destination)
-        if cancel:
-            self.run("wtype", "-k", "Escape")
-        self.button(0, button)
-        keyboard.wait(timeout=3)
+        self.key(125, 1)
+        pressed = False
+        try:
+            self.button(1, button)
+            pressed = True
+            if overview:
+                assert self.status()["dragging"]
+            self.move(destination)
+            if cancel:
+                self.run("wtype", "-k", "Escape")
+            self.button(0, button)
+            pressed = False
+        finally:
+            if pressed:
+                self.button(0, button)
+            self.key(125, 0)
         if overview:
             assert self.status()["live"]
             assert not self.status()["dragging"]
         time.sleep(0.08)
+
+    def key(self, code, state):
+        self.pointer.stdin.write(f"key {code} {state}\n")
+        self.pointer.stdin.flush()
+        assert self.pointer.stdout.readline().strip() == "ok"
 
     @staticmethod
     def point(window, x=0.35, y=0.4):
@@ -574,7 +599,13 @@ monitor = WAYLAND-3,960x600@60,2200x100,1.5
         return process.stdout.readline().strip()
 
     def activation(self):
-        self.setup("dwindle", 0, 1)
+        from regressions import events, offsets
+
+        self.env["WAYLAND_DEBUG"] = "client"
+        try:
+            self.setup("dwindle", 0, 1)
+        finally:
+            self.env.pop("WAYLAND_DEBUG")
         app = self.spawn(
             [str(REPO / "build/test-activation")],
             stdin=subprocess.PIPE,
@@ -623,8 +654,14 @@ monitor = WAYLAND-3,960x600@60,2200x100,1.5
         self.check("explicit window workspace rules override launch context")
         self.move(self.preview_point("hs-A", 0.6, 0.5))
         pending = self.request("capture")
+        saved = offsets(self)
         self.protocol(app, "lock")
         wait_for(lambda: not self.status()["live"])
+        self.run(
+            "wtype", "-M", "ctrl", "-M", "shift", "-k", "q", "-m", "shift", "-m", "ctrl"
+        )
+        assert not events(saved, r"wl_keyboard#\d+\.(enter|key)\(")
+        assert not events(saved, r"wl_keyboard#\d+\.modifiers\(\d+, [1-9]")
         assert self.request("consume " + pending) == ""
         assert all(window["alpha"] == 1 for window in self.status()["windows"])
         self.check(
@@ -1137,19 +1174,21 @@ runner = [
         self.move(self.preview_point("hs-B", 0.5, 0.5))
         assert self.status()["target"]["window"] == self.windows()["hs-B"]["address"]
         self.check("native keyboard focus navigation persists until pointer motion")
-        repeat, release, submap = [
-            self.root / name for name in ("repeat", "release", "submap")
-        ]
+        release, submap = [self.root / name for name in ("release", "submap")]
         self.ctl("keyword", "input:repeat_delay", "150")
         self.ctl("keyword", "input:repeat_rate", "25")
-        self.ctl(
-            "keyword", "binde", f"CTRL,R,exec,printf x >> {shlex.quote(str(repeat))}"
-        )
+        # Measure synchronous compositor dispatch, not completion of child
+        # processes that may finish after the repeat key has been released.
+        address = self.windows()["hs-B"]["address"]
+        self.ctl("dispatch", "setfloating", "address:" + address)
+        self.ctl("dispatch", "resizewindowpixel", "exact 400 300,address:" + address)
+        self.ctl("keyword", "binde", "CTRL,R,resizewindowpixel,1 0,address:" + address)
+        before = self.windows()["hs-B"]["size"][0]
         self.run("wtype", "-M", "ctrl", "-P", "r", "-s", "500", "-p", "r", "-m", "ctrl")
-        wait_for(lambda: repeat.exists() and len(repeat.read_text()) >= 3)
-        count = len(repeat.read_text())
+        after = self.windows()["hs-B"]["size"][0]
+        assert after >= before + 3
         time.sleep(0.2)
-        assert len(repeat.read_text()) == count
+        assert self.windows()["hs-B"]["size"][0] == after
         self.ctl("keyword", "bindr", f"CTRL,Y,exec,touch {shlex.quote(str(release))}")
         key = self.spawn(
             ["wtype", "-M", "ctrl", "-P", "y", "-s", "400", "-p", "y", "-m", "ctrl"]
@@ -1209,7 +1248,7 @@ runner = [
             and self.windows()["hs-A"]["size"][1] > 260
         )
         self.check(
-            "the first native resize flushes its final motion after compositor startup"
+            "the first native resize survives immediate Super release and flushes its final motion"
         )
 
     def lifecycle(self):
@@ -1415,6 +1454,8 @@ def main():
             "resize",
             "browser",
             "discord",
+            "audit",
+            "scrolling",
         ),
         default="all",
     )
@@ -1443,6 +1484,13 @@ def main():
                 raise
             print("Retrying unavailable nested output backend:", error, flush=True)
     try:
+        if args.only in ("all", "audit", "scrolling"):
+            import regressions
+
+            if args.only in ("all", "audit"):
+                regressions.audit(suite, wait_for)
+            if args.only in ("all", "scrolling"):
+                regressions.scrolling(suite, wait_for)
         if args.only in ("all", "resize"):
             suite.first_resize()
         if args.only in ("all", "interactions"):

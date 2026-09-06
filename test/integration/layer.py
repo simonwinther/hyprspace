@@ -38,6 +38,21 @@ entry.connect(
     "button-press-event",
     lambda widget, event: Path(sys.argv[1] + ".click").write_text("clicked") and False,
 )
+
+
+def popup(widget, menu):
+    for child in menu.get_children():
+        menu.remove(child)
+    action = Gtk.MenuItem(label="Panel action")
+    action.connect(
+        "activate", lambda item: Path(sys.argv[1] + ".action").write_text("activated")
+    )
+    menu.append(action)
+    menu.show_all()
+    Path(sys.argv[1] + ".popup").write_text("opened")
+
+
+entry.connect("populate-popup", popup)
 if len(sys.argv) > 3 and sys.argv[3] == "bottom":
     GtkLayerShell.set_layer(window, GtkLayerShell.Layer.BOTTOM)
     GtkLayerShell.set_keyboard_mode(window, GtkLayerShell.KeyboardMode.NONE)

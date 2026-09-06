@@ -10,6 +10,7 @@
 #include "Input.hpp"
 #include "OverviewSession.hpp"
 #include "PreviewStyle.hpp"
+#include "Scrolling.hpp"
 #include "globals.hpp"
 
 #include <hyprland/src/desktop/DesktopTypes.hpp>
@@ -122,8 +123,10 @@ namespace hyprspace {
         SBoxF windowBoxInCell(const SBoxF& r, const SBoxF& cell) const;
 
         // Hit test: which tile, and which window inside it.
-        int       tileAtLocal(const Vector2D& local) const;
-        PHLWINDOW windowAtLocal(const Vector2D& local) const;
+        int                                tileAtLocal(const Vector2D& local) const;
+        PHLWINDOW                          windowAtLocal(const Vector2D& local) const;
+        std::optional<SScrollViewport>     scrollingFor(const SEntry& entry) const;
+        std::optional<std::pair<int, int>> scrollControlAt(const Vector2D& local) const;
 
         // The workspace a tile stands for, created if the last window was
         // dragged off it and Hyprland reaped it.

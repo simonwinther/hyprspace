@@ -8,10 +8,11 @@
 namespace hyprspace {
 
     struct SScrollInput {
-        double   delta    = 0.0;
-        int32_t  value120 = 0;
-        uint32_t timeMs   = 0;
-        bool     wheel    = true;
+        double   delta      = 0.0;
+        int32_t  value120   = 0;
+        uint32_t timeMs     = 0;
+        bool     wheel      = true;
+        bool     horizontal = false;
     };
 
     class CScrollAccumulator {
