@@ -38,7 +38,20 @@ builds do not exercise rendering or input inside a live compositor.
 
 ## Check desktop behavior
 
-Use a separate Hyprland session for rendering, focus or input changes. Check
+`make integration-test` runs in the background by default. It requires the
+`wlroots-0.20` development package in addition to the dependencies listed in the
+[interaction test notes](docs/interactive.md#verification). A private
+display host renders three virtual monitors without opening desktop windows or
+receiving physical input. Tests run at reduced CPU priority, although they still
+share CPU, GPU and memory with other applications.
+
+Use `--visible` only when you want to watch three test windows on your desktop.
+The physical suite requires its separate `--run` option and temporarily takes over
+the current desktop. Arrange those checks with the person using the machine;
+routine validation should use the background runner. An unavailable background
+backend is a test failure, never a reason to select a disruptive mode automatically.
+
+For rendering, focus or input changes, check
 opening and closing both overlays, Escape, selection by keyboard and mouse,
 fullscreen and maximized windows, and more than one workspace. Check window
 move/resize and multiple monitors when the change affects them.

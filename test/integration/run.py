@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated compositor integration checks; never loads the plugin in the host."""
+"""Background compositor checks; use --visible to open test windows on the desktop."""
 
 import argparse
 import hashlib
@@ -13,6 +13,8 @@ import socket
 import subprocess
 import tempfile
 import time
+
+from background import BackgroundDisplay, stop_process_group
 
 REPO = Path(__file__).resolve().parents[2]
 PLUGIN = REPO / "build/hyprspace.so"
@@ -33,24 +35,83 @@ def wait_for(predicate, timeout=6):
     raise AssertionError("timed out waiting for compositor state")
 
 
+def validate_runtime(root, saved, metadata, visible):
+    keys = {
+        "XDG_RUNTIME_DIR",
+        "WAYLAND_DISPLAY",
+        "HYPRLAND_INSTANCE_SIGNATURE",
+        "DBUS_SESSION_BUS_ADDRESS",
+    }
+    if saved.keys() != keys or not all(
+        isinstance(v, str) and v for v in saved.values()
+    ):
+        raise ValueError("Invalid isolated compositor environment")
+    host_runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if (host_runtime and root == Path(host_runtime).resolve()) or Path(
+        saved["XDG_RUNTIME_DIR"]
+    ).resolve() != root:
+        raise ValueError(
+            "--runtime must name a private test directory, not the desktop runtime"
+        )
+    for key in ("HYPRLAND_INSTANCE_SIGNATURE", "DBUS_SESSION_BUS_ADDRESS"):
+        if saved[key] == os.environ.get(key):
+            raise ValueError(f"--runtime must not reuse the desktop's {key}")
+    display = (root / saved["WAYLAND_DISPLAY"]).resolve()
+    ipc = (
+        root / "hypr" / saved["HYPRLAND_INSTANCE_SIGNATURE"] / ".socket.sock"
+    ).resolve()
+    if (
+        display.parent != root
+        or not ipc.is_relative_to(root)
+        or not all(p.is_socket() for p in (display, ipc))
+    ):
+        raise ValueError(
+            "Isolated compositor sockets must exist inside its private directory"
+        )
+    mode = "visible" if visible else "headless"
+    if metadata != {"mode": mode, "outputs": [f"WAYLAND-{i+1}" for i in range(3)]}:
+        raise ValueError(
+            "Isolated session mode does not match; visible sessions require --visible"
+        )
+
+
 class Suite:
-    def __init__(self, runtime=None):
+    def __init__(self, runtime=None, visible=False):
         self.processes = []
         self.checks = []
         self.owned = runtime is None
-        self.root = Path(runtime) if runtime else Path(tempfile.mkdtemp(prefix="hs-i."))
+        self.connected = False
+        self.visible = visible
+        self.background = None
+        self.names = [f"WAYLAND-{i+1}" for i in range(3)]
+        self.root = (
+            Path(runtime).resolve()
+            if runtime
+            else Path(tempfile.mkdtemp(prefix="hs-i."))
+        )
         self.env = os.environ.copy()
-        self.env.pop("DISPLAY", None)
-        self.env.pop("DBUS_SESSION_BUS_ADDRESS", None)
         for name in (
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+            "WAYLAND_SOCKET",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "HYPRLAND_INSTANCE_SIGNATURE",
             "HL_INITIAL_WORKSPACE_TOKEN",
             "HYPRSPACE_LAUNCH_TOKEN",
             "XDG_ACTIVATION_TOKEN",
             "DESKTOP_STARTUP_ID",
         ):
             self.env.pop(name, None)
+        self.env["XDG_RUNTIME_DIR"] = str(self.root)
+        # Force libseat to an unavailable private socket. Even from a TTY, the
+        # child must use the parent Wayland connection, never claim a real seat.
+        self.env["LIBSEAT_BACKEND"] = "seatd"
+        self.env["SEATD_SOCK"] = str(self.root / "no-seatd.sock")
         self.env["GDK_BACKEND"] = "wayland"
         self.env["HS_INPUT_LOG"] = str(self.root / "input.log")
+        if runtime:
+            # Validate saved sockets before creating files or connecting input.
+            self.attach()
         for variable, directory in (
             ("XDG_CONFIG_HOME", "config"),
             ("XDG_CACHE_HOME", "cache"),
@@ -59,20 +120,19 @@ class Suite:
             path = self.root / directory
             path.mkdir(exist_ok=True)
             self.env[variable] = str(path)
-        if runtime:
-            self.env.update(json.loads((self.root / "env.json").read_text()))
-        else:
-            try:
+        try:
+            if not runtime:
                 self.start()
-            except Exception:
+        except BaseException:
+            if self.connected:
                 try:
                     (self.root / "output-failure.json").write_text(
                         json.dumps(self.data("monitors"), indent=2)
                     )
                 except Exception:
                     pass
-                self.finish()
-                raise
+            self.finish()
+            raise
         try:
             self.pointer = self.spawn(
                 [str(REPO / "build/test-pointer")],
@@ -81,9 +141,17 @@ class Suite:
                 text=True,
             )
             assert self.pointer.stdout.readline().strip() == "ready"
-        except Exception:
+        except BaseException:
             self.finish()
             raise
+
+    def attach(self):
+        saved = json.loads((self.root / "env.json").read_text())
+        metadata = json.loads((self.root / "session.json").read_text())
+        validate_runtime(self.root, saved, metadata, self.visible)
+        self.env.update(saved)
+        self.names = metadata["outputs"]
+        self.connected = True
 
     def spawn(self, command, **kwargs):
         kwargs.setdefault("stdout", subprocess.DEVNULL)
@@ -138,11 +206,7 @@ class Suite:
         try:
             wait_for(
                 lambda: len(
-                    [
-                        m
-                        for m in self.data("monitors")
-                        if m["name"].startswith("WAYLAND-")
-                    ]
+                    [m for m in self.data("monitors") if m["name"] in self.names]
                 )
                 == count,
                 timeout=15,
@@ -157,13 +221,16 @@ class Suite:
 
     def start(self):
         self.root.chmod(0o700)
-        parent = str(
-            Path(os.environ["XDG_RUNTIME_DIR"]) / os.environ["WAYLAND_DISPLAY"]
-        )
-        self.env.update(XDG_RUNTIME_DIR=str(self.root), WAYLAND_DISPLAY=parent)
-        self.env.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+        if self.visible:
+            parent = str(
+                Path(os.environ["XDG_RUNTIME_DIR"]) / os.environ["WAYLAND_DISPLAY"]
+            )
+        else:
+            self.background = BackgroundDisplay(self.root, self.env)
+            parent = self.background.start()
+        self.env["WAYLAND_DISPLAY"] = parent
         config = self.root / "hyprland.conf"
-        config.write_text("""monitor = ,1920x1080@60,auto,1
+        config.write_text("""monitor = ,960x600@60,auto,1
 misc:disable_hyprland_logo = true
 misc:disable_splash_rendering = true
 animations:enabled = false
@@ -199,7 +266,15 @@ bindm = SUPER,mouse:273,resizewindow
             stderr=log,
             start_new_session=True,
         )
-        wait_for(lambda: list((self.root / "hypr").glob("*/.socket.sock")))
+
+        def ready():
+            if self.compositor.poll() is not None:
+                raise RuntimeError(
+                    f"Test compositor exited; see {self.root / 'compositor.log'}"
+                )
+            return list((self.root / "hypr").glob("*/.socket.sock"))
+
+        wait_for(ready, timeout=15)
         instance = next((self.root / "hypr").glob("*/.socket.sock")).parent.name
         display = next(
             p for p in self.root.glob("wayland-*") if not p.name.endswith(".lock")
@@ -209,6 +284,7 @@ bindm = SUPER,mouse:273,resizewindow
             WAYLAND_DISPLAY=display.name,
             DBUS_SESSION_BUS_ADDRESS=(self.root / "dbus").read_text(),
         )
+        self.connected = True
         (self.root / "env.json").write_text(
             json.dumps(
                 {
@@ -222,11 +298,56 @@ bindm = SUPER,mouse:273,resizewindow
                 }
             )
         )
+        (self.root / "session.json").write_text(
+            json.dumps(
+                {
+                    "mode": "visible" if self.visible else "headless",
+                    "outputs": self.names,
+                }
+            )
+        )
         self.await_outputs(1)
         self.ctl("output", "create", "wayland")
         self.await_outputs(2)
         self.ctl("output", "create", "wayland")
         self.await_outputs(3)
+        if self.visible:
+            self.start_visible_outputs()
+        else:
+            # The private host lays out three unoccluded surfaces in memory.
+            wait_for(
+                lambda: all(
+                    (m["width"], m["height"]) == (960, 600)
+                    for m in self.data("monitors")
+                )
+            )
+        with config.open("a") as output:
+            output.write(self.monitor_rules())
+        self.ctl("plugin", "load", str(PLUGIN))
+        # Register plugin bindings only after its dispatchers exist. An initial
+        # parse error reserves a transient error-bar strip and changes geometry.
+        with config.open("a") as output:
+            output.write(
+                "bind = SUPER,A,hyprspace:overview\nbind = SUPER,L,hyprspace:layoutcycle\n"
+            )
+        self.ctl("reload")
+        wait_for(lambda: len(self.status()["views"]) == 0)
+        wait_for(
+            lambda: {m["name"]: m["scale"] for m in self.data("monitors")}
+            == dict(zip(self.names, (1, 1.25, 1.5)))
+        )
+        assert self.ctl("configerrors") == ""
+        self.check("plugin loads with exact ABI and clean configuration")
+
+    def monitor_rules(self):
+        return (
+            f"monitor = {self.names[0]},960x600@60,0x0,1\n"
+            f"monitor = {self.names[1]},960x600@60,-1000x-200,1.25,transform,1\n"
+            f"monitor = {self.names[2]},960x600@60,2200x100,1.5\n"
+        )
+
+    def start_visible_outputs(self):
+        assert self.visible, "Desktop windows require --visible"
         # Keep all disposable outputs visible on the host. Fully occluded
         # Wayland windows stop receiving frames, which also stalls teardown.
         pid = int(
@@ -274,26 +395,6 @@ bindm = SUPER,mouse:273,resizewindow
             raise OutputUnavailable(
                 "nested outputs did not acknowledge their host window sizes"
             ) from error
-        with config.open("a") as output:
-            output.write("""monitor = WAYLAND-1,960x600@60,0x0,1
-monitor = WAYLAND-2,960x600@60,-1000x-200,1.25,transform,1
-monitor = WAYLAND-3,960x600@60,2200x100,1.5
-""")
-        self.ctl("plugin", "load", str(PLUGIN))
-        # Register plugin bindings only after its dispatchers exist. An initial
-        # parse error reserves a transient error-bar strip and changes geometry.
-        with config.open("a") as output:
-            output.write(
-                "bind = SUPER,A,hyprspace:overview\nbind = SUPER,L,hyprspace:layoutcycle\n"
-            )
-        self.ctl("reload")
-        wait_for(lambda: len(self.status()["views"]) == 0)
-        wait_for(
-            lambda: {m["name"]: m["scale"] for m in self.data("monitors")}
-            == {"WAYLAND-1": 1, "WAYLAND-2": 1.25, "WAYLAND-3": 1.5}
-        )
-        assert self.ctl("configerrors") == ""
-        self.check("plugin loads with exact ABI and clean configuration")
 
     def check(self, name):
         print("PASS", name, flush=True)
@@ -329,13 +430,29 @@ monitor = WAYLAND-3,960x600@60,2200x100,1.5
             self.ctl(
                 "keyword",
                 "workspace",
-                f"{ws},monitor:WAYLAND-{i+1},persistent:true,layout:{layout}",
+                f"{ws},monitor:{self.names[i]},persistent:true,layout:{layout}",
             )
-            self.ctl("dispatch", "focusmonitor", f"WAYLAND-{i+1}")
+            self.ctl("dispatch", "focusmonitor", self.names[i])
             self.ctl("dispatch", "workspace", str(ws))
-        self.ctl("dispatch", "focusmonitor", f"WAYLAND-{destination+1}")
-        self.spawn(["python3", str(CLIENT), "hs-A", "hs-B", "hs-C"])
-        wait_for(lambda: len(self.windows()) == 3)
+        self.ctl("dispatch", "focusmonitor", self.names[destination])
+        monitor = next(
+            m for m in self.data("monitors") if m["name"] == self.names[destination]
+        )
+        self.move(
+            (
+                monitor["x"] + monitor["reserved"][0] + 30,
+                monitor["y"] + monitor["reserved"][1] + 30,
+            )
+        )
+        # Dwindle insertion depends on pointer position and map order. Seed both
+        # so background scheduling cannot give native and overview different trees.
+        for count, title in enumerate(("hs-A", "hs-B", "hs-C"), 1):
+            self.spawn(["python3", str(CLIENT), title])
+            wait_for(lambda: len(self.windows()) == count)
+            self.ctl(
+                "dispatch", "focuswindow", "address:" + self.windows()[title]["address"]
+            )
+            self.move(self.point(self.windows()[title], 0.5, 0.5))
         for title in ("hs-B", "hs-C"):
             self.ctl(
                 "dispatch",
@@ -479,7 +596,7 @@ monitor = WAYLAND-3,960x600@60,2200x100,1.5
             "foreground keyboard focus survives pointer targeting and native layer clicks"
         )
         self.run(
-            "grim", "-s", "1", "-o", "WAYLAND-1", str(self.root / "foreground.png")
+            "grim", "-s", "1", "-o", self.names[0], str(self.root / "foreground.png")
         )
         from PIL import Image, ImageChops
 
@@ -505,7 +622,7 @@ monitor = WAYLAND-3,960x600@60,2200x100,1.5
             "1",
             "-c",
             "-o",
-            "WAYLAND-1",
+            self.names[0],
             str(self.root / "cursor-first.png"),
         )
         self.move(self.preview_point("hs-A", 0.7, 0.4))
@@ -515,7 +632,7 @@ monitor = WAYLAND-3,960x600@60,2200x100,1.5
             "1",
             "-c",
             "-o",
-            "WAYLAND-1",
+            self.names[0],
             str(self.root / "cursor-second.png"),
         )
         with Image.open(self.root / "cursor-first.png") as plain, Image.open(
@@ -574,7 +691,7 @@ monitor = WAYLAND-3,960x600@60,2200x100,1.5
         self.button(0)
         wait_for(click.exists)
         self.run(
-            "grim", "-s", "1", "-o", "WAYLAND-1", str(self.root / "bottom-panel.png")
+            "grim", "-s", "1", "-o", self.names[0], str(self.root / "bottom-panel.png")
         )
         with Image.open(self.root / "bottom-panel.png") as screenshot:
             pixel = screenshot.convert("RGB").getpixel(
@@ -987,6 +1104,7 @@ runner = [
         for layout in ("dwindle", "scrolling", "master"):
             for source, destination in pairs:
                 self.setup(layout, source, destination)
+                initial = self.geometry()
                 src = self.point(self.windows()["hs-A"])
                 dst = self.point(self.windows()["hs-B"], 0.25, 0.45)
                 self.drag(src, dst, False)
@@ -999,6 +1117,14 @@ runner = [
                     native,
                 )
                 self.setup(layout, source, destination)
+                assert self.geometry() == initial, (
+                    "native and overview fixtures must start with identical layouts",
+                    layout,
+                    source,
+                    destination,
+                    initial,
+                    self.geometry(),
+                )
                 self.ctl("dispatch", "hyprspace:overview", "on")
                 time.sleep(0.15)
                 self.drag(
@@ -1270,10 +1396,10 @@ runner = [
         self.check("empty persistent workspaces accept native drops")
         self.move(self.preview_point("hs-B"))
         token = self.request("capture")
-        self.ctl("dispatch", "moveworkspacetomonitor", "12 WAYLAND-1")
+        self.ctl("dispatch", "moveworkspacetomonitor", f"12 {self.names[0]}")
         wait_for(
             lambda: any(
-                view["monitor"] == "WAYLAND-1"
+                view["monitor"] == self.names[0]
                 and any(tile["workspace"] == 12 for tile in view["tiles"])
                 for view in self.status()["views"]
             )
@@ -1292,7 +1418,7 @@ runner = [
         wait_for(lambda: "hs-transfer" in self.windows())
         assert self.windows()["hs-transfer"]["workspace"]["id"] == 12
         assert self.windows()["hs-transfer"]["monitor"] == next(
-            m["id"] for m in self.data("monitors") if m["name"] == "WAYLAND-1"
+            m["id"] for m in self.data("monitors") if m["name"] == self.names[0]
         )
         assert self.status()["layout_targets_unique"]
         self.check(
@@ -1315,12 +1441,12 @@ runner = [
         time.sleep(0.08)
         self.button(1)
         assert self.status()["dragging"]
-        self.ctl("keyword", "monitor", "WAYLAND-3,disable")
+        self.ctl("keyword", "monitor", f"{self.names[2]},disable")
         self.await_outputs(2)
         wait_for(lambda: not self.status()["dragging"])
         self.button(0)
         held.wait(timeout=3)
-        self.ctl("keyword", "monitor", "WAYLAND-3,960x600@60,2200x100,1.5")
+        self.ctl("keyword", "monitor", f"{self.names[2]},960x600@60,2200x100,1.5")
         self.await_outputs(3)
         wait_for(lambda: len(self.status()["views"]) == 3)
         self.close()
@@ -1404,12 +1530,13 @@ runner = [
 
     def finish(self):
         try:
-            for pid in {window["pid"] for window in self.windows().values()}:
+            windows = self.windows() if getattr(self, "connected", True) else {}
+            for pid in {window["pid"] for window in windows.values()}:
                 try:
                     os.kill(pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
-        except (subprocess.SubprocessError, OSError):
+        except (subprocess.SubprocessError, OSError, ValueError, AssertionError):
             pass
         for process in reversed(self.processes):
             if process.poll() is None:
@@ -1418,15 +1545,13 @@ runner = [
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     process.kill()
-        if self.owned and hasattr(self, "compositor"):
-            try:
-                os.killpg(self.compositor.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                self.compositor.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.compositor.pid, signal.SIGKILL)
+                    process.wait(timeout=3)
+        try:
+            if self.owned and hasattr(self, "compositor"):
+                stop_process_group(self.compositor)
+        finally:
+            if getattr(self, "background", None):
+                self.background.finish()
         (self.root / "results.json").write_text(
             json.dumps({"passed": self.checks}, indent=2)
         )
@@ -1434,7 +1559,12 @@ runner = [
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--visible",
+        action="store_true",
+        help="open and arrange three test windows on your desktop instead of running in the background",
+    )
     parser.add_argument(
         "--runtime", type=Path, help="use an already isolated compositor"
     )
@@ -1475,9 +1605,22 @@ def main():
         help="include Discord existing-process checks with this binary and a private profile",
     )
     args = parser.parse_args()
+    # Let interactive applications win CPU time while tests and their children run.
+    os.setpriority(os.PRIO_PROCESS, 0, max(10, os.getpriority(os.PRIO_PROCESS, 0)))
+
+    def interrupted(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGHUP, interrupted)
+    print(
+        "Mode:",
+        "visible desktop windows" if args.visible else "background virtual monitors",
+        flush=True,
+    )
     for attempt in range(3):
         try:
-            suite = Suite(args.runtime)
+            suite = Suite(args.runtime, visible=args.visible)
             break
         except OutputUnavailable as error:
             if attempt == 2:
@@ -1537,7 +1680,7 @@ def main():
                 "1",
                 "-c",
                 "-o",
-                "WAYLAND-1",
+                suite.names[0],
                 str(suite.root / "failure.png"),
             )
         except Exception:

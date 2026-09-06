@@ -129,17 +129,41 @@ one-shot contexts, cancellation and visibility restoration, alongside the existi
 geometry/render-policy checks. Build/reload fixtures and helper process tests run
 with `make test`; host sanitizers run with `make -C test asan`.
 
-The nested suite requires a working parent Wayland session, Hyprland 0.56.2,
+The integration suite runs in the background by default. It requires Hyprland 0.56.2,
 hyprctl, wtype, grim, Python GObject bindings for GTK3/GtkLayerShell, Pillow,
-wayland-scanner and wayland-protocols. It creates a private compositor, D-Bus
-session, three outputs and disposable clients. Only that compositor's own host
-windows are positioned and resized, keeping each output visible so Wayland frame
-callbacks continue. The host plugin and user configuration are not replaced.
+wayland-scanner, wayland-protocols, the `wlroots-0.20` development package and a
+working EGL render node. It creates a private display host, Hyprland compositor,
+D-Bus session, three outputs and disposable clients. Physical monitors, keyboard
+focus and the desktop cursor are not used. A private runtime directory separates
+all sockets, and the child compositor cannot acquire a physical seat. The
+Hyprland binary, plugin and user configuration on the desktop are not replaced.
 
 ```sh
 make integration-fixtures
 python3 test/integration/run.py --companions build/companions/bin --firefox
 ```
+
+The private host in `test/integration/headless.c` uses only wlroots' headless
+backend. It presents three unoccluded surfaces in memory, so frame callbacks keep
+running while the desktop is on another workspace or running a fullscreen game.
+It exposes the protocol versions required by Aquamarine 0.14, sends protocol pings
+to flush its initial output requests, and accepts Aquamarine's early bootstrap
+buffer before the first configure acknowledgement. These accommodations apply to
+the render host; the tested Hyprland and plugin binaries remain unchanged.
+Protocol and input tests continue to exercise that child compositor.
+
+The runner lowers its CPU priority to nice 10. Rendering still uses GPU time and
+memory, so it can affect game performance. For performance measurements, run tests
+on another machine. No input or display isolation removes resource contention.
+
+`--visible` opts into the old on-screen mode and requires a parent Hyprland session.
+It opens and arranges three windows on the desktop. Background startup failures
+never fall back to this mode. `--runtime` accepts only a saved private session with
+matching mode metadata; reusing a visible session also requires `--visible`.
+Interrupting or terminating the runner stops its owned compositor and display host.
+Optional locally unpacked wlroots dependencies can live under
+`build/test-tools/wlroots/usr`; their library path applies only to the display-host
+fixture. They are not installed into the desktop session.
 
 `--quick` reduces the layout matrix; `--only` selects a suite during debugging.
 `--only audit` runs the input/visibility/launch regressions, and `--only scrolling`
@@ -147,7 +171,7 @@ runs viewport controls across all directions and outputs. Both are included in
 the full suite. The repeat test measures a synchronous native resize, so completion
 of an already launched child process cannot be mistaken for a stuck repeat timer.
 Drag fixtures explicitly hold their virtual keyboard modifier until mouse release;
-they do not rely on a fixed-duration keypress. Physical comparisons seed pointer
+they do not rely on a fixed-duration keypress. Layout comparisons seed pointer
 position and window mapping order, require identical starting geometry, and reject
 off-screen gesture coordinates before comparing results.
 The full matrix compares all nine directed source/destination pairs for dwindle,
@@ -170,6 +194,8 @@ removal. Diagnostics also check for duplicate native layout membership.
 Results, screenshots and failure diagnostics remain in the printed temporary
 directory. A run without `--companions` does not verify the Walker/Elephant UI.
 Host sanitizers cover the host harness, not the compositor's loaded plugin.
+The [background verification record](verification/2026-09-06-background-tests.md)
+records the tested display host, coverage and cancellation checks.
 
 The opt-in physical suite is `test/integration/physical.py --run` (run with Python
 inside a private `dbus-run-session`). It requires the matching plugin already
@@ -178,7 +204,10 @@ temporary workspaces, checks both cursor modes on every output, saves screenshot
 exercises wheel, touchpad, arrow and keyboard viewport controls,
 and restores active workspaces, focus and cursor settings. It re-reads the user's
 configuration to remove temporary workspace rules; run it when transient runtime
-configuration can be reloaded.
+configuration can be reloaded. This mode takes over the live desktop and cannot
+run unobtrusively while someone uses it. Schedule it separately and only with an
+explicit request from the person using the machine. Hardware cursors, physical
+hotplug and the installed desktop services still need these checks before release.
 
 The same physical script accepts `--firefox` and `--discord /path/to/Discord` to
 run application checks instead of the layout matrix, also inside a private

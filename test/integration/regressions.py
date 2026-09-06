@@ -173,7 +173,7 @@ def audit(s, wait_for):
         s.ctl("dispatch", "hyprspace:overview", "on")
         address = s.windows()["hs-A"]["address"]
         wait_for(lambda: len(s.status()["views"]) == 1)
-        assert s.status()["views"][0]["monitor"] == "WAYLAND-1"
+        assert s.status()["views"][0]["monitor"] == s.names[0]
 
         def alpha():
             return next(
@@ -200,8 +200,8 @@ def audit(s, wait_for):
     s.move(s.preview_point("hs-B"))
     token = s.request("capture")
     assert token
-    s.ctl("dispatch", "moveworkspacetomonitor", "12 WAYLAND-1")
-    s.ctl("keyword", "monitor", "WAYLAND-2,disable")
+    s.ctl("dispatch", "moveworkspacetomonitor", f"12 {s.names[0]}")
+    s.ctl("keyword", "monitor", f"{s.names[1]},disable")
     s.await_outputs(2)
     try:
         s.move(center(tile(s, 13)))
@@ -220,14 +220,16 @@ def audit(s, wait_for):
         w = s.windows()["hs-transfer-disconnect"]
         assert w["workspace"]["id"] == 12
         assert w["monitor"] == next(
-            m["id"] for m in s.data("monitors") if m["name"] == "WAYLAND-1"
+            m["id"] for m in s.data("monitors") if m["name"] == s.names[0]
         )
         assert s.status()["live"] and s.status()["layout_targets_unique"]
         s.check(
             "delayed launch survives workspace transfer and removal of its originally captured output"
         )
     finally:
-        s.ctl("keyword", "monitor", "WAYLAND-2,960x600@60,-1000x-200,1.25,transform,1")
+        s.ctl(
+            "keyword", "monitor", f"{s.names[1]},960x600@60,-1000x-200,1.25,transform,1"
+        )
         s.await_outputs(3)
         s.close()
 
@@ -305,7 +307,7 @@ def scrolling(s, wait_for):
 
     # Pan an inactive workspace while a foreground layer owns typing.
     s.setup("scrolling", 1, 1)
-    s.ctl("dispatch", "focusmonitor", "WAYLAND-2")
+    s.ctl("dispatch", "focusmonitor", s.names[1])
     s.ctl("dispatch", "workspace", "22")
     s.ctl("dispatch", "hyprspace:overview", "on")
     time.sleep(0.2)
@@ -318,7 +320,7 @@ def scrolling(s, wait_for):
     s.scroll()
     wait_for(lambda: s.geometry() != before)
     assert (
-        next(m for m in s.data("monitors") if m["name"] == "WAYLAND-2")[
+        next(m for m in s.data("monitors") if m["name"] == s.names[1])[
             "activeWorkspace"
         ]["id"]
         == 22
@@ -385,7 +387,9 @@ def scrolling(s, wait_for):
     s.close()
 
     s.setup("dwindle", 0, 0)
-    s.ctl("keyword", "workspace", "21,monitor:WAYLAND-1,persistent:true,layout:master")
+    s.ctl(
+        "keyword", "workspace", f"21,monitor:{s.names[0]},persistent:true,layout:master"
+    )
     s.ctl("dispatch", "hyprspace:overview", "on")
     time.sleep(0.2)
     s.move(center(tile(s, 11)))
@@ -419,7 +423,7 @@ def scrolling(s, wait_for):
         wait_for(lambda: s.geometry() != before)
         time.sleep(0.8)
         s.run(
-            "grim", "-s", "1", "-o", "WAYLAND-1", str(s.root / "scrolling-controls.png")
+            "grim", "-s", "1", "-o", s.names[0], str(s.root / "scrolling-controls.png")
         )
         hit = next(
             t
