@@ -27,7 +27,7 @@ setup. See the [reference](docs/guide.md) for all options and controls.
 Install the build dependencies on Arch Linux:
 
 ```bash
-sudo pacman -S --needed hyprland base-devel git cairo pango gdk-pixbuf2 librsvg libei jq
+sudo pacman -S --needed hyprland base-devel git cairo pango gdk-pixbuf2 librsvg libei nlohmann-json jq
 ```
 
 If a system update installed a newer Hyprland, log into that version before
