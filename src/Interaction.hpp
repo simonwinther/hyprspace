@@ -21,6 +21,45 @@ namespace hyprspace {
         double x = 0, y = 0;
     };
 
+    // Resize the grabbed corner while keeping the opposite corner fixed. If
+    // an existing window already crosses an edge, bring its anchor back into
+    // the work area. An impossible application minimum cancels the resize.
+    inline std::optional<SBoxF> boundedResize(const SBoxF& initial, SPoint delta, bool left, bool top, const SBoxF& bounds, SPoint minimum = {1, 1},
+                                              SPoint maximum = {INFINITY, INFINITY}, bool keepRatio = false) {
+        const auto valid = [](const SBoxF& box) {
+            return std::isfinite(box.x) && std::isfinite(box.y) && std::isfinite(box.w) && std::isfinite(box.h) && box.w > 0 && box.h > 0;
+        };
+        if (!valid(initial) || !valid(bounds) || !std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(minimum.x) || !std::isfinite(minimum.y) ||
+            std::isnan(maximum.x) || std::isnan(maximum.y))
+            return std::nullopt;
+        minimum.x = std::max(1.0, minimum.x);
+        minimum.y = std::max(1.0, minimum.y);
+        if (keepRatio) {
+            const auto scale = std::max(minimum.x / initial.w, minimum.y / initial.h);
+            minimum          = {initial.w * scale, initial.h * scale};
+        }
+        if (minimum.x > bounds.w || minimum.y > bounds.h || minimum.x > maximum.x || minimum.y > maximum.y)
+            return std::nullopt;
+
+        const double x = std::clamp(initial.x + (left ? initial.w : 0), bounds.x + (left ? minimum.x : 0), bounds.x + bounds.w - (left ? 0 : minimum.x));
+        const double y = std::clamp(initial.y + (top ? initial.h : 0), bounds.y + (top ? minimum.y : 0), bounds.y + bounds.h - (top ? 0 : minimum.y));
+        maximum.x      = std::min(maximum.x, left ? x - bounds.x : bounds.x + bounds.w - x);
+        maximum.y      = std::min(maximum.y, top ? y - bounds.y : bounds.y + bounds.h - y);
+        double width   = initial.w + (left ? -delta.x : delta.x);
+        double height  = initial.h + (top ? -delta.y : delta.y);
+        if (keepRatio) {
+            const double lo    = std::max(minimum.x / initial.w, minimum.y / initial.h);
+            const double hi    = std::min(maximum.x / initial.w, maximum.y / initial.h);
+            const double scale = std::clamp(std::max(width / initial.w, height / initial.h), lo, std::max(lo, hi));
+            width              = initial.w * scale;
+            height             = initial.h * scale;
+        } else {
+            width  = std::clamp(width, minimum.x, std::max(minimum.x, maximum.x));
+            height = std::clamp(height, minimum.y, std::max(minimum.y, maximum.y));
+        }
+        return SBoxF{x - (left ? width : 0), y - (top ? height : 0), width, height};
+    }
+
     // All input geometry is logical, including transformed portrait outputs.
     // Monitor scale is applied only when rendering. A separated fullscreen
     // preview supplies its own desktop box instead of the workspace work area.

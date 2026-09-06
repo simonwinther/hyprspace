@@ -15,7 +15,7 @@ namespace hyprspace {
         PHLMONITORREF      monitor;
         PHLWINDOWREF       window;
         Vector2D           desktop;
-        SBoxF              preview, desktopBox, monitorBox;
+        SBoxF              preview, desktopBox, monitorBox, previewClip;
     };
 
     struct SOverviewDrag {
@@ -24,7 +24,7 @@ namespace hyprspace {
         SOverviewTarget source;
         Vector2D        pickup, offset, desktopOffset;
         SBoxF           box;
-        double          scale      = 1;
+        Vector2D        scale      = {1, 1};
         bool            resizeLeft = false, resizeTop = false;
         bool            moved = false;
         bool            active() const {

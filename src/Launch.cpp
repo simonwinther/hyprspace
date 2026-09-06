@@ -263,9 +263,22 @@ namespace hyprspace::launch {
                 return consume(line.substr(8));
             if (line == "status") {
                 nlohmann::json result{{"live", session().live()}, {"dragging", session().drag.active()}, {"views", nlohmann::json::array()}};
-                result["modifiers"]             = g_pInputManager->getModsFromAllKBs();
-                result["keyboard_owned"]        = hooks::keyboardOwned();
-                result["cursor_owned"]          = session().cursorOwned();
+                result["modifiers"]      = g_pInputManager->getModsFromAllKBs();
+                result["keyboard_owned"] = hooks::keyboardOwned();
+                result["cursor_owned"]   = session().cursorOwned();
+                if (session().drag.active()) {
+                    const auto& drag    = session().drag;
+                    const auto  boxJSON = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
+                    result["drag"]      = {{"resize", drag.mode == SOverviewDrag::RESIZE},
+                                           {"workspace", drag.source.workspace.id},
+                                           {"box", boxJSON(drag.box)},
+                                           {"clip", boxJSON(drag.source.previewClip)}};
+                    for (const auto& view : session().views)
+                        if (view->monitor() == drag.source.monitor)
+                            for (const auto& target : view->inspectTargets())
+                                if (!target.window && target.workspace == drag.source.workspace)
+                                    result["drag"]["clip"] = boxJSON(target.preview);
+                }
                 result["layout_targets_unique"] = true;
                 for (const auto& workspace : State::workspaceState()->workspaces()) {
                     if (!workspace->m_space)

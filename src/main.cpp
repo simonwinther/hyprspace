@@ -629,7 +629,7 @@ namespace {
             session().ownCursor(false);
             return;
         }
-        const bool foreground = yieldingInput() || foregroundPointer();
+        const bool foreground = yieldingInput() || (!session().drag.active() && foregroundPointer());
         session().ownCursor(!foreground);
         if (foreground) {
             session().selection.pointer(std::nullopt);

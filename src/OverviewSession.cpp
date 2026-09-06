@@ -117,10 +117,12 @@ namespace hyprspace {
                 drag.box.x = pos.x - drag.offset.x;
                 drag.box.y = pos.y - drag.offset.y;
             } else {
-                drag.box.w = std::max(12.0, drag.source.preview.w + (drag.resizeLeft ? -delta.x : delta.x));
-                drag.box.h = std::max(12.0, drag.source.preview.h + (drag.resizeTop ? -delta.y : delta.y));
-                drag.box.x = drag.source.preview.x + (drag.resizeLeft ? drag.source.preview.w - drag.box.w : 0);
-                drag.box.y = drag.source.preview.y + (drag.resizeTop ? drag.source.preview.h - drag.box.h : 0);
+                const auto desktopDelta = delta / drag.scale;
+                if (const auto box = hooks::resizeGeometry(w, drag.source.desktopBox, {desktopDelta.x, desktopDelta.y}, drag.resizeLeft, drag.resizeTop)) {
+                    const auto point = mapPreviewPoint({box->x, box->y}, drag.source.desktopBox, drag.source.preview);
+                    if (point)
+                        drag.box = {point->x, point->y, box->w * drag.scale.x, box->h * drag.scale.y};
+                }
             }
         }
         damage();
@@ -240,7 +242,7 @@ namespace hyprspace {
             drag.offset        = m_pointer - Vector2D{target->preview.x, target->preview.y};
             drag.desktopOffset = target->desktop - Vector2D{target->desktopBox.x, target->desktopBox.y};
             drag.box           = target->preview;
-            drag.scale         = target->preview.w / target->desktopBox.w;
+            drag.scale         = {target->preview.w / target->desktopBox.w, target->preview.h / target->desktopBox.h};
             drag.resizeLeft    = drag.desktopOffset.x < target->desktopBox.w / 2;
             drag.resizeTop     = drag.desktopOffset.y < target->desktopBox.h / 2;
             const auto corner  = *CConfigValue<Config::INTEGER>("general:resize_corner");
@@ -258,11 +260,10 @@ namespace hyprspace {
             if (button != (drag.mode == SOverviewDrag::MOVE ? 0x110U : 0x111U))
                 return true;
             if (drag.moved) {
-                if (auto destination = selection.drop()) {
-                    if (drag.mode == SOverviewDrag::RESIZE) {
-                        destination          = drag.source;
+                auto destination = drag.mode == SOverviewDrag::RESIZE ? std::optional{drag.source} : selection.drop();
+                if (destination) {
+                    if (drag.mode == SOverviewDrag::RESIZE)
                         destination->desktop = drag.source.desktop + (m_pointer - drag.pickup) / drag.scale;
-                    }
                     hooks::place(drag.window.lock(), drag.source, *destination, drag.mode == SOverviewDrag::RESIZE);
                 }
             }

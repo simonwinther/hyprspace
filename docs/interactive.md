@@ -69,8 +69,22 @@ mapped desktop coordinates. Layout algorithms, floating pickup offsets, grouping
 and fullscreen transitions use that lifecycle. Resizing flushes its final motion
 after one output refresh interval to respect native motion coalescing. A key
 release during that interval preserves the committed resize and still runs native
-release bindings. Escape,
-window disappearance, output removal, closing and unload cancel pending work.
+release bindings.
+
+Overview resize previews stay clipped to their source workspace throughout the
+opening animation, without the enlargement used to lift moving windows. Floating
+resizes stop at the usable monitor edges, including reserved panel space and
+window decorations. Releasing
+over a gap or another output finishes the resize on the source workspace. Moving
+between workspaces still requires a valid destination tile. Tiled resizing keeps
+the native layout's rules, including scrolling columns and dwindle split ratios.
+Application minimum/maximum sizes, aspect ratios and forced resize corners are
+respected. A floating window that was already oversized is brought into the work
+area when it can fit; an application minimum larger than that area cancels the
+resize. Ordinary desktop resize gestures remain under Hyprland's control.
+
+Escape, window disappearance, output removal, closing and unload cancel pending
+work.
 
 Window fade visibility is saved once per session. Moving between covered views
 retains that value; moving outside all covered outputs restores it immediately.

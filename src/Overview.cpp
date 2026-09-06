@@ -632,17 +632,20 @@ namespace hyprspace {
             return std::nullopt;
         const auto&     entry = m_entries[m_tiles[index].key];
         SOverviewTarget target;
-        target.workspace  = {entry.workspaceId, entry.workspaceName};
-        target.monitor    = mon;
-        target.preview    = interpolate(entry);
-        target.desktopBox = m_usable;
-        target.window     = windowAtLocal(local);
+        target.workspace   = {entry.workspaceId, entry.workspaceName};
+        target.monitor     = mon;
+        target.preview     = interpolate(entry);
+        target.previewClip = target.preview;
+        target.desktopBox  = m_usable;
+        target.window      = windowAtLocal(local);
         if (auto w = target.window.lock()) {
             for (const auto& slot : entry.windows) {
                 if (slot.window != w)
                     continue;
-                target.preview    = geometryFor(entry, slot).box;
-                target.desktopBox = slot.desktopRect;
+                const auto geometry = geometryFor(entry, slot);
+                target.preview      = geometry.box;
+                target.previewClip  = geometry.clip;
+                target.desktopBox   = slot.desktopRect;
                 break;
             }
         }
@@ -652,6 +655,8 @@ namespace hyprspace {
         target.desktop = mon->m_position + Vector2D{point->x, point->y};
         target.preview.x += mon->m_position.x;
         target.preview.y += mon->m_position.y;
+        target.previewClip.x += mon->m_position.x;
+        target.previewClip.y += mon->m_position.y;
         target.desktopBox.x += mon->m_position.x;
         target.desktopBox.y += mon->m_position.y;
         target.monitorBox = m_usable;
@@ -666,20 +671,23 @@ namespace hyprspace {
             return std::nullopt;
         const auto&     entry = m_entries[m_tiles[m_selected].key];
         SOverviewTarget target{.workspace = {entry.workspaceId, entry.workspaceName}, .monitor = mon};
-        target.preview    = interpolate(entry);
-        target.desktopBox = m_usable;
-        target.monitorBox = m_usable;
+        target.preview     = interpolate(entry);
+        target.previewClip = target.preview;
+        target.desktopBox  = m_usable;
+        target.monitorBox  = m_usable;
         if (auto w = m_clickedWindow.lock(); w && w->m_isMapped && !w->isHidden() && w->m_workspace && w->m_workspace->m_id == entry.workspaceId) {
             for (const auto& slot : entry.windows)
                 if (slot.window == w) {
-                    target.window     = w;
-                    target.preview    = geometryFor(entry, slot).box;
-                    target.desktopBox = slot.desktopRect;
+                    target.window       = w;
+                    const auto geometry = geometryFor(entry, slot);
+                    target.preview      = geometry.box;
+                    target.previewClip  = geometry.clip;
+                    target.desktopBox   = slot.desktopRect;
                     break;
                 }
         }
         target.desktop = mon->m_position + Vector2D{target.desktopBox.cx(), target.desktopBox.cy()};
-        for (auto* box : {&target.preview, &target.desktopBox, &target.monitorBox}) {
+        for (auto* box : {&target.preview, &target.desktopBox, &target.monitorBox, &target.previewClip}) {
             box->x += mon->m_position.x;
             box->y += mon->m_position.y;
         }
@@ -980,10 +988,11 @@ namespace hyprspace {
             if (cell.w <= 1 || cell.h <= 1)
                 continue;
 
-            const bool  SELECTED = static_cast<int>(i) == m_selected;
-            const auto& drop     = session().selection.drop();
-            const bool  DROP     = DRAGGED && drop && drop->workspace == SWorkspaceIdentity{entry.workspaceId, entry.workspaceName};
-            const bool  HOVERED  = DROP || (!DRAGGED && static_cast<int>(i) == m_hovered);
+            const bool  SELECTED    = static_cast<int>(i) == m_selected;
+            const auto& drop        = session().selection.drop();
+            const auto  destination = drag.mode == SOverviewDrag::RESIZE ? drag.source.workspace : (drop ? drop->workspace : SWorkspaceIdentity{});
+            const bool  DROP        = DRAGGED && destination == SWorkspaceIdentity{entry.workspaceId, entry.workspaceName};
+            const bool  HOVERED     = DROP || (!DRAGGED && static_cast<int>(i) == m_hovered);
 
             // The zoom's anchor stays visible all the way to the desktop, also
             // when closing into a different workspace from the original one.
@@ -1121,7 +1130,7 @@ namespace hyprspace {
             }
         }
 
-        if (drag.active() && drag.moved) {
+        if (drag.mode == SOverviewDrag::MOVE && drag.moved) {
             if (const auto& drop = session().selection.drop(); drop && drop->monitor == MONITOR) {
                 const auto point = mapPreviewPoint({drop->desktop.x, drop->desktop.y}, drop->desktopBox, drop->preview);
                 if (point) {
@@ -1137,7 +1146,7 @@ namespace hyprspace {
             if (auto t = session().dragTexture(); t && drag.box.w >= 1 && drag.box.h >= 1) {
                 // Lifted slightly and outlined, so it reads as picked up rather
                 // than as part of whichever tile it happens to be over.
-                constexpr double LIFT = 1.04;
+                const double LIFT = drag.mode == SOverviewDrag::RESIZE ? 1.0 : 1.04;
 
                 const SBoxF box{
                     drag.box.x - MONITOR->m_position.x - drag.box.w * (LIFT - 1) / 2,
@@ -1147,8 +1156,31 @@ namespace hyprspace {
                 };
 
                 const auto OUTLINE = config::overviewActiveBorder();
-                border(box, OUTLINE, BORDER, ROUNDING);
-                windowTexture(DRAGGED, t, box, 0.92F, ROUNDING, hidden::shouldBlurWindow(DRAGGED));
+                if (drag.mode == SOverviewDrag::RESIZE) {
+                    if (drag.source.monitor != MONITOR)
+                        return out;
+                    auto clip = drag.source.previewClip;
+                    clip.x -= MONITOR->m_position.x;
+                    clip.y -= MONITOR->m_position.y;
+                    // A resize can start before the opening zoom finishes.
+                    // Keep its pickup mapping fixed and clip to the workspace's
+                    // current animated boundary.
+                    for (const auto& entry : m_entries)
+                        if (drag.source.workspace == SWorkspaceIdentity{entry.workspaceId, entry.workspaceName}) {
+                            clip = interpolate(entry);
+                            break;
+                        }
+                    const double x = std::max(box.x, clip.x), y = std::max(box.y, clip.y);
+                    const double w = std::min(box.x + box.w, clip.x + clip.w) - x, h = std::min(box.y + box.h, clip.y + clip.h) - y;
+                    windowTexture(DRAGGED, t, box, 0.92F, ROUNDING, hidden::shouldBlurWindow(DRAGGED), clip);
+                    // Keep the rounded stroke inside the clipped workspace too.
+                    const double stroke = std::min(static_cast<double>(BORDER), std::min(w, h) / 2);
+                    if (stroke > 0 && w > 2 * stroke && h > 2 * stroke)
+                        border({x + stroke, y + stroke, w - 2 * stroke, h - 2 * stroke}, OUTLINE, stroke, std::max(0.0, ROUNDING - stroke));
+                } else {
+                    border(box, OUTLINE, BORDER, ROUNDING);
+                    windowTexture(DRAGGED, t, box, 0.92F, ROUNDING, hidden::shouldBlurWindow(DRAGGED));
+                }
             }
         }
 

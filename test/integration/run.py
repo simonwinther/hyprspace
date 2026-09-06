@@ -1636,6 +1636,10 @@ def main():
                 regressions.scrolling(suite, wait_for)
         if args.only in ("all", "resize"):
             suite.first_resize()
+            import resize
+
+            resize.bounds(suite, wait_for)
+            resize.animated(suite)
         if args.only in ("all", "interactions"):
             suite.interactions()
             suite.ctl("plugin", "load", str(PLUGIN))

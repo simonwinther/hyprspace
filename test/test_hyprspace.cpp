@@ -1109,6 +1109,47 @@ static void testFullscreenPreviewGeometry() {
     }
 }
 
+static void testResizeBounds() {
+    section("resize: all corners stay in usable monitor coordinates and retain their anchor");
+    for (const SBoxF bounds : {SBoxF{-1000, -144, 480, 744}, SBoxF{0, 56, 1920, 1024}, SBoxF{2200, 127.5, 639.5, 372.5}}) {
+        const SBoxF initial{bounds.x + 80, bounds.y + 70, 240, 160};
+        for (bool left : {false, true})
+            for (bool top : {false, true})
+                for (double dx : {-10000.0, -20.0, 0.0, 25.0, 10000.0})
+                    for (double dy : {-10000.0, -20.0, 0.0, 25.0, 10000.0}) {
+                        const auto box = boundedResize(initial, {dx, dy}, left, top, bounds, {80, 60}, {500, 400});
+                        CHECK(box.has_value());
+                        if (!box)
+                            continue;
+                        CHECK(box->x >= bounds.x && box->y >= bounds.y);
+                        CHECK(box->x + box->w <= bounds.x + bounds.w && box->y + box->h <= bounds.y + bounds.h);
+                        CHECK(box->w >= 80 && box->h >= 60 && box->w <= 500 && box->h <= 400);
+                        CHECK_NEAR(box->x + (left ? box->w : 0), initial.x + (left ? initial.w : 0), 1e-9);
+                        CHECK_NEAR(box->y + (top ? box->h : 0), initial.y + (top ? initial.h : 0), 1e-9);
+                    }
+    }
+    section("resize: aspect ratio, oversized recovery and impossible minimums");
+    const SBoxF bounds{0, 56, 960, 544};
+    for (bool left : {false, true})
+        for (bool top : {false, true}) {
+            for (const auto initial : {SBoxF{100, 100, 320, 240}, SBoxF{-300, -200, 2400, 1600}}) {
+                const auto box = boundedResize(initial, {left ? -5000.0 : 5000.0, top ? -5000.0 : 5000.0}, left, top, bounds, {40, 30}, {INFINITY, INFINITY}, true);
+                CHECK(box.has_value());
+                if (!box)
+                    continue;
+                CHECK(box->x >= bounds.x - 1e-9 && box->y >= bounds.y - 1e-9);
+                CHECK(box->x + box->w <= bounds.x + bounds.w + 1e-9 && box->y + box->h <= bounds.y + bounds.h + 1e-9);
+                CHECK_NEAR(box->w / box->h, initial.w / initial.h, 1e-9);
+            }
+        }
+    CHECK(!boundedResize({0, 0, 320, 240}, {1, 1}, false, false, bounds, {1000, 1000}));
+    CHECK(!boundedResize({0, 0, 320, 240}, {1, 1}, false, false, bounds, {100, 100}, {40, 40}));
+    CHECK(!boundedResize({0, 0, 0, 240}, {1, 1}, false, false, bounds));
+    CHECK(!boundedResize({0, 0, 320, 240}, {NAN, 1}, false, false, bounds));
+    CHECK(!boundedResize({0, 0, 320, 240}, {1, 1}, false, false, {0, 0, INFINITY, 600}));
+    CHECK(!boundedResize({0, 0, 320, 240}, {1, 1}, false, false, bounds, {1, 1}, {NAN, INFINITY}));
+}
+
 static void testInteraction() {
     section("interaction: logical coordinates across all directed monitor pairs");
     const std::vector<SBoxF> monitors{{-1040, -240, 864, 1536}, {0, 0, 1920, 1024}, {2200, 100, 1280, 664}};
@@ -1207,6 +1248,7 @@ static void testInteraction() {
 }
 
 int main() {
+    testResizeBounds();
     testInteraction();
     std::printf("hyprspace test suite\n\n");
 

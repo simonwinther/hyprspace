@@ -131,6 +131,11 @@ Super+L uses `hyprspace:layoutcycle`
 from the example configuration to select dwindle or scrolling synchronously.
 Launching, moving, resizing and changing layouts keep the overview open.
 
+Overview resizing stays on the source workspace. Floating windows stop at its
+usable edges, accounting for panels, decorations and application size limits.
+Resize previews stay inside the tile even during the opening animation. Releasing
+over a gap or another monitor finishes the resize in place; Escape cancels it.
+
 Walker and other foreground layers retain keyboard focus while pointer movement
 outside their input regions updates the overview target. See the
 [interactive overview and companion integration](interactive.md) for launch

@@ -68,6 +68,18 @@ namespace hyprspace::hooks {
             friend auto member(SRenderLayer);
         };
         template struct CAccess<SRenderLayer, &Render::IHyprRenderer::renderLayer>;
+        struct SResizeCorner {
+            friend auto member(SResizeCorner);
+        };
+        template struct CAccess<SResizeCorner, &Layout::Supplementary::CDragStateController::m_grabbedCorner>;
+        struct SResizePosition {
+            friend auto member(SResizePosition);
+        };
+        template struct CAccess<SResizePosition, &Layout::Supplementary::CDragStateController::m_beginDragPositionXY>;
+        struct SResizeSize {
+            friend auto member(SResizeSize);
+        };
+        template struct CAccess<SResizeSize, &Layout::Supplementary::CDragStateController::m_beginDragSizeXY>;
         std::optional<std::array<std::string, 2>> savedCursor;
         SP<CEventLoopTimer>                       resizeTimer;
         WP<Layout::ITarget>                       resizeTarget;
@@ -540,6 +552,32 @@ namespace hyprspace::hooks {
         resizeTarget.reset();
     }
 
+    std::optional<SBoxF> resizeGeometry(PHLWINDOW window, const SBoxF& initial, SPoint delta, bool left, bool top) {
+        const auto target = window ? window->layoutTarget() : nullptr;
+        const auto ws     = target ? target->workspace() : nullptr;
+        const auto mon    = ws ? ws->m_monitor.lock() : nullptr;
+        if (!window || !window->m_isMapped || !mon || !mon->m_enabled)
+            return std::nullopt;
+        const auto work = mon->logicalBoxMinusReserved();
+        SBoxF      bounds{work.x, work.y, work.w, work.h};
+        if (!target->floating())
+            return boundedResize(initial, delta, left, top, bounds);
+
+        // Exclude panels, borders and reserved decorations, but not shadows.
+        // Integer edges remain inside fractional logical monitor dimensions
+        // after Hyprland rounds the resulting window geometry.
+        const auto   extents = window->getFullWindowReservedArea();
+        const auto   border  = window->getRealBorderSize();
+        const double x       = std::ceil(bounds.x + std::max(extents.topLeft.x, static_cast<double>(border)));
+        const double y       = std::ceil(bounds.y + std::max(extents.topLeft.y, static_cast<double>(border)));
+        bounds               = {x, y, std::floor(work.x + work.w - std::max(extents.bottomRight.x, static_cast<double>(border))) - x,
+                                std::floor(work.y + work.h - std::max(extents.bottomRight.y, static_cast<double>(border))) - y};
+        const auto minimum   = target->minSize().value_or(Vector2D{MIN_WINDOW_SIZE, MIN_WINDOW_SIZE});
+        const auto maximum   = target->maxSize().value_or(Vector2D{INFINITY, INFINITY});
+        return boundedResize(initial, delta, left, top, bounds, {minimum.x, minimum.y}, {maximum.x, maximum.y},
+                             window->m_ruleApplicator->keepAspectRatio().valueOrDefault());
+    }
+
     bool place(PHLWINDOW window, const SOverviewTarget& source, const SOverviewTarget& destination, bool resize) {
         if (!window || !window->m_isMapped || !window->m_workspace || g_layoutManager->dragController()->target())
             return false;
@@ -579,18 +617,43 @@ namespace hyprspace::hooks {
             // Prime that clock without changing geometry, then flush the final
             // point after one frame. Never block the compositor with a sleep.
             atDesktopPoint(pickup, [&] { g_layoutManager->moveMouse(pickup); });
-            resizeTarget  = target;
-            resizePickup  = pickup;
-            const auto hz = g_pHyprRenderer->m_mostHzMonitor ? g_pHyprRenderer->m_mostHzMonitor->m_refreshRate : 60.0;
-            resizeTimer   = makeShared<CEventLoopTimer>(
+            resizeTarget          = target;
+            resizePickup          = pickup;
+            const auto hz         = g_pHyprRenderer->m_mostHzMonitor ? g_pHyprRenderer->m_mostHzMonitor->m_refreshRate : 60.0;
+            const auto controller = g_layoutManager->dragController().get();
+            const CBox initial{controller->*member(SResizePosition{}), controller->*member(SResizeSize{})};
+            const auto corner = g_layoutManager->dragController().get()->*member(SResizeCorner{});
+            resizeTimer       = makeShared<CEventLoopTimer>(
                 std::chrono::milliseconds(static_cast<int>(1000 / std::max(1.0, static_cast<double>(hz))) + 2),
-                [point = drop](SP<CEventLoopTimer>, void*) {
-                    if (auto target = resizeTarget.lock(); target && g_layoutManager->dragController()->target() == target)
-                        atDesktopPoint(point, [&] {
-                            g_layoutManager->moveMouse(point);
-                            g_layoutManager->endDragTarget();
-                        });
-                    resizeTarget.reset();
+                [point = drop, pickup, initial, corner, workspace = PHLWORKSPACEREF{ws}](SP<CEventLoopTimer>, void*) {
+                    const auto ws = workspace.lock();
+                    if (auto target = resizeTarget.lock(); target && ws && target->workspace() == ws && g_layoutManager->dragController()->target() == target) {
+                        auto        motion = point;
+                        const bool  left = Layout::edgeLeft(corner), top = Layout::edgeTop(corner);
+                        const SBoxF box{initial.x, initial.y, initial.w, initial.h};
+                        auto        bounded =
+                            target->floating() ? resizeGeometry(target->window(), box, {point.x - pickup.x, point.y - pickup.y}, left, top) : std::optional<SBoxF>{box};
+                        if (bounded) {
+                            if (target->floating())
+                                motion = pickup + Vector2D{(bounded->w - box.w) * (left ? -1 : 1), (bounded->h - box.h) * (top ? -1 : 1)};
+                            atDesktopPoint(motion, [&] {
+                                g_layoutManager->moveMouse(motion);
+                                if (target->floating()) {
+                                    // Resizing belongs to its source workspace even when
+                                    // recovering a previously oversized floating window.
+                                    if (target->space() != ws->m_space)
+                                        target->assignToSpace(ws->m_space);
+                                    const auto actual = target->position();
+                                    if (const auto fitted = resizeGeometry(target->window(), box,
+                                                                           {(actual.w - box.w) * (left ? -1 : 1), (actual.h - box.h) * (top ? -1 : 1)}, left, top)) {
+                                        target->setPositionGlobal(CBox{fitted->x, fitted->y, fitted->w, fitted->h});
+                                        target->warpPositionSize();
+                                    }
+                                }
+                                g_layoutManager->endDragTarget();
+                            });
+                        }
+                    }
                     cancelPlacement();
                     session().damage();
                 },

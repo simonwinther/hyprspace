@@ -21,6 +21,7 @@ namespace hyprspace::hooks {
     void                           atDesktopPoint(const Vector2D& point, const std::function<void()>& action);
     bool                           place(PHLWINDOW window, const SOverviewTarget& source, const SOverviewTarget& destination, bool resize = false);
     void                           cancelPlacement();
+    std::optional<SBoxF>           resizeGeometry(PHLWINDOW window, const SBoxF& initial, SPoint delta, bool left, bool top);
     std::optional<SScrollViewport> scrollingViewport(const SOverviewTarget& target);
     bool                           panWorkspace(const SOverviewTarget& target, double distance);
     bool                           stepWorkspace(const SOverviewTarget& target, int direction, bool fromSelection);
