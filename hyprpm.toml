@@ -6,6 +6,6 @@ authors = ["hyprspace contributors"]
 output = "build/hyprspace.so"
 authors = ["hyprspace contributors"]
 description = "Live full-workspace overview and a GNOME-style Alt+Tab switcher"
-version = "1.0.0"
+version = "1.0.1"
 since_hyprland = 7661 # Hyprland 0.56.2
 build = ["make clean", "make all"]
