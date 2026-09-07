@@ -13,9 +13,9 @@ the repository token with explicit permissions; no personal token is needed.
 Enable a tag ruleset for `v*` that blocks updates and deletions while allowing
 initial creation. Release tooling never moves an existing tag.
 
-The repository is private. Public installation requires a maintainer to review
-its files and history, change its visibility, and publish the first reviewed
-release. No workflow changes visibility or publishes releases.
+The repository is public. Stable installation still requires a maintainer to
+review and publish a release after its checks and compatibility review pass.
+No workflow publishes releases.
 
 ## Review the version PR
 
@@ -64,6 +64,12 @@ tag, regardless of the branch selected in the workflow UI. Matching draft assets
 are retained, missing assets are uploaded, and conflicting assets cause failure.
 Published releases cannot be replaced. Correct a published release with a new
 patch version. Avoid publishing a draft while its artifact job is running.
+
+Retries help when a runner or upload failed. If the tagged source itself fails
+validation, fix it on the main branch and prepare a new patch release. Keep the
+failed tag unchanged and its draft unpublished. In particular, the initial
+`v1.0.0` draft still contains unreviewed changelog notes in its tagged commit;
+the corrected notes on the main branch belong to the next release candidate.
 
 Review the draft's source archive, checksums, notes and compatibility evidence
 before publishing it. Publishing and visibility changes remain maintainer actions.

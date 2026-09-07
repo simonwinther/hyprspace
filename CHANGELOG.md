@@ -2,27 +2,6 @@
 
 ## 1.0.0 (2026-09-07)
 
-
-### Features
-
-* **docs:** add documentation and templates for issues and contributions ([e721031](https://github.com/simonwinther/hyprspace/commit/e721031b4d28d9962cbd6747b95b6781022c7bdd))
-* **docs:** update README with new screenshot handling instructions ([64aebdb](https://github.com/simonwinther/hyprspace/commit/64aebdbcb9072cc49dfde950765be4462c872599))
-* **install:** add tagged installs and Nix package ([5e25df2](https://github.com/simonwinther/hyprspace/commit/5e25df2c31e6c69eeb0ce78c04f53c459fce975d))
-* **overview:** make workspaces interactive ([8c36ae7](https://github.com/simonwinther/hyprspace/commit/8c36ae7815a491218d0e6e587974b34f32cb9082))
-
-
-### Bug Fixes
-
-* **build:** declare JSON header dependency ([4383a73](https://github.com/simonwinther/hyprspace/commit/4383a73a001886c6e2dc20125abc25a97015ebcd))
-* **overview:** bound workspace resizing ([1188778](https://github.com/simonwinther/hyprspace/commit/1188778ba08996e43957f0781ebfd3c0f23bd6ba))
-* **overview:** resolve interaction audit findings ([8fe2ba5](https://github.com/simonwinther/hyprspace/commit/8fe2ba5c6127a7d193b33302e683967e6e8683a8))
-
-## Changelog
-
-## Unreleased
-
-Initial release notes. Move these into the first release entry during review.
-
 - Provide tagged hyprpm and Nix installations with minimal default bindings and
   reviewed source release automation.
 - Pan scrolling previews with wheel/trackpad input, reveal hidden columns with
@@ -36,7 +15,7 @@ Initial release notes. Move these into the first release entry during review.
 - Finish committed resizing when Super is released before the next frame.
 - Add protocol and scrolling regressions and measure native key repeats without
   racing asynchronous child processes.
-- One overview session now coordinates targeting, visibility and native dragging
+- One overview session coordinates targeting, visibility and native dragging
   across outputs. Empty active and persistent workspaces are included.
 - Render before foreground layers and cursors, with scoped input/cursor ownership.
 - Route ordinary bindings through the native matcher and provide synchronous
