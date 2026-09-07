@@ -1,71 +1,90 @@
 # Releasing hyprspace
 
-Releases contain source code and SHA-256 checksums. Users build against their
-own Hyprland installation. The release workflow creates a draft after all CI
-jobs pass; publishing that draft is a separate maintainer action.
+Published GitHub releases are the stable-version list. Each contains source and
+SHA-256 checksums. Release Please opens a version PR and creates a draft and tag
+after it is merged. The artifact workflow checks the exact tagged commit before
+attaching files. A maintainer reviews and publishes the draft separately.
 
-## Interactive overview release gate
+## Repository setup
+
+In **Settings > Actions > General > Workflow permissions**, enable
+**Allow GitHub Actions to create and approve pull requests**. The workflows use
+the repository token with explicit permissions; no personal token is needed.
+Enable a tag ruleset for `v*` that blocks updates and deletions while allowing
+initial creation. Release tooling never moves an existing tag.
+
+The repository is private. Public installation requires a maintainer to review
+its files and history, change its visibility, and publish the first reviewed
+release. No workflow changes visibility or publishes releases.
+
+## Review the version PR
+
+The single package uses the existing `type(scope): subject` commit convention.
+Release Please starts at `1.0.0`; later feature and fix commits produce ordinary
+semantic version bumps. Breaking changes use `!` or a `BREAKING CHANGE` footer.
+
+The initial manifest value `0.0.0` means that no version has been released.
+The plugin and `version.txt` already declare the planned `1.0.0`. Release Please
+synchronizes the manifest, `version.txt`, `hyprpm.toml` and `src/Version.hpp` in
+the first release PR, then keeps all four synchronized for later releases.
+Do not keep a permanent `release-as` override.
+
+For the first PR, fold the consolidated `Unreleased` notes into its generated
+`1.0.0` entry, remove the empty `Unreleased` heading and the preparation sentence,
+and remove duplicate bullets. The metadata check deliberately fails while
+unreviewed notes remain. Keep only one entry per version. Subsequent entries
+may use Release Please's dated plain or linked headings, including H3 patch
+release headings. Include the supported compositor commit and validation evidence.
+
+Update the README's selected installation tag only to the version being reviewed;
+remove its first-release availability notice when preparing the initial public
+release. Verify that any proposed compatibility change has the evidence below.
+Review all changes and wait for Checks before merging.
+
+The [Release Please configuration](https://github.com/googleapis/release-please/blob/main/docs/manifest-releaser.md)
+sets `draft` and `force-tag-creation`. The latter creates the tag immediately,
+so drafts do not leave the next release without a version anchor.
+
+## Checks, artifacts and retries
+
+Token-created PRs and tags do not automatically trigger ordinary PR or push
+workflows. Release Please explicitly dispatches Checks on each release PR branch.
+After creating a draft, it calls Draft release directly with the returned tag
+and commit. This follows [GitHub's workflow triggering rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+
+Draft release resolves the existing tag once and passes that exact commit to
+every check and the packaging job. Any failed check blocks uploads. Packaging
+requires a clean checkout at the matching tag and compares the remote tag to
+the checked commit again before uploading. It archives committed source only;
+local builds never enter the archive.
+
+For a failed or incomplete draft, run **Draft release** manually from the current
+main branch and enter the existing tag. The workflow checks out and tests that
+tag, regardless of the branch selected in the workflow UI. Matching draft assets
+are retained, missing assets are uploaded, and conflicting assets cause failure.
+Published releases cannot be replaced. Correct a published release with a new
+patch version. Avoid publishing a draft while its artifact job is running.
+
+Review the draft's source archive, checksums, notes and compatibility evidence
+before publishing it. Publishing and visibility changes remain maintainer actions.
+
+## Compatibility and installation gate
 
 The interactive overview remains unreleased until the final plugin and pinned
 companions pass every automated suite and the physical/application checks in
-[docs/interactive.md](interactive.md#verification). Host test counts or the
-metadata check alone do not satisfy this gate. Attach the nested JSON results,
-companion compatibility record and physical-session observations to the release
-review. Do not change compatibility pins based only on a successful compilation.
+[the interaction guide](interactive.md#verification). Host test counts or metadata
+checks alone do not satisfy this gate. Attach the nested JSON results, companion
+compatibility record and physical-session observations to the release review.
+Routine testing must use the background runner. Physical tests require separate
+explicit authorization for the session in which they run.
 
-## Prepare a version
+Also require the tagged candidate's hyprpm activation, startup loading, removal
+and explicit version selection, plus the Nix build, package-content checks and
+private compositor loading with the matching Nix compositor. Record evidence in
+[the installation verification record](verification/stable-install.md).
 
-1. Set the same `X.Y.Z` version in `hyprpm.toml` and `src/Version.hpp`.
-2. Add notes under `## X.Y.Z` in `CHANGELOG.md`, including the tested Hyprland
-   version and commit. Check that the README reports the same compatibility.
-3. Run the checks in [CONTRIBUTING.md](../CONTRIBUTING.md) and check the live
-   overlays. Refresh the screenshots if the interface changed.
-4. Commit the release files, push the branch and wait for Checks to pass.
-
-The initial version is `1.0.0`. For that version:
-
-```bash
-git tag -a v1.0.0 -m "hyprspace 1.0.0"
-make dist TAG=v1.0.0
-tar -tzf dist/hyprspace-1.0.0.tar.gz
-(cd dist && sha256sum --check SHA256SUMS)
-git push origin v1.0.0
-```
-
-`make dist` requires a clean checkout at the matching version tag. It archives
-committed files only, including the license, examples and screenshots. It leaves
-the source archive and checksums in `dist/`. It never packages your local build.
-
-Pushing the tag starts **Draft release**. Review its source archive, checksums
-and notes in GitHub Releases, then publish the draft. Tags should keep pointing
-at the tested commit; use a new patch version for a correction.
-
-To retry manually, select the existing tag in the workflow's **Use workflow
-from** selector and enter that same tag as the input. The packaging step rejects
-a tag that points anywhere other than the commit checked by that workflow run.
-An existing release causes creation to fail rather than overwriting its assets.
-
-## Hyprland compatibility
-
-The CI image pins an Arch snapshot and checks its Hyprland version before
-building. Update `.github/ci/Dockerfile` when moving to another supported
-compositor, then run the container build and live checks again.
-
-After creating the release commit, add its full hash to `repository.commit_pins`
-in `hyprpm.toml`, paired with the supported Hyprland commit. Commit that mapping
-on the default branch so hyprpm can select the compatible source revision.
-Keep earlier mappings when supporting additional Hyprland releases. The
-[upstream guidelines](https://wiki.hypr.land/Plugins/Development/Plugin-Guidelines/)
-describe the format. A pin must refer to a real, tested plugin commit, so it
-cannot point at the commit that introduces the pin itself.
-
-## First public release
-
-Before changing repository visibility, review the committed files and history
-for material you do not want to make public. In GitHub's repository settings,
-set the description to "Live workspace overview and Alt+Tab switcher for
-Hyprland". Useful topics are `hyprland`, `hyprland-plugin`, `wayland` and `omarchy`.
-
-Make the repository public when you are ready for others to clone it, then
-publish the reviewed release draft. The README's public clone and hyprpm URLs
-work without authentication once the repository is public.
+The Arch CI image pins its dependency snapshot. The flake pins the supported
+compositor commit and its dependencies. Update those pins only with successful
+compatibility testing, including library ABI agreement. Explicit hyprpm release
+tags take precedence over repository commit pins, so stable installation does
+not require a later commit-pin maintenance commit.

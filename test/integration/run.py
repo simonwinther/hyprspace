@@ -76,7 +76,10 @@ def validate_runtime(root, saved, metadata, visible):
 
 
 class Suite:
-    def __init__(self, runtime=None, visible=False):
+    def __init__(self, runtime=None, visible=False, plugin=None):
+        self.plugin = Path(plugin or PLUGIN).resolve()
+        if plugin and (runtime or not self.plugin.is_file()):
+            raise ValueError("--plugin requires an existing library and a fresh private session")
         self.processes = []
         self.checks = []
         self.owned = runtime is None
@@ -323,13 +326,12 @@ bindm = SUPER,mouse:273,resizewindow
             )
         with config.open("a") as output:
             output.write(self.monitor_rules())
-        self.ctl("plugin", "load", str(PLUGIN))
+        self.ctl("plugin", "load", str(self.plugin))
         # Register plugin bindings only after its dispatchers exist. An initial
         # parse error reserves a transient error-bar strip and changes geometry.
         with config.open("a") as output:
-            output.write(
-                "bind = SUPER,A,hyprspace:overview\nbind = SUPER,L,hyprspace:layoutcycle\n"
-            )
+            output.write((REPO / "contrib/bindings.conf").read_text())
+            output.write("\nbind = SUPER,L,hyprspace:layoutcycle\n")
         self.ctl("reload")
         wait_for(lambda: len(self.status()["views"]) == 0)
         wait_for(
@@ -399,6 +401,32 @@ bindm = SUPER,mouse:273,resizewindow
     def check(self, name):
         print("PASS", name, flush=True)
         self.checks.append(name)
+
+    def installation(self):
+        self.setup("dwindle", 0, 0)
+        self.run("wtype", "-M", "logo", "-k", "a", "-m", "logo")
+        wait_for(lambda: self.status()["live"])
+        self.run("wtype", "-M", "logo", "-k", "a", "-m", "logo")
+        wait_for(lambda: not self.status()["live"])
+        wait_for(lambda: not self.status()["views"])
+        for backward in (False, True):
+            before = self.data("activewindow")["address"]
+            self.key(56, 1)  # Alt
+            if backward:
+                self.key(42, 1)  # Shift
+            self.key(15, 1)  # Tab
+            self.key(15, 0)
+            if backward:
+                self.key(42, 0)
+            self.key(56, 0)
+            wait_for(lambda: self.data("activewindow")["address"] != before)
+        self.check("minimal Super+A and forward/backward Alt+Tab bindings work with defaults")
+        self.ctl("plugin", "unload", str(self.plugin))
+        assert not any(p["name"] == "hyprspace" for p in json.loads(self.ctl("-j", "plugin", "list")))
+        self.ctl("plugin", "load", str(self.plugin))
+        self.ctl("reload")
+        assert self.ctl("configerrors") == ""
+        self.check("packaged plugin unloads and loads again")
 
     def windows(self):
         return {
@@ -1519,7 +1547,7 @@ runner = [
         )
         self.close()
         assert all(w["alpha"] == 1 for w in self.status()["windows"])
-        self.ctl("plugin", "unload", str(PLUGIN))
+        self.ctl("plugin", "unload", str(self.plugin))
         assert not (
             self.root
             / "hypr"
@@ -1569,10 +1597,12 @@ def main():
         "--runtime", type=Path, help="use an already isolated compositor"
     )
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--plugin", type=Path, help="load a packaged library in a fresh private session")
     parser.add_argument(
         "--only",
         choices=(
             "all",
+            "install",
             "interactions",
             "matrix",
             "foreground",
@@ -1620,13 +1650,15 @@ def main():
     )
     for attempt in range(3):
         try:
-            suite = Suite(args.runtime, visible=args.visible)
+            suite = Suite(args.runtime, visible=args.visible, plugin=args.plugin)
             break
         except OutputUnavailable as error:
             if attempt == 2:
                 raise
             print("Retrying unavailable nested output backend:", error, flush=True)
     try:
+        if args.only == "install":
+            suite.installation()
         if args.only in ("all", "audit", "scrolling"):
             import regressions
 
@@ -1642,7 +1674,7 @@ def main():
             resize.animated(suite)
         if args.only in ("all", "interactions"):
             suite.interactions()
-            suite.ctl("plugin", "load", str(PLUGIN))
+            suite.ctl("plugin", "load", str(suite.plugin))
         if args.only in ("all", "keyboard"):
             suite.keyboard()
         if args.only in ("all", "foreground"):

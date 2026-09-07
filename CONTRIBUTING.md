@@ -8,6 +8,31 @@ Keep changes focused. Describe the behavior a user will notice and how you
 checked it. The existing [reference](docs/guide.md) covers the plugin's layout,
 rendering and input handling.
 
+## Manual installation
+
+Install the [Arch dependencies](README.md#arch-linux-and-hyprpm), then build:
+
+```bash
+git clone https://github.com/simonwinther/hyprspace.git ~/dev/hyprspace
+cd ~/dev/hyprspace
+make -j2
+make install
+```
+
+`make install` checks the compositor ABI and prints the absolute plugin path.
+Add it and the minimal bindings after your other bindings in `hyprland.conf`:
+
+```ini
+plugin = /home/YOU/.local/share/hyprspace/hyprspace.so
+source = ~/dev/hyprspace/contrib/bindings.conf
+```
+
+Apply with `hyprctl reload` and check `hyprctl configerrors`. Use `make reload`
+to build and activate later edits. Installation replaces files atomically;
+copying over a loaded library directly can crash the compositor. The optional
+[full configuration](contrib/hyprspace.conf) includes appearance settings and
+layout cycling. See the [companion guide](companion/README.md) for launcher setup.
+
 ## Build and check
 
 Follow the [installation instructions](README.md#install) for build dependencies.
@@ -50,6 +75,20 @@ The physical suite requires its separate `--run` option and temporarily takes ov
 the current desktop. Arrange those checks with the person using the machine;
 routine validation should use the background runner. An unavailable background
 backend is a test failure, never a reason to select a disruptive mode automatically.
+
+For a packaged library, run the runner directly so validation does not rebuild
+the plugin in the checkout. The compositor and its `hyprctl` must be on `PATH`
+and match that package; Nix packages expose the matching `compositor` derivation.
+
+```bash
+make integration-fixtures
+python3 test/integration/run.py --only install --plugin /absolute/path/libhyprspace.so
+```
+
+This checks loading, the minimal default bindings and unloading/reloading through
+the private display server. `--plugin` requires a fresh session and cannot be
+combined with `--runtime`. See [Nix checks](docs/nix.md#package-contents-and-verification)
+and the [installation evidence](docs/verification/stable-install.md).
 
 For rendering, focus or input changes, check
 opening and closing both overlays, Escape, selection by keyboard and mouse,

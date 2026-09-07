@@ -54,6 +54,27 @@ class IsolationTests(unittest.TestCase):
         with patch.dict(os.environ, self.host):
             validate_runtime(self.root, self.saved, self.metadata, False)
 
+    def test_packaged_library_requires_fresh_session_and_existing_file(self):
+        with self.assertRaisesRegex(ValueError, "existing library"):
+            Suite(plugin=self.root / "missing.so")
+        library = self.root / "libhyprspace.so"
+        library.touch()
+        with self.assertRaisesRegex(ValueError, "fresh private session"):
+            Suite(runtime=self.root, plugin=library)
+
+    def test_packaged_library_path_survives_startup(self):
+        library = self.root / "libhyprspace.so"
+        library.touch()
+
+        def fail(suite):
+            self.assertEqual(suite.plugin, library.resolve())
+            self.assertFalse(suite.visible)
+            raise RuntimeError("checked packaged path")
+
+        with patch.object(Suite, "start", fail), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, "checked packaged path"):
+                Suite(plugin=library)
+
     def test_reusing_desktop_connections_is_rejected(self):
         for key in (
             "XDG_RUNTIME_DIR",

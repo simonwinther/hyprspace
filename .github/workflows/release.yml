@@ -1,30 +1,57 @@
 name: Draft release
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
         description: Existing version tag, such as v1.0.0
         required: true
         type: string
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      commit:
+        description: Commit returned by Release Please
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  # The release job checks out the same ref as these checks. Manual runs must
-  # select the existing tag in GitHub's "Use workflow from" selector as well.
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.tag.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+      - id: tag
+        env:
+          TAG: ${{ inputs.tag }}
+          EXPECTED: ${{ inputs.commit }}
+        run: |
+          python3 scripts/check-release.py --tag "$TAG"
+          commit=$(git rev-parse HEAD)
+          test -z "$EXPECTED" || test "$commit" = "$EXPECTED"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
   checks:
+    needs: resolve
     uses: ./.github/workflows/checks.yml
+    with:
+      ref: ${{ needs.resolve.outputs.commit }}
 
   draft:
-    needs: checks
+    needs: [resolve, checks]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -32,19 +59,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.resolve.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Package the tested tag
-        env:
-          TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          bash scripts/dist.sh "$TAG"
-          python3 scripts/check-release.py --tag "$TAG" --notes > dist/release-notes.md
-      - name: Create draft with source and checksums
+      - name: Attach source and checksums to the draft
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          gh release create "$TAG" "dist/hyprspace-${TAG#v}.tar.gz" dist/SHA256SUMS \
-            --verify-tag --draft --title "hyprspace $TAG" --notes-file dist/release-notes.md
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: python3 scripts/release-draft.py --tag "$TAG" --commit "$COMMIT"

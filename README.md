@@ -2,82 +2,41 @@
 
 A live workspace overview and an Alt+Tab switcher for Hyprland.
 
-Press **Super + A** to see your workspaces and pick a window. Fullscreen and
-maximized workspaces spread their previews apart so every window stays visible.
-Hold **Alt + Tab** to cycle windows, then release Alt to focus your selection.
-
-The interactive overview keeps running while you launch applications, rearrange
-windows across monitors, resize and use normal Hyprland bindings. Walker result
-targeting uses the [companion integration](companion/README.md). The development
-implementation has nested and physical three-monitor coverage; see the
-[verification record](docs/verification/2026-09-06.md) for the tested builds and
-limits. These changes remain unreleased.
-
-![Three workspaces with live window previews in hyprspace](docs/screenshots/overview.png)
-
-Tested with **Hyprland 0.56.2** on Arch Linux and Omarchy. The plugin uses
-Hyprland's internal APIs and must be built against your compositor's exact
-commit and library ABI. Rebuild it after updating Hyprland.
+Supports **Hyprland 0.56.2**, commit
+`efb50993780079460b0cbed1363e2166a2de1d9f`, on x86_64 Linux. The plugin must match
+your compositor's commit and library ABI. Other Hyprland versions require
+separate compatibility testing.
 
 ## Install
 
-These instructions use `hyprland.conf` syntax, as used by the tested Omarchy
-setup. See the [reference](docs/guide.md) for all options and controls.
+Use **hyprpm** on Arch and other Linux setups with the supported Hyprland build,
+or the **tagged flake** on Nix. [Published releases](https://github.com/simonwinther/hyprspace/releases)
+are the stable-version list. The first release, `v1.0.0`, is being prepared;
+the commands below become available once the repository is public and that
+release is published. An unversioned repository install tracks development.
 
-Install the build dependencies on Arch Linux:
+### Arch Linux and hyprpm
 
-```bash
-sudo pacman -S --needed hyprland base-devel git cairo pango gdk-pixbuf2 librsvg libei nlohmann-json jq
-```
-
-If a system update installed a newer Hyprland, log into that version before
-building and loading the plugin.
-
-### Build locally
+On a system running the supported Hyprland version, install the dependencies
+and select the release explicitly:
 
 ```bash
-git clone https://github.com/simonwinther/hyprspace.git ~/dev/hyprspace
-cd ~/dev/hyprspace
-make
-make install
-```
-
-`make install` checks the build's ABI and installs it to
-`~/.local/share/hyprspace/hyprspace.so`. It prints these lines with your actual
-paths. Add them at the end of `~/.config/hypr/hyprland.conf`:
-
-```ini
-plugin = /home/YOU/.local/share/hyprspace/hyprspace.so
-source = ~/dev/hyprspace/contrib/hyprspace.conf
-```
-
-The plugin path must be absolute. Keep the source line after your other bindings
-so the included Alt+Tab bindings take effect. Then run:
-
-```bash
-hyprctl reload
-hyprctl configerrors
-```
-
-To build and activate a later change, run `make reload` from the checkout.
-Builds and installs replace files atomically; copying over a loaded `.so`
-directly can crash the compositor.
-
-### Use hyprpm
-
-Install hyprpm's additional build tools and register the repository:
-
-```bash
-sudo pacman -S --needed cmake cpio
-hyprpm add https://github.com/simonwinther/hyprspace.git
+sudo pacman -S --needed hyprland base-devel git cmake cpio cairo pango gdk-pixbuf2 librsvg libei nlohmann-json jq python
+hyprpm update
+hyprpm add https://github.com/simonwinther/hyprspace.git v1.0.0
 hyprpm enable hyprspace
 hyprpm reload
 ```
 
-Add this to the end of `~/.config/hypr/hyprland.conf`:
+Check that your package repositories still provide the supported compositor
+before installing. Avoid partial system upgrades. On other distributions,
+install the equivalent development packages, then use the same hyprpm commands.
+
+Add this after your other bindings in `~/.config/hypr/hyprland.conf`:
 
 ```ini
 exec-once = hyprpm reload
+unbind = SUPER, A
 unbind = ALT, TAB
 unbind = ALT SHIFT, TAB
 bind = SUPER, A, hyprspace:overview
@@ -85,15 +44,68 @@ bind = ALT, TAB, hyprspace:switch
 bind = ALT SHIFT, TAB, hyprspace:switch, prev
 ```
 
-Run `hyprctl reload` to apply the bindings. Hyprpm manages the plugin path;
-use this setup on its own instead of also loading a local build. Run
-`hyprpm update` and `hyprpm reload` after a Hyprland update. The upstream
-[plugin guide](https://wiki.hypr.land/Plugins/Using-Plugins/) covers hyprpm setup.
+Apply the bindings and check activation:
 
-For launch contexts with hyprpm, also run `make install-assets` from a checkout
-of the matching revision and follow the [companion guide](companion/README.md).
-The plugin finds those helpers in `~/.local/share/hyprspace` when they are not
-beside the hyprpm-managed library.
+```bash
+hyprctl reload
+hyprctl plugin list
+hyprctl configerrors
+```
+
+The plugin list should include `hyprspace` and configuration errors should be
+empty. Startup loading takes effect at your next login. Use hyprpm to manage
+loading throughout; remove any local-build `plugin =` line when switching to it.
+
+A selected tag stays selected during `hyprpm update`. To choose a newer published
+release, remove and add the repository with that release's tag, then enable and
+reload it. A Hyprland update still needs matching headers and a compatible
+plugin release. See [updates, removal and troubleshooting](docs/install.md).
+
+### NixOS and Home Manager
+
+Add these inputs to your system flake:
+
+```nix
+inputs.hyprland.url = "github:hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f";
+inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.0.0";
+inputs.hyprspace.inputs.hyprland.follows = "hyprland";
+```
+
+In Home Manager, with `inputs` passed through `extraSpecialArgs`:
+
+```nix
+{ inputs, ... }:
+let
+  plugin = inputs.hyprspace.packages.x86_64-linux.hyprspace;
+  compositor = plugin.compositor;
+in {
+  wayland.windowManager.hyprland = {
+    enable = true;
+    package = compositor;
+    plugins = [ plugin ];
+    extraConfig = "source = ${plugin}/share/hyprspace/bindings.conf";
+  };
+}
+```
+
+Home Manager loads the plugin at startup and the packaged bindings use its
+defaults. Select that same `compositor` for the NixOS session. The
+[Nix guide](docs/nix.md) shows the complete wiring and validation status.
+Use this repository's flake: Nixpkgs' `hyprlandPlugins.hyprspace` is a different
+project.
+
+## Overview
+
+Press **Super + A** to see your workspaces and pick a window. Fullscreen and
+maximized workspaces spread their previews apart so every window stays visible.
+Hold **Alt + Tab** to cycle windows, then release Alt to focus your selection.
+
+The overview stays open while you launch applications, rearrange windows,
+resize and use normal Hyprland bindings. Walker targeting uses the optional
+[companion integration](companion/README.md). See the
+[verification record](docs/verification/2026-09-06.md) for tested builds and limits.
+
+![Three workspaces with live window previews in hyprspace](docs/screenshots/overview.png)
 
 ## Use it
 
@@ -105,7 +117,7 @@ beside the hyprpm-managed library.
 | 1 through 9, or 0 | Open workspace 1 through 10 |
 | Super + left drag | Rearrange a window or move it across workspaces and outputs |
 | Super + right drag | Resize a window in its preview |
-| Super + L | Cycle dwindle/scrolling on the indicated workspace |
+| Super + L (optional binding) | Cycle dwindle/scrolling on the indicated workspace |
 | Alt + Tab / Alt + Shift + Tab | Cycle windows forward / backward |
 | Release Alt | Focus the selected window |
 | Escape | Dismiss either overlay without selecting |

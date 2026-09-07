@@ -104,7 +104,7 @@ install: check install-assets
 	@echo "Add these two lines to the END of ~/.config/hypr/hyprland.conf:"
 	@echo ""
 	@echo "  plugin = $(PLUGIN_SO)"
-	@echo "  source = $(abspath .)/contrib/hyprspace.conf"
+	@echo "  source = $(abspath .)/contrib/bindings.conf"
 	@echo ""
 	@echo "The plugin path must be absolute — Hyprland does not expand ~ for it."
 	@echo "Then: make reload"
