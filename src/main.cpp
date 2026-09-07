@@ -94,6 +94,7 @@ namespace {
         CHyprSignalListener mouseMove;
         CHyprSignalListener mouseButton;
         CHyprSignalListener mouseAxis;
+        CHyprSignalListener renderPreChecks;
         CHyprSignalListener renderPre;
         CHyprSignalListener renderStage;
         CHyprSignalListener monitorRemoved;
@@ -699,6 +700,17 @@ namespace {
 
     // ------------------------------------------------------------ render ----
 
+    void onRenderPreChecks(PHLMONITOR monitor) {
+        if (!monitor || (!overviewOn(monitor) && !(g_switcher && g_switcher->monitor() == monitor)))
+            return;
+
+        // A solitary fullscreen client bypasses the workspace render stages.
+        // Clear it before direct scanout and tearing checks so visible overlays,
+        // including their closing frames, go through the ordinary render pass.
+        // Hyprland recomputes this candidate on the next monitor frame.
+        monitor->m_solitaryClient.reset();
+    }
+
     void onRenderPre(PHLMONITOR monitor) {
         hooks::syncKeyboardFocus();
         if (overviewLive()) {
@@ -929,24 +941,25 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     auto& bus = Event::bus()->m_events;
 
-    g_listeners.key            = bus.input.keyboard.key.listen(onKey);
-    g_listeners.mouseMove      = bus.input.mouse.move.listen(onMouseMove);
-    g_listeners.mouseButton    = bus.input.mouse.button.listen(onMouseButton);
-    g_listeners.mouseAxis      = bus.input.mouse.axis.listen(onMouseAxis);
-    g_listeners.renderPre      = bus.render.pre.listen(onRenderPre);
-    g_listeners.renderStage    = bus.render.stage.listen(onRenderStage);
-    g_listeners.monitorRemoved = bus.monitor.removed.listen(onMonitorRemoved);
-    g_listeners.monitorAdded   = bus.monitor.added.listen([](PHLMONITOR mon) {
+    g_listeners.key             = bus.input.keyboard.key.listen(onKey);
+    g_listeners.mouseMove       = bus.input.mouse.move.listen(onMouseMove);
+    g_listeners.mouseButton     = bus.input.mouse.button.listen(onMouseButton);
+    g_listeners.mouseAxis       = bus.input.mouse.axis.listen(onMouseAxis);
+    g_listeners.renderPreChecks = bus.render.preChecks.listen(onRenderPreChecks);
+    g_listeners.renderPre       = bus.render.pre.listen(onRenderPre);
+    g_listeners.renderStage     = bus.render.stage.listen(onRenderStage);
+    g_listeners.monitorRemoved  = bus.monitor.removed.listen(onMonitorRemoved);
+    g_listeners.monitorAdded    = bus.monitor.added.listen([](PHLMONITOR mon) {
         if (overviewLive() && config::overviewAllMonitors() && !mon->isMirror() && !overviewOn(mon))
             session().views.push_back(std::make_unique<COverview>(mon));
     });
-    g_listeners.configReloaded = bus.config.reloaded.listen([] {
+    g_listeners.configReloaded  = bus.config.reloaded.listen([] {
         textures().invalidate();
         if (g_switcher)
             g_switcher->reconfigure();
     });
-    g_listeners.layerOpened    = bus.layer.opened.listen(onLayerOpened);
-    g_listeners.layerClosed    = bus.layer.closed.listen(onLayerClosed);
+    g_listeners.layerOpened     = bus.layer.opened.listen(onLayerOpened);
+    g_listeners.layerClosed     = bus.layer.closed.listen(onLayerClosed);
 
     g_listeners.sessionLock = g_pSessionLockManager->m_events.lock.listen([] {
         destroyOverviews();

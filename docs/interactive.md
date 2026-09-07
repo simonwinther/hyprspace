@@ -181,8 +181,10 @@ fixture. They are not installed into the desktop session.
 
 `--quick` reduces the layout matrix; `--only` selects a suite during debugging.
 `--only audit` runs the input/visibility/launch regressions, and `--only scrolling`
-runs viewport controls across all directions and outputs. Both are included in
-the full suite. The repeat test measures a synchronous native resize, so completion
+runs viewport controls across all directions and outputs. `--only switcher`
+checks visible Alt+Tab panels over fullscreen and maximized windows, including
+scaled outputs, cancellation and animated closing. These run in the full suite.
+The repeat test measures a synchronous native resize, so completion
 of an already launched child process cannot be mistaken for a stuck repeat timer.
 Drag fixtures explicitly hold their virtual keyboard modifier until mouse release;
 they do not rely on a fixed-duration keypress. Layout comparisons seed pointer

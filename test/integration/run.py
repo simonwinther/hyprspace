@@ -1616,6 +1616,7 @@ def main():
             "discord",
             "audit",
             "scrolling",
+            "switcher",
         ),
         default="all",
     )
@@ -1659,6 +1660,10 @@ def main():
     try:
         if args.only == "install":
             suite.installation()
+        if args.only in ("all", "switcher"):
+            import switcher
+
+            switcher.visibility(suite, wait_for)
         if args.only in ("all", "audit", "scrolling"):
             import regressions
 
