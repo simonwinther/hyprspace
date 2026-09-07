@@ -130,7 +130,7 @@ In a scrolling workspace, use the wheel or two-finger scrolling to pan its previ
 Edge arrows reveal hidden columns. Page Up/Page Down select columns and Enter
 opens the selection; Tab/Shift+Tab still move between workspaces.
 
-![A fullscreen browser alongside the other windows on its workspace](docs/screenshots/fullscreen.png)
+![Fullscreen Neovim alongside Files on its workspace](docs/screenshots/fullscreen.png)
 
 Fullscreen and maximized windows keep their desktop state while you browse the
 overview. Their badges show which windows are using those modes.
