@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/simonwinther/hyprspace/compare/v1.0.0...v1.0.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **release:** consolidate initial release notes ([837d07b](https://github.com/simonwinther/hyprspace/commit/837d07bb63232a2e96cf9b3e27bb5539a3aad8fa))
+* **render:** show switcher over fullscreen ([ff6775d](https://github.com/simonwinther/hyprspace/commit/ff6775d8638fc32b99347d0ecf37d444ca3d4dd8))
+
 ## 1.0.0 (2026-09-07)
 
 - Provide tagged hyprpm and Nix installations with minimal default bindings and
