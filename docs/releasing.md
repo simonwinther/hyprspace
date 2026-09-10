@@ -63,6 +63,12 @@ requires a clean checkout at the matching tag and compares the remote tag to
 the checked commit again before uploading. It archives committed source only;
 local builds never enter the archive.
 
+The uploader and its tests come from the workflow's own commit, in a separate
+checkout. Retrying from the current main branch picks up uploader repairs while
+the builds and archive still use the existing tag. Draft lookup uses the
+paginated release list, and uploads target the selected release ID. Duplicate
+drafts for the same tag stop the job before uploads.
+
 For a failed or incomplete draft, run **Draft release** manually from the current
 main branch and enter the existing tag. The workflow checks out and tests that
 tag, regardless of the branch selected in the workflow UI. Matching draft assets

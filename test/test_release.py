@@ -184,18 +184,23 @@ class DraftTests(unittest.TestCase):
         for name, content in self.files.items():
             (self.root / "dist" / name).write_bytes(content)
         self.commit = "a" * 40
-        self.release = {"id": 17, "draft": True, "assets": []}
+        self.release = {
+            "id": 17, "tag_name": "v1.0.0", "draft": True, "assets": [],
+            "upload_url": "https://uploads.github.com/repos/example/hyprspace/releases/17/assets{?name,label}",
+        }
+        self.pages = [[], [self.release]]
+        self.current_release = None
         self.uploaded = []
         self.created = []
         self.remote_assets = {}
         self.fail_upload = False
         self.fail_package = False
+        self.fail_lookup = False
+        self.fail_upload_after = None
         self.addCleanup(patch.stopall)
         patch.dict(os.environ, {"GH_REPO": "example/hyprspace"}).start()
         patch.object(DRAFT, "remote_commit", return_value=self.commit).start()
         patch.object(DRAFT, "command", side_effect=self.command).start()
-        patch.object(DRAFT.subprocess, "run", side_effect=lambda *a, **k:
-                     subprocess.CompletedProcess(a, 0, json.dumps(self.release).encode(), b"")).start()
 
     def command(self, *args):
         if args == ("git", "rev-parse", "HEAD"):
@@ -206,18 +211,31 @@ class DraftTests(unittest.TestCase):
             return b""
         if args[0] == "python3":
             return b"Reviewed release notes"
-        if args[:3] == ("gh", "release", "upload"):
-            if self.fail_upload:
-                raise subprocess.CalledProcessError(1, args)
-            self.uploaded.append(Path(args[-1]).name)
-            return b""
         if args[:3] == ("gh", "release", "create"):
             self.created.append(args)
+            self.pages[-1].append(self.release)
             return b""
+        if args == ("gh", "api", "--paginate", "--slurp",
+                    "repos/example/hyprspace/releases?per_page=100"):
+            if self.fail_lookup:
+                raise subprocess.CalledProcessError(1, args, stderr=b"gh: Forbidden (HTTP 403)")
+            return json.dumps(self.pages).encode()
+        if args[:4] == ("gh", "api", "--method", "POST"):
+            if self.fail_upload or len(self.uploaded) == self.fail_upload_after:
+                raise subprocess.CalledProcessError(1, args)
+            path = Path(args[args.index("--input") + 1])
+            self.assertEqual(args[-1], f"https://uploads.github.com/repos/example/hyprspace/releases/17/assets?name={path.name}")
+            self.uploaded.append(path.name)
+            identifier = len(self.remote_assets) + 1
+            self.remote_assets[identifier] = path.read_bytes()
+            self.release["assets"].append({"id": identifier, "name": path.name})
+            return b"{}"
         if "Accept: application/octet-stream" in args:
             return self.remote_assets[int(args[-1].rsplit("/", 1)[1])]
-        if args[:2] == ("gh", "api"):
-            return json.dumps(self.release).encode()
+        if args == ("gh", "api", "repos/example/hyprspace/releases/17"):
+            return json.dumps(self.current_release or self.release).encode()
+        if args == ("gh", "api", "repos/example/hyprspace/releases/tags/v1.0.0"):
+            raise subprocess.CalledProcessError(1, args, stderr=b"gh: Not Found (HTTP 404)")
         self.fail(f"unexpected command: {args}")
 
     def attach(self):
@@ -226,11 +244,24 @@ class DraftTests(unittest.TestCase):
     def test_empty_draft_gets_both_assets(self):
         self.attach()
         self.assertEqual(self.uploaded, list(self.files))
+        self.assertEqual(self.created, [])
+
+    def test_draft_is_found_after_a_page_of_other_releases(self):
+        self.pages[0] = [{"id": 16, "tag_name": "v0.9.0", "draft": False}]
+        self.attach()
+        self.assertEqual(self.uploaded, list(self.files))
+        self.assertEqual(self.created, [])
+
+    def test_duplicate_drafts_are_not_modified(self):
+        self.pages[0] = [dict(self.release, id=18)]
+        with self.assertRaisesRegex(ValueError, "multiple releases"):
+            self.attach()
+        self.assertEqual(self.uploaded, [])
+        self.assertEqual(self.created, [])
 
     def test_missing_draft_is_created_at_existing_tag(self):
-        with patch.object(DRAFT.subprocess, "run", return_value=
-                          subprocess.CompletedProcess([], 1, b"", b"gh: Not Found (HTTP 404)")):
-            self.attach()
+        self.pages = [[]]
+        self.attach()
         self.assertEqual(len(self.created), 1)
         self.assertIn("--verify-tag", self.created[0])
         self.assertIn("--draft", self.created[0])
@@ -238,10 +269,9 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(self.uploaded, list(self.files))
 
     def test_api_failure_does_not_create_or_upload(self):
-        with patch.object(DRAFT.subprocess, "run", return_value=
-                          subprocess.CompletedProcess([], 1, b"", b"gh: Forbidden (HTTP 403)")):
-            with self.assertRaisesRegex(ValueError, "Forbidden"):
-                self.attach()
+        self.fail_lookup = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.attach()
         self.assertEqual(self.created, [])
         self.assertEqual(self.uploaded, [])
 
@@ -271,6 +301,18 @@ class DraftTests(unittest.TestCase):
             self.attach()
         self.assertEqual(self.uploaded, [])
 
+    def test_publication_before_upload_is_rejected(self):
+        self.current_release = dict(self.release, draft=False)
+        with self.assertRaisesRegex(ValueError, "published during packaging"):
+            self.attach()
+        self.assertEqual(self.uploaded, [])
+
+    def test_changed_release_tag_is_rejected(self):
+        self.current_release = dict(self.release, tag_name="v99.0.0")
+        with self.assertRaisesRegex(ValueError, "release tag changed"):
+            self.attach()
+        self.assertEqual(self.uploaded, [])
+
     def test_failed_packaging_never_uploads(self):
         self.fail_package = True
         with self.assertRaises(subprocess.CalledProcessError):
@@ -282,6 +324,15 @@ class DraftTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.attach()
         self.fail_upload = False
+        self.attach()
+        self.assertEqual(self.uploaded, list(self.files))
+
+    def test_partial_upload_retry_preserves_the_first_asset(self):
+        self.fail_upload_after = 1
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.attach()
+        self.assertEqual(self.uploaded, ["hyprspace-1.0.0.tar.gz"])
+        self.fail_upload_after = None
         self.attach()
         self.assertEqual(self.uploaded, list(self.files))
 
@@ -304,6 +355,9 @@ class DraftTests(unittest.TestCase):
         self.assertNotIn("always()", draft)
         self.assertNotIn("continue-on-error", workflow)
         self.assertIn("ref: ${{ needs.resolve.outputs.commit }}", draft)
+        self.assertIn("ref: ${{ github.workflow_sha }}", draft)
+        self.assertIn("--root \"$GITHUB_WORKSPACE/source\"", draft)
+        self.assertIn("python3 release-tools/test/test_release.py", draft)
         checks = workflow.split("  checks:\n", 1)[1].split("  draft:\n", 1)[0]
         self.assertIn("ref: ${{ needs.resolve.outputs.commit }}", checks)
 

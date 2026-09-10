@@ -57,15 +57,24 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.commit }}
+          path: source
           fetch-depth: 0
           persist-credentials: false
+      - name: Check release tooling
+        run: python3 release-tools/test/test_release.py
       - name: Attach source and checksums to the draft
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
           COMMIT: ${{ needs.resolve.outputs.commit }}
-        run: python3 scripts/release-draft.py --tag "$TAG" --commit "$COMMIT"
+        run: python3 release-tools/scripts/release-draft.py --root "$GITHUB_WORKSPACE/source" --tag "$TAG" --commit "$COMMIT"
