@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/simonwinther/hyprspace/compare/v1.0.1...v1.0.2) (2026-09-10)
+
+
+### Bug Fixes
+
+* **release:** test versions independently ([04422e9](https://github.com/simonwinther/hyprspace/commit/04422e98027bb5d49d66b52c589a16c1ce623dfc))
+
 ## [1.0.1](https://github.com/simonwinther/hyprspace/compare/v1.0.0...v1.0.1) (2026-09-07)
 
 
