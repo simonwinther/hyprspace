@@ -51,6 +51,13 @@ class ReleaseTests(unittest.TestCase):
         self.run_command("git", "-c", "user.name=Release test", "-c", "user.email=test@localhost",
                          "-c", "commit.gpgsign=false", "commit", "-qm", "Release fixture")
 
+    def set_version(self, version):
+        current = (self.root / "version.txt").read_text().strip()
+        for name in ("hyprpm.toml", "src/Version.hpp", "version.txt",
+                     ".release-please-manifest.json", "CHANGELOG.md"):
+            path = self.root / name
+            path.write_text(path.read_text().replace(current, version))
+
     def test_metadata_and_notes(self):
         self.assertEqual(RELEASE.check(self.root, self.tag), (self.version, self.notes))
         result = self.run_command("python3", "scripts/check-release.py", "--tag", self.tag, "--notes")
@@ -83,19 +90,29 @@ class ReleaseTests(unittest.TestCase):
                     )
                     self.assertEqual(RELEASE.check(self.root, self.tag)[1], notes)
 
-    def test_subsequent_version_stays_synchronized(self):
-        for name in ("hyprpm.toml", "src/Version.hpp", "version.txt",
-                     ".release-please-manifest.json", "CHANGELOG.md"):
-            path = self.root / name
-            path.write_text(path.read_text().replace(self.version, "1.1.0"))
-        self.assertEqual(RELEASE.check(self.root, "v1.1.0")[0], "1.1.0")
+    def test_release_versions_stay_synchronized(self):
+        for version in ("1.0.0", "1.0.1", "1.1.0", "2.0.0"):
+            with self.subTest(version=version):
+                self.set_version(version)
+                self.assertEqual(RELEASE.check(self.root, f"v{version}")[0], version)
 
     def test_initial_manifest_allows_checks_but_not_tagging(self):
+        config = json.loads((self.root / "release-please-config.json").read_text())
+        initial = config["packages"]["."]["initial-version"]
+        self.set_version(initial)
         (self.root / ".release-please-manifest.json").write_text('{".": "0.0.0"}')
         (self.root / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n\nFirst release.\n")
-        self.assertEqual(RELEASE.check(self.root)[0], self.version)
+        self.assertEqual(RELEASE.check(self.root)[0], initial)
         with self.assertRaisesRegex(ValueError, "manifest"):
-            RELEASE.check(self.root, self.tag)
+            RELEASE.check(self.root, f"v{initial}")
+
+    def test_initial_manifest_rejects_later_versions(self):
+        for version in ("1.0.1", "1.1.0", "2.0.0"):
+            with self.subTest(version=version):
+                self.set_version(version)
+                (self.root / ".release-please-manifest.json").write_text('{".": "0.0.0"}')
+                with self.assertRaisesRegex(ValueError, "manifest"):
+                    RELEASE.check(self.root)
 
     def test_unreviewed_notes_and_duplicate_versions_are_rejected(self):
         path = self.root / "CHANGELOG.md"
