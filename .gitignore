@@ -6,3 +6,4 @@ test/test_hyprspace-asan
 *.o
 *.d
 *.so
+
