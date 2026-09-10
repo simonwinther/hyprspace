@@ -22,12 +22,12 @@ In your system flake, add:
 
 ```nix
 inputs.hyprland.url = "github:hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f";
-inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.0.1";
+inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.0.2";
 inputs.hyprspace.inputs.hyprland.follows = "hyprland";
 ```
 
-The initial tag is available after the first public release. The `follows`
-relationship lets consumers own the compositor input; evaluation rejects any
+Use this tag after its release is published. The `follows` relationship lets
+consumers own the compositor input; evaluation rejects any
 revision other than the supported commit. Keep its dependency lock entries
 consistent too. Do not independently override the session's libraries.
 

@@ -47,10 +47,15 @@ so drafts do not leave the next release without a version anchor.
 
 ## Checks, artifacts and retries
 
-Token-created PRs and tags do not automatically trigger ordinary PR or push
-workflows. Release Please explicitly dispatches Checks on each release PR branch.
-After creating a draft, it calls Draft release directly with the returned tag
-and commit. This follows [GitHub's workflow triggering rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+Release Please explicitly dispatches Checks on each release PR branch. GitHub
+also creates a separate PR workflow run that waits for maintainer approval.
+Select **Approve workflows to run** in the PR to start that run, and wait for
+the results before merging. The dispatched run tests the release PR's commit;
+the approved PR run also tests its merge with the main branch.
+
+Token-created tags do not trigger push workflows. After creating a draft,
+Release Please calls Draft release directly with the returned tag and commit.
+This follows [GitHub's workflow triggering rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
 
 Draft release resolves the existing tag once and passes that exact commit to
 every check and the packaging job. Any failed check blocks uploads. Packaging
@@ -67,9 +72,9 @@ patch version. Avoid publishing a draft while its artifact job is running.
 
 Retries help when a runner or upload failed. If the tagged source itself fails
 validation, fix it on the main branch and prepare a new patch release. Keep the
-failed tag unchanged and its draft unpublished. In particular, the initial
-`v1.0.0` draft still contains unreviewed changelog notes in its tagged commit;
-the corrected notes on the main branch belong to the next release candidate.
+failed tag unchanged and its draft unpublished. The `v1.0.0` draft contains
+unreviewed changelog notes; `v1.0.1` fails a release test that assumed the current
+version was still `1.0.0`. Both are superseded by the `v1.0.2` candidate.
 
 Review the draft's source archive, checksums, notes and compatibility evidence
 before publishing it. Publishing and visibility changes remain maintainer actions.

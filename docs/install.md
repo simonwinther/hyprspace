@@ -1,7 +1,7 @@
 # Managing a hyprpm installation
 
 Use a tag listed in [published releases](https://github.com/simonwinther/hyprspace/releases).
-The `v1.0.1` examples require that release to be published first.
+The `v1.0.2` examples require that release to be published first.
 Hyprpm builds locally against your installed compositor and development libraries.
 The supported version is Hyprland 0.56.2, commit
 `efb50993780079460b0cbed1363e2166a2de1d9f`, on x86_64 Linux.
@@ -13,13 +13,13 @@ a newer stable release for you. Explicit revisions also take precedence over
 repository commit pins in the [supported hyprpm implementation](https://github.com/hyprwm/Hyprland/blob/efb50993780079460b0cbed1363e2166a2de1d9f/hyprpm/src/core/PluginManager.cpp).
 
 To change versions, disable and remove the installed repository, then repeat
-installation with the desired published tag. This example selects `v1.0.1`:
+installation with the desired published tag. This example selects `v1.0.2`:
 
 ```bash
 hyprpm disable hyprspace
 hyprpm reload
 hyprpm remove hyprspace
-hyprpm add https://github.com/simonwinther/hyprspace.git v1.0.1
+hyprpm add https://github.com/simonwinther/hyprspace.git v1.0.2
 hyprpm enable hyprspace
 hyprpm reload
 hyprctl plugin list
