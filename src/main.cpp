@@ -25,6 +25,14 @@
 #include "Version.hpp"
 
 #include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/config/shared/workspace/WorkspaceRuleManager.hpp>
+#include <hyprland/src/config/supplementary/propRefresher/PropRefresher.hpp>
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/LayerState.hpp>
@@ -893,9 +901,27 @@ namespace {
         const auto& tiled  = ws->m_space->algorithm()->tiledAlgo();
         const auto  name   = Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(&typeid(*tiled.get()));
         const auto  next   = name == "dwindle" ? "scrolling" : "dwindle";
-        const auto  result = HyprlandAPI::invokeHyprctlCommand("keyword", "workspace " + ws->getConfigName() + ", layout:" + next);
+        Config::CWorkspaceRule rule;
+        rule.m_workspaceString = ws->getConfigName();
+        rule.m_workspaceName = ws->m_name;
+        rule.m_workspaceId = ws->m_id;
+        rule.m_layout = next;
+        Config::workspaceRuleMgr()->replaceOrAdd(std::move(rule));
+        Config::Supplementary::refresher()->scheduleRefresh(Config::Supplementary::REFRESH_MONITOR_STATES | Config::Supplementary::REFRESH_WINDOW_STATES);
         session().damage();
-        return {.success = result == "ok" || result == "ok\n", .error = result == "ok" || result == "ok\n" ? "" : result};
+        return {};
+    }
+
+    int dispatchFromLua(lua_State* state, SDispatchResult (*dispatcher)(std::string)) {
+        const auto result = dispatcher(luaL_optstring(state, 1, ""));
+        lua_createtable(state, 0, 2);
+        lua_pushboolean(state, result.success);
+        lua_setfield(state, -2, "ok");
+        if (!result.success) {
+            lua_pushlstring(state, result.error.data(), result.error.size());
+            lua_setfield(state, -2, "error");
+        }
+        return 1;
     }
 
     SDispatchResult dispatchClose(std::string) {
@@ -938,6 +964,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:switch", dispatchSwitch);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:close", dispatchClose);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:layoutcycle", dispatchLayoutCycle);
+
+    if (Config::mgr()->type() == Config::CONFIG_LUA) {
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "overview", [](lua_State* state) { return dispatchFromLua(state, dispatchOverview); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "switch", [](lua_State* state) { return dispatchFromLua(state, dispatchSwitch); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "layoutcycle", [](lua_State* state) { return dispatchFromLua(state, dispatchLayoutCycle); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "close", [](lua_State* state) { return dispatchFromLua(state, dispatchClose); });
+    }
 
     auto& bus = Event::bus()->m_events;
 
