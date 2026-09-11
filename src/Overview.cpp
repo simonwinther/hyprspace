@@ -229,9 +229,17 @@ namespace hyprspace {
     }
 
     void COverview::computeLayout() {
+        // Entries are replaced on every refresh, including frames where no
+        // workspace remains on this output. Never retain keys into the old list.
+        m_tiles.clear();
+        m_animationAnchor = -1;
         const auto MONITOR = m_monitor.lock();
-        if (!MONITOR || m_entries.empty())
+        if (!MONITOR || m_entries.empty()) {
+            m_selected = m_hovered = -1;
+            m_clickedWindow.reset();
+            m_hoveredWindow.reset();
             return;
+        }
 
         std::vector<STileInput> input;
         input.reserve(m_entries.size());
@@ -248,6 +256,7 @@ namespace hyprspace {
 
         auto result = layout(input, params);
         m_tiles     = std::move(result.tiles);
+        m_selected  = m_tiles.empty() ? -1 : std::clamp(m_selected, 0, static_cast<int>(m_tiles.size()) - 1);
 
         for (auto& t : m_tiles) {
             t.box.x += m_usable.x;

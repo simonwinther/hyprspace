@@ -136,7 +136,10 @@ $(BUILD_DIR)/test-headless: test/integration/headless.c scripts/atomic-output.sh
 	wayland-scanner server-header "$(PROTOCOL_DIR)/stable/xdg-shell/xdg-shell.xml" "$(BUILD_DIR)/xdg-shell-protocol.h"
 	bash scripts/atomic-output.sh "$@" $(CC) -Wall -Wextra -I"$(BUILD_DIR)" test/integration/headless.c $$($(HEADLESS_PC) --cflags --libs wlroots-0.20 wayland-server pixman-1) -Wl,--disable-new-dtags -Wl,-rpath,"$$($(HEADLESS_PC) --variable=libdir wlroots-0.20)" -o
 
-integration-fixtures: $(BUILD_DIR)/test-headless
+$(BUILD_DIR)/test-overview.so: test/integration/overview.cpp $(TARGET) scripts/atomic-output.sh Makefile
+	bash scripts/atomic-output.sh "$@" $(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) "$<" -L"$(BUILD_DIR)" -l:hyprspace.so -Wl,-rpath,'$$ORIGIN' -o
+
+integration-fixtures: $(BUILD_DIR)/test-headless $(BUILD_DIR)/test-overview.so
 	mkdir -p "$(BUILD_DIR)"
 	wayland-scanner client-header test/integration/virtual-pointer.xml "$(BUILD_DIR)/virtual-pointer.h"
 	wayland-scanner private-code test/integration/virtual-pointer.xml "$(BUILD_DIR)/virtual-pointer.c"
@@ -168,7 +171,7 @@ dist: release-check
 
 clean:
 	rm -f -- $(OBJS) $(DEPS) "$(TARGET)" "$(BUILD_CONFIG)"
-	rm -f -- "$(BUILD_DIR)/hyprspace-launch" "$(BUILD_DIR)/test-pointer" "$(BUILD_DIR)/test-activation" "$(BUILD_DIR)/test-ime" "$(BUILD_DIR)/test-headless" "$(BUILD_DIR)/xdg-shell-protocol.h"
+	rm -f -- "$(BUILD_DIR)/hyprspace-launch" "$(BUILD_DIR)/test-pointer" "$(BUILD_DIR)/test-activation" "$(BUILD_DIR)/test-ime" "$(BUILD_DIR)/test-headless" "$(BUILD_DIR)/test-overview.so" "$(BUILD_DIR)/xdg-shell-protocol.h"
 	@for name in uwsm-app uwsm app2unit; do rm -f -- "$(BUILD_DIR)/launch-bin/$$name"; done
 	@for name in virtual-pointer virtual-keyboard input-method xdg-shell xdg-activation session-lock; do rm -f -- "$(BUILD_DIR)/$$name.h" "$(BUILD_DIR)/$$name.c"; done
 	@rmdir -- "$(BUILD_DIR)/launch-bin" 2>/dev/null || true
