@@ -409,6 +409,111 @@ static void testClassLookup() {
     CHECK(empty.entryCount() == 0);
 }
 
+static void testDesktopPrecedence() {
+    section("desktop: canonical precedence and alias strength collisions");
+    const auto entry = [](const std::string& id, const std::string& icon, const std::string& extra = "") {
+        return parseDesktopEntry("[Desktop Entry]\nIcon=" + icon + "\n" + extra, id);
+    };
+    CDesktopDb canonical;
+    canonical.addEntry(entry("same", "user"));
+    canonical.addEntry(entry("same", "system", "StartupWMClass=system-only\n"));
+    CHECK(canonical.entryCount() == 1);
+    CHECK(canonical.iconNameForClass("same") == "user");
+    CHECK(canonical.iconNameForClass("system-only").empty());
+    CDesktopDb noIcon;
+    noIcon.addEntry(entry("same", ""));
+    noIcon.addEntry(entry("same", "system"));
+    CHECK(noIcon.iconNameForClass("same").empty());
+
+    const auto strong = entry("org.test.Explicit", "explicit", "StartupWMClass=Collision\n");
+    const auto guess  = entry("collision", "filename");
+    const auto alpha  = entry("a.app", "alpha", "StartupWMClass=duplicate\n");
+    const auto beta   = entry("b.app", "beta", "StartupWMClass=duplicate\n");
+    const auto id     = entry("editor", "canonical");
+    const auto name   = entry("z.guess", "name", "Name=Editor\n");
+    for (bool reverse : {false, true}) {
+        CDesktopDb db;
+        for (const auto& pair : {std::pair{strong, guess}, std::pair{alpha, beta}, std::pair{id, name}}) {
+            db.addEntry(reverse ? pair.second : pair.first);
+            db.addEntry(reverse ? pair.first : pair.second);
+        }
+        CHECK(db.iconNameForClass("COLLISION") == "explicit");
+        CHECK(db.iconNameForClass("duplicate") == "alpha");
+        CHECK(db.iconNameForClass("editor") == "canonical");
+        db.addEntry(entry("ChatGPT", "webapp", "Name=ChatGPT\n"));
+        db.addEntry(entry("custom-chatgpt", "profile", "StartupWMClass=chrome-chatgpt.com__-Default\n"));
+        db.addEntry(entry("chrome-chatgpt.com__-Default", "heuristic"));
+        CHECK(db.iconNameForClass("chrome-chatgpt.com__-Default") == "profile");
+        CHECK(db.iconNameForClass("chrome-chatgpt.com__-Profile 1") == "webapp");
+    }
+
+    std::string pattern   = (fs::temp_directory_path() / "hyprspace-desktop-XXXXXX").string();
+    const char* directory = mkdtemp(pattern.data());
+    CHECK(directory != nullptr);
+    if (!directory)
+        return;
+    const fs::path root{directory};
+    struct SCleanup {
+        fs::path root;
+        ~SCleanup() {
+            fs::remove_all(root);
+        }
+    } cleanup{root};
+    struct SEnvironment {
+        const char*                key;
+        std::optional<std::string> value;
+        explicit SEnvironment(const char* key) : key(key) {
+            if (const char* old = std::getenv(key))
+                value = old;
+        }
+        ~SEnvironment() {
+            if (value)
+                setenv(key, value->c_str(), 1);
+            else
+                unsetenv(key);
+        }
+    } dataHome{"XDG_DATA_HOME"}, dataDirs{"XDG_DATA_DIRS"};
+    setenv("XDG_DATA_HOME", (root / "user").c_str(), 1);
+    setenv("XDG_DATA_DIRS", (root / "system").c_str(), 1);
+    const std::vector<std::pair<std::string, std::string>> files{
+        {"user/same.desktop", "Icon=user\n"},
+        {"system/same.desktop", "Icon=system\nStartupWMClass=system-only\n"},
+        {"user/masked.desktop", "Icon=hidden-user\nHidden=true\n"},
+        {"system/masked.desktop", "Icon=masked-system\n"},
+        {"user/empty.desktop", "Name=Empty\n"},
+        {"system/empty.desktop", "Icon=empty-system\n"},
+        {"user/z-user.desktop", "Icon=user-strong\nStartupWMClass=shared\n"},
+        {"system/a-system.desktop", "Icon=system-strong\nStartupWMClass=shared\n"},
+        {"user/a.desktop", "Icon=alpha\nStartupWMClass=tie\n"},
+        {"user/z.desktop", "Icon=omega\nStartupWMClass=tie\n"},
+        {"user/folder/app.desktop", "Icon=nested-user\n"},
+        {"system/folder-app.desktop", "Icon=nested-system\n"},
+        {"user/menu-hidden.desktop", "Icon=running-app\nNoDisplay=true\n"},
+    };
+    for (bool reverse : {false, true}) {
+        fs::remove_all(root / "user");
+        fs::remove_all(root / "system");
+        for (size_t i = 0; i < files.size(); ++i) {
+            const auto& [relative, content] = files[reverse ? files.size() - 1 - i : i];
+            const auto slash                = relative.find('/');
+            const auto path                 = root / relative.substr(0, slash) / "applications" / relative.substr(slash + 1);
+            fs::create_directories(path.parent_path());
+            std::ofstream(path) << "[Desktop Entry]\n" << content;
+        }
+        CDesktopDb db;
+        db.scan();
+        CHECK(db.iconNameForClass("same") == "user");
+        CHECK(db.iconNameForClass("system-only").empty());
+        CHECK(db.iconNameForClass("masked").empty());
+        CHECK(db.iconNameForClass("empty").empty());
+        CHECK(db.iconNameForClass("shared") == "user-strong");
+        CHECK(db.iconNameForClass("tie") == "alpha");
+        CHECK(db.iconNameForClass("folder-app") == "nested-user");
+        CHECK(db.iconNameForClass("app") == "nested-user");
+        CHECK(db.iconNameForClass("menu-hidden") == "running-app");
+    }
+}
+
 static void testClassCandidates() {
     section("desktop: window class candidate keys");
 
@@ -1265,6 +1370,7 @@ int main() {
     testWorkspaceForDigit();
     testDesktopParsing();
     testClassLookup();
+    testDesktopPrecedence();
     testClassCandidates();
     testWebAppLookup();
     testIconResolution();

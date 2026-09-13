@@ -7,6 +7,7 @@
 #include <fstream>
 #include <limits>
 #include <sstream>
+#include <tuple>
 
 namespace fs = std::filesystem;
 
@@ -135,6 +136,8 @@ namespace hyprspace {
                 out.wmClass = val;
             else if (key == "NoDisplay")
                 out.noDisplay = (toLower(val) == "true");
+            else if (key == "Hidden")
+                out.hidden = (toLower(val) == "true");
         }
 
         return out;
@@ -162,34 +165,43 @@ namespace hyprspace {
         return dirs;
     }
 
-    void CDesktopDb::addEntry(const SDesktopEntry& e) {
-        if (e.icon.empty())
+    void CDesktopDb::addEntry(const SDesktopEntry& e, size_t directoryPriority) {
+        if (!e.id.empty() && !m_canonicalIds.insert(e.id).second)
+            return;
+        if (e.hidden || e.icon.empty())
             return;
 
         m_entries.push_back(e);
         const size_t idx = m_entries.size() - 1;
 
-        auto index = [&](const std::string& raw) {
+        auto index = [&](const std::string& raw, EAliasStrength strength) {
             if (raw.empty())
                 return;
             const auto k = normaliseClass(raw);
             if (k.empty())
                 return;
-            // First writer wins, except that an explicit StartupWMClass always
-            // outranks a guess derived from the file name.
-            m_byClass.insert_or_assign(k, idx);
+            const SAlias alias{idx, directoryPriority, strength};
+            const auto [it, inserted] = m_byClass.try_emplace(k, alias);
+            if (inserted)
+                return;
+            const auto& old = m_entries[it->second.entry];
+            if (strength > it->second.strength ||
+                (strength == it->second.strength && std::tie(directoryPriority, e.id, e.name, e.icon) < std::tie(it->second.directory, old.id, old.name, old.icon)))
+                it->second = alias;
         };
 
-        // Weakest signal first so stronger ones overwrite.
-        index(e.id);
-        if (!e.name.empty())
-            index(e.name);
-        if (!e.wmClass.empty())
-            index(e.wmClass);
+        // The resolver uses explicit WM class, desktop ID, then human/filename
+        // guesses. Exec is not parsed. Query candidate order (including web-app
+        // host/profile fallbacks) remains independent of these alias strengths.
+        index(e.name, EAliasStrength::GUESS);
+        index(e.fileStem, EAliasStrength::GUESS);
+        index(e.id, EAliasStrength::DESKTOP_ID);
+        index(e.wmClass, EAliasStrength::WM_CLASS);
     }
 
     void CDesktopDb::scan() {
         m_entries.clear();
+        m_canonicalIds.clear();
         m_byClass.clear();
         m_iconCache.clear();
         m_iconRoots.clear();
@@ -198,9 +210,12 @@ namespace hyprspace {
 
         std::error_code ec;
 
-        for (const auto& base : xdgDataDirs()) {
+        const auto dirs = xdgDataDirs();
+        for (size_t directoryPriority = 0; directoryPriority < dirs.size(); ++directoryPriority) {
+            const auto&    base = dirs[directoryPriority];
             const fs::path apps = fs::path(base) / "applications";
             if (fs::is_directory(apps, ec)) {
+                std::vector<fs::path> files;
                 for (auto it = fs::recursive_directory_iterator(apps, fs::directory_options::skip_permission_denied, ec); it != fs::recursive_directory_iterator();
                      it.increment(ec)) {
                     if (ec)
@@ -209,16 +224,24 @@ namespace hyprspace {
                         continue;
                     if (it->path().extension() != ".desktop")
                         continue;
-
-                    std::ifstream f(it->path());
+                    files.push_back(it->path());
+                }
+                // XDG leaves foo-bar.desktop vs foo/bar.desktop unspecified;
+                // a lexical path tie-break makes even that collision repeatable.
+                std::ranges::sort(files);
+                for (const auto& path : files) {
+                    std::ifstream f(path);
                     if (!f)
                         continue;
 
                     std::stringstream buf;
                     buf << f.rdbuf();
 
-                    auto entry = parseDesktopEntry(buf.str(), it->path().stem().string());
-                    addEntry(entry);
+                    auto id = path.lexically_relative(apps).replace_extension().generic_string();
+                    std::ranges::replace(id, '/', '-');
+                    auto entry     = parseDesktopEntry(buf.str(), id);
+                    entry.fileStem = path.stem().string();
+                    addEntry(entry, directoryPriority);
                 }
             }
 
@@ -240,7 +263,7 @@ namespace hyprspace {
     std::string CDesktopDb::iconNameForClass(const std::string& cls) const {
         for (const auto& key : classCandidates(cls)) {
             if (auto it = m_byClass.find(key); it != m_byClass.end())
-                return m_entries[it->second].icon;
+                return m_entries[it->second.entry].icon;
         }
         return "";
     }
@@ -248,7 +271,7 @@ namespace hyprspace {
     std::string CDesktopDb::appNameForClass(const std::string& cls) const {
         for (const auto& key : classCandidates(cls)) {
             if (auto it = m_byClass.find(key); it != m_byClass.end())
-                return m_entries[it->second].name;
+                return m_entries[it->second.entry].name;
         }
         return "";
     }

@@ -305,6 +305,23 @@ you can still fill every screen by pressing the binding once per monitor.
 | `switcher:current_workspace_only` | bool | `true` | Restrict to the active workspace; a workspace with one window has nowhere to switch to. Set `false` to cycle every window on the monitor |
 | `switcher:font` | string | `Sans 13` | Pango font description |
 
+### Icons and rendering resources
+
+#### Desktop entries
+
+Desktop entries follow XDG directory precedence: the user data directory wins
+over system directories for the same desktop ID. Hidden and iconless overrides
+also suppress lower-precedence copies; `NoDisplay` entries can still provide
+icons for running windows. Nested paths form IDs with `/` replaced by `-`, as in
+the [desktop-entry specification](https://specifications.freedesktop.org/desktop-entry/latest/file-naming.html).
+
+Class matching tries the existing exact class and Chromium/web-app candidate
+sequence. For each candidate, explicit `StartupWMClass` aliases outrank desktop
+IDs, which outrank `Name` and basename guesses. Equal-strength collisions use
+XDG directory precedence, then lexical desktop ID. `Exec` is not used for icon
+matching. Sorting file paths also makes the specification's otherwise undefined
+`foo-bar.desktop` versus `foo/bar.desktop` collision deterministic.
+
 ### Animations
 
 The transitions reuse Hyprland's own animation curves rather than inventing

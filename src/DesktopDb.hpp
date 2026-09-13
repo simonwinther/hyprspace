@@ -8,16 +8,19 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace hyprspace {
 
     struct SDesktopEntry {
-        std::string name;    // Name=
-        std::string icon;    // Icon=
-        std::string wmClass; // StartupWMClass=
-        std::string id;      // basename without .desktop
+        std::string name;     // Name=
+        std::string icon;     // Icon=
+        std::string wmClass;  // StartupWMClass=
+        std::string id;       // XDG desktop ID without .desktop; subdirectories become '-'
+        std::string fileStem; // optional basename heuristic for nested entries
         bool        noDisplay = false;
+        bool        hidden    = false;
     };
 
     // Parse a single .desktop file's [Desktop Entry] group.
@@ -68,7 +71,10 @@ namespace hyprspace {
             m_iconIndex.clear();
             m_iconIndexReady = false;
         }
-        void addEntry(const SDesktopEntry& e);
+        // Entries arrive in XDG precedence order. Canonical IDs are accepted
+        // once, including hidden/iconless overrides. Alias ties use directory
+        // precedence, then lexical desktop ID, independently of scan order.
+        void                    addEntry(const SDesktopEntry& e, size_t directoryPriority = 0);
 
       private:
         struct SIconFile {
@@ -81,9 +87,16 @@ namespace hyprspace {
 
         void indexIcons() const;
 
-        std::vector<SDesktopEntry>                                      m_entries;
-        std::map<std::string, size_t>                                   m_byClass; // normalised class -> index
-        std::vector<std::string>                                        m_iconRoots;
+        enum class EAliasStrength { GUESS, DESKTOP_ID, WM_CLASS };
+        struct SAlias {
+            size_t         entry;
+            size_t         directory;
+            EAliasStrength strength;
+        };
+        std::vector<SDesktopEntry>      m_entries;
+        std::unordered_set<std::string> m_canonicalIds;
+        std::map<std::string, SAlias>   m_byClass;
+        std::vector<std::string>        m_iconRoots;
         mutable std::map<std::string, std::string>                      m_iconCache; // "name@size" -> path
         mutable std::unordered_map<std::string, std::vector<SIconFile>> m_iconIndex;
         mutable bool                                                    m_iconIndexReady = false;
