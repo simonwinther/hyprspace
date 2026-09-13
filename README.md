@@ -123,8 +123,9 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | Escape | Dismiss either overlay without selecting |
 
 The overview opens on all monitors by default, with each showing its own
-workspaces. Alt+Tab stays on the current workspace unless you change
-`switcher:current_workspace_only`.
+workspaces. Alt+Tab uses the active normal workspace on the monitor under the
+pointer. Setting `switcher:current_workspace_only = false` includes windows
+across all workspaces and monitors.
 
 In a scrolling workspace, use the wheel or two-finger scrolling to pan its preview.
 Edge arrows reveal hidden columns. Page Up/Page Down select columns and Enter

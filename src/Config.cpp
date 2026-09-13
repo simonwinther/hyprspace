@@ -11,6 +11,7 @@
 namespace hyprspace::config {
 
     namespace {
+        constexpr bool SWITCHER_CURRENT_WORKSPACE_ONLY_DEFAULT = true;
         struct SValues {
             SP<Config::Values::CFloatValue>  overviewBgDim;
             SP<Config::Values::CColorValue>  overviewBgColor;
@@ -71,14 +72,14 @@ namespace hyprspace::config {
             reg<CColorValue>("plugin:hyprspace:overview:bg_color", "colour mixed over the desktop behind the overview", 0xff11111b);
         g_values.overviewPadding    = reg<CIntValue>("plugin:hyprspace:overview:padding", "outer padding of the overview, in px", 56, SIntValueOptions{.min = 0, .max = 512});
         g_values.overviewGap        = reg<CIntValue>("plugin:hyprspace:overview:gap", "gap between workspace tiles, in px", 28, SIntValueOptions{.min = 0, .max = 256});
-        g_values.overviewBandGap    = reg<CIntValue>("plugin:hyprspace:overview:band_gap", "gap between workspace rows, in px", 28, SIntValueOptions{.min = 0, .max = 256});
+        g_values.overviewBandGap    = reg<CIntValue>("plugin:hyprspace:overview:band_gap", "deprecated compatibility option; ignored, use overview:gap for both axes", 28, SIntValueOptions{.min = 0, .max = 256});
         g_values.overviewRounding   = reg<CIntValue>("plugin:hyprspace:overview:rounding", "corner radius of workspace tiles, in px", 14, SIntValueOptions{.min = 0, .max = 64});
         g_values.overviewBorderSize = reg<CIntValue>("plugin:hyprspace:overview:border_size", "selection border thickness, in px", 3, SIntValueOptions{.min = 0, .max = 16});
         g_values.overviewActiveBorder = reg<CColorValue>("plugin:hyprspace:overview:active_border", "border colour of the selected tile", 0xff89b4fa);
         g_values.overviewHoverBorder  = reg<CColorValue>("plugin:hyprspace:overview:hover_border", "border colour of the hovered tile", 0x8089b4fa);
         g_values.overviewShowLabels   = reg<CBoolValue>("plugin:hyprspace:overview:workspace_labels", "show the workspace name under each tile", true);
         g_values.overviewIncludeSpecial = reg<CBoolValue>("plugin:hyprspace:overview:include_special", "include special (scratchpad) workspaces", true);
-        g_values.overviewAllWorkspaces  = reg<CBoolValue>("plugin:hyprspace:overview:all_workspaces", "show every workspace on the monitor, not just the active one", true);
+        g_values.overviewAllWorkspaces  = reg<CBoolValue>("plugin:hyprspace:overview:all_workspaces", "deprecated compatibility option; ignored, views always include populated, active and persistent workspaces", true);
         g_values.overviewAllMonitors    = reg<CBoolValue>("plugin:hyprspace:overview:all_monitors", "open the overview on every monitor at once, not just the one under the pointer", true);
         g_values.overviewLabelColor     = reg<CColorValue>("plugin:hyprspace:overview:label_color", "workspace label colour", 0xffcdd6f4);
         g_values.overviewTileBgColor    = reg<CColorValue>("plugin:hyprspace:overview:tile_bg_color", "backing plate drawn behind each workspace tile", 0xd90d0d14);
@@ -98,7 +99,7 @@ namespace hyprspace::config {
         g_values.switcherTextColor      = reg<CColorValue>("plugin:hyprspace:switcher:text_color", "switcher title colour", 0xffcdd6f4);
         g_values.switcherShowTitle      = reg<CBoolValue>("plugin:hyprspace:switcher:show_title", "show the selected window's title under the icons", true);
         g_values.switcherCurrentWorkspaceOnly =
-            reg<CBoolValue>("plugin:hyprspace:switcher:current_workspace_only", "restrict the switcher to the active workspace", true);
+            reg<CBoolValue>("plugin:hyprspace:switcher:current_workspace_only", "restrict to the target monitor's active normal workspace; false includes all outputs/workspaces", SWITCHER_CURRENT_WORKSPACE_ONLY_DEFAULT);
         g_values.switcherFont = reg<CStringValue>("plugin:hyprspace:switcher:font", "pango font description used in the switcher", "Sans 13");
 
         // ---- shared ----
@@ -192,7 +193,7 @@ namespace hyprspace::config {
         return g_values.switcherShowTitle ? g_values.switcherShowTitle->value() : true;
     }
     bool switcherCurrentWorkspaceOnly() {
-        return g_values.switcherCurrentWorkspaceOnly ? g_values.switcherCurrentWorkspaceOnly->value() : false;
+        return g_values.switcherCurrentWorkspaceOnly ? g_values.switcherCurrentWorkspaceOnly->value() : SWITCHER_CURRENT_WORKSPACE_ONLY_DEFAULT;
     }
     std::string switcherFont() {
         return g_values.switcherFont ? g_values.switcherFont->value() : "Sans 13";

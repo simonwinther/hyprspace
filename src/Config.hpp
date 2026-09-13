@@ -17,6 +17,7 @@ namespace hyprspace::config {
     CHyprColor  overviewBgColor();
     int         overviewPadding();
     int         overviewGap();
+    [[deprecated("compatibility option has no effect")]]
     int         overviewBandGap();
     int         overviewRounding();
     int         overviewBorderSize();
@@ -24,6 +25,7 @@ namespace hyprspace::config {
     CHyprColor  overviewHoverBorder();
     bool        overviewShowLabels();
     bool        overviewIncludeSpecial();
+    [[deprecated("compatibility option has no effect")]]
     bool        overviewAllWorkspaces();
     bool        overviewAllMonitors();
     CHyprColor  overviewLabelColor();

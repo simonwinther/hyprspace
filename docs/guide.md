@@ -251,6 +251,8 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:tile_border_color` | color | `rgba(ffffff1a)` | Hairline around every tile |
 | `overview:padding` | int | `56` | Outer padding |
 | `overview:gap` | int | `28` | Gap between workspace tiles |
+| `overview:band_gap` | int | `28` | Deprecated compatibility key; ignored. `overview:gap` controls both axes |
+| `overview:all_workspaces` | bool | `true` | Deprecated compatibility key; ignored. Populated, active and persistent workspaces are always included |
 | `overview:rounding` | int | `14` | Tile corner radius |
 | `overview:border_size` | int | `3` | Selection border thickness |
 | `overview:active_border` | color | `rgba(89b4faff)` | Selected tile border |
@@ -288,9 +290,10 @@ input grab, so moving the pointer to another screen does not move focus with
 it, and the ordinary current-monitor workspace actions would switch the wrong
 display.
 
-Set `overview:all_monitors = false` for the older behaviour of one screen at a
-time. Each monitor then toggles on its own and the others are left alone, so
-you can still fill every screen by pressing the binding once per monitor.
+Set `overview:all_monitors = false` to start a session on the monitor under the
+pointer. It remains one session: a toggle anywhere closes it, and explicit `on`
+while it is open leaves the current view in place. Close and reopen on another
+output to move the session. Other outputs keep their normal windows visible.
 
 ### Switcher
 
@@ -304,8 +307,13 @@ you can still fill every screen by pressing the binding once per monitor.
 | `switcher:highlight_color` | color | `rgba(89b4fa40)` | Selection highlight |
 | `switcher:text_color` | color | `rgba(cdd6f4ff)` | Title colour |
 | `switcher:show_title` | bool | `true` | Show the selected window's title |
-| `switcher:current_workspace_only` | bool | `true` | Restrict to the active workspace; a workspace with one window has nowhere to switch to. Set `false` to cycle every window on the monitor |
+| `switcher:current_workspace_only` | bool | `true` | Use the active normal workspace on the target monitor. `false` includes windows across all workspaces and outputs, including special workspaces |
 | `switcher:font` | string | `Sans 13` | Pango font description |
+
+The target monitor is the one under the pointer, falling back to the focused
+window's output if the pointer is outside all outputs. A workspace with one
+window keeps that window selected; an empty workspace opens no switcher. The
+scope never expands automatically. Unmapped and hidden windows are excluded.
 
 ### Icons and rendering resources
 
