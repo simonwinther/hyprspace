@@ -5,8 +5,7 @@ import re
 import subprocess
 import time
 
-REPO = Path(__file__).resolve().parents[2]
-CLIENT = REPO / "test/integration/client.py"
+from protocol import reply
 
 
 def offsets(suite):
@@ -75,7 +74,7 @@ def audit(s, wait_for):
     panel = s.spawn(
         [
             "python3",
-            str(REPO / "test/integration/layer.py"),
+            str(s.artifact("layer.py")),
             str(entry),
             "waybar",
             "bottom",
@@ -138,20 +137,20 @@ def audit(s, wait_for):
     wait_for(lambda: " 122" in log.read_text())
     s.check("application keyboard delivery resumes after overview dismissal")
     s.ctl("dispatch", "hyprspace:overview", "on")
-    s.ctl("plugin", "unload", str(REPO / "build/hyprspace.so"))
+    s.ctl("plugin", "unload", str(s.plugin))
     log.write_text("")
     s.run("wtype", "z")
     wait_for(lambda: " 122" in log.read_text())
-    s.ctl("plugin", "load", str(REPO / "build/hyprspace.so"))
+    s.ctl("plugin", "load", str(s.plugin))
     s.check("unload restores native keyboard focus and delivery")
 
     ime = s.spawn(
-        [str(REPO / "build/test-ime")],
+        [str(s.artifact("test-ime"))],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
     )
-    assert ime.stdout.readline().strip() == "ready"
+    assert reply(ime) == "ready"
     s.ctl("dispatch", "hyprspace:overview", "on")
     wait_for(lambda: s.status()["keyboard_owned"])
     assert s.protocol(ime, "reset") == "ok"
@@ -207,13 +206,13 @@ def audit(s, wait_for):
         s.move(center(tile(s, 13)))
         s.spawn(
             [
-                str(REPO / "build/hyprspace-launch"),
+                str(s.artifact("hyprspace-launch")),
                 "--context",
                 token,
                 "--",
                 "sh",
                 "-c",
-                f"sleep .3; exec python3 {CLIENT} hs-transfer-disconnect",
+                f"sleep .3; exec python3 {s.client} hs-transfer-disconnect",
             ]
         )
         wait_for(lambda: "hs-transfer-disconnect" in s.windows())
@@ -313,7 +312,7 @@ def scrolling(s, wait_for):
     time.sleep(0.2)
     box = tile(s, 12)
     entry = s.root / "scroll-layer"
-    layer = s.spawn(["python3", str(REPO / "test/integration/layer.py"), str(entry)])
+    layer = s.spawn(["python3", str(s.artifact("layer.py")), str(entry)])
     wait_for(lambda: s.layer("hs-foreground"))
     s.move(center(box))
     before = s.geometry()

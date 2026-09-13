@@ -1,3 +1,6 @@
+#include "generation.hpp"
+#include "resources.hpp"
+
 // Test-only state transitions executed inside the private compositor.
 #include "../../src/Overview.hpp"
 
@@ -60,6 +63,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (std::string{__hyprland_api_get_hash()} != __hyprland_api_get_client_hash())
         throw std::runtime_error("overview test fixture ABI mismatch");
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:empty-refresh", emptyRefresh);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:resources", resourceProbe);
     return {"hyprspace-overview-test", "Private overview regression fixture", "hyprspace", "1"};
 }
 

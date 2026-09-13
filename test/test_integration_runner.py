@@ -75,6 +75,20 @@ class IsolationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "checked packaged path"):
                 Suite(plugin=library)
 
+    def test_custom_build_directory_is_used_and_cannot_replace_a_runtime_generation(self):
+        build = self.root / "custom build"
+
+        def fail(suite):
+            self.assertEqual(suite.build_dir, build.resolve())
+            self.assertEqual(suite.plugin, build / "hyprspace.so")
+            raise RuntimeError("checked custom build")
+
+        with patch.object(Suite, "start", fail), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, "checked custom build"):
+                Suite(build_dir=build)
+        with self.assertRaisesRegex(ValueError, "original generation"):
+            Suite(runtime=self.root, build_dir=build)
+
     def test_reusing_desktop_connections_is_rejected(self):
         for key in (
             "XDG_RUNTIME_DIR",
@@ -131,9 +145,8 @@ class IsolationTests(unittest.TestCase):
             windows.assert_not_called()
 
     def test_missing_host_does_not_launch_a_fallback(self):
-        display = BackgroundDisplay(self.root, self.host)
+        display = BackgroundDisplay(self.root, self.host, self.root / "test-headless")
         with (
-            patch("background.Path.is_file", return_value=False),
             patch("background.subprocess.Popen") as spawn,
         ):
             with self.assertRaisesRegex(RuntimeError, "No desktop session was started"):
@@ -141,9 +154,9 @@ class IsolationTests(unittest.TestCase):
             spawn.assert_not_called()
 
     def test_crashed_host_does_not_launch_a_fallback(self):
-        display = BackgroundDisplay(self.root, self.host)
+        (self.root / "test-headless").touch()
+        display = BackgroundDisplay(self.root, self.host, self.root / "test-headless")
         with (
-            patch("background.Path.is_file", return_value=True),
             patch("background.subprocess.Popen") as spawn,
         ):
             spawn.return_value.poll.return_value = 1

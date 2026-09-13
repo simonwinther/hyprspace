@@ -76,6 +76,25 @@ the current desktop. Arrange those checks with the person using the machine;
 routine validation should use the background runner. An unavailable background
 backend is a test failure, never a reason to select a disruptive mode automatically.
 
+`make integration-fixtures` publishes a hash inventory in `build/integration.json`.
+Before starting a private compositor, the runner copies that inventory's plugin,
+fixture plugins, clients, launch helper and private display libraries into one
+run-local snapshot. Optional companion binaries and providers are copied at the
+same time. Rebuilds cannot change a running test, including later plugin reloads.
+Missing files, changed hashes or fixtures compiled against another plugin are
+errors; rerun `make integration-fixtures` before starting a new test. Custom
+build directories selected with `BUILD_DIR` are forwarded to the runner's
+`--build` option. Packaged
+`--only install --plugin …` tests snapshot the supplied library and do not load
+the checkout's C++ fixture plugins.
+
+Each artifact directory contains `generation.json` and `results.json`, recording
+the revision, dirty state, binary hashes, generation, compositor ABI, test group
+and outcome. Successful runs remove binary copies after teardown and retain the
+records and logs. Failed runs retain binaries for diagnostics; subsequent runs
+remove completed failure snapshots older than seven days. `--runtime` requires
+the original snapshot to remain present and verifies its hashes before attaching.
+
 For a packaged library, run the runner directly so validation does not rebuild
 the plugin in the checkout. The compositor and its `hyprctl` must be on `PATH`
 and match that package; Nix packages expose the matching `compositor` derivation.

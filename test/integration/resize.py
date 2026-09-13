@@ -252,7 +252,7 @@ def bounds(s, wait_for):
         panel = s.spawn(
             [
                 "python3",
-                str(Path(__file__).with_name("layer.py")),
+                str(s.artifact("layer.py")),
                 str(entry),
                 "waybar",
                 "bottom",
@@ -280,7 +280,22 @@ def bounds(s, wait_for):
 def animated(s):
     from PIL import Image
 
-    s.setup("dwindle", 0, 2)
+    previous_marker = s.env.get("HS_CONTENT_MARKER")
+    s.env["HS_CONTENT_MARKER"] = "hs-A"
+    try:
+        s.setup("dwindle", 0, 2)
+    finally:
+        if previous_marker is None:
+            s.env.pop("HS_CONTENT_MARKER")
+        else:
+            s.env["HS_CONTENT_MARKER"] = previous_marker
+    # Own the measured tile set, including the extra label that exposed the
+    # old white-pixel oracle. Earlier scrolling suites leave persistent tiles.
+    for workspace in s.data("workspaces"):
+        if workspace["id"] > 0 and workspace["id"] not in (11, 12, 13):
+            s.ctl("keyword", "workspace", f"{workspace['id']},persistent:false")
+    s.ctl("keyword", "workspace", f"21,monitor:{s.names[0]},persistent:true,layout:dwindle")
+    s.ctl("keyword", "plugin:hyprspace:overview:workspace_labels", "true")
     work = area(next(m for m in s.data("monitors") if m["name"] == s.names[0]))
     reset_float(s, s.windows()["hs-A"]["address"], work)
     s.close()
@@ -295,21 +310,32 @@ def animated(s):
         assert s.status()["dragging"]
         s.move(s.preview_point("hs-B", 0.9, 0.9))
         time.sleep(2.2)
-        clip = s.status()["drag"]["clip"]
+        state = s.status()
+        clip = state["drag"]["clip"]
+        assert not inside(state["drag"]["box"], clip, tolerance=2), "resize did not exercise clipping"
+        view = next(view for view in state["views"] if view["monitor"] == s.names[0])
+        assert {tile["workspace"] for tile in view["tiles"] if tile["window"] == "0x0"} == {11, 21}
         path = s.root / "animated-resize.png"
         s.run("grim", "-s", "1", "-o", s.names[0], str(path))
-        # The white fixture must not paint outside the settled workspace. The
-        # pointer is on another output, away from these measured pixels.
+        # Only the test-owned green content counts. Pale labels, window text
+        # and workspace chrome must never be classified as escaped content.
+        # The pointer is on another output, away from these measured pixels.
         image = Image.open(path).convert("RGB")
         pixels = image.load()
-        outside = sum(
-            min(pixels[x, y]) > 200
+        marked = [
+            (x, y)
             for y in range(image.height)
             for x in range(image.width)
-            if not (
+            if pixels[x, y][1] > 150
+            and pixels[x, y][1] > max(pixels[x, y][0], pixels[x, y][2]) + 90
+        ]
+        assert len(marked) > 100, "test content marker was not rendered"
+        outside = sum(
+            not (
                 clip["x"] - 2 <= x <= clip["x"] + clip["w"] + 2
                 and clip["y"] - 2 <= y <= clip["y"] + clip["h"] + 2
             )
+            for x, y in marked
         )
         assert outside == 0, (outside, clip, path)
         s.button(0, 273)
@@ -324,4 +350,5 @@ def animated(s):
         s.button(0, 273)
         s.key(125, 0)
         s.ctl("keyword", "animations:enabled", "false")
+        s.ctl("keyword", "workspace", "21,persistent:false")
         s.close()

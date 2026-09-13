@@ -5,7 +5,7 @@ import time
 
 def lifecycle(s, wait_for):
     s.setup("dwindle", 0, 1)
-    fixture = s.plugin.parent / "test-overview.so"
+    fixture = s.artifact("test-overview.so")
     assert fixture.is_file(), "build integration-fixtures before the overview suite"
     s.ctl("plugin", "load", str(fixture))
     s.ctl("dispatch", "hyprspace:overview", "on")

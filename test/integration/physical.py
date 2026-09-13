@@ -11,13 +11,21 @@ import subprocess
 import tempfile
 import time
 
-from run import CLIENT, REPO, Suite, wait_for
+from run import REPO, Suite, wait_for
+from protocol import reply
+from artifacts import Snapshot
 
 
 class Physical(Suite):
     def __init__(self):
         self.root = Path(tempfile.mkdtemp(prefix="hs-physical."))
         self.root.chmod(0o700)
+        self.snapshot = Snapshot.create(self.root, REPO / "build/integration.json")
+        self.owns_snapshot = True
+        self.client = self.artifact("client.py")
+        self.group = "physical"
+        self.started = time.time()
+        self.compositor_identity = None
         self.env = os.environ.copy()
         self.processes = []
         self.checks = []
@@ -30,6 +38,7 @@ class Physical(Suite):
         ):
             self.env.pop(key, None)
         self.original_monitors = self.data("monitors")
+        self.compositor_identity = self.data("version")
         assert (
             len(self.original_monitors) == 3
         ), "physical suite requires three enabled outputs"
@@ -60,12 +69,12 @@ class Physical(Suite):
             "layout_targets_unique" in self.status()
         ), "load the matching interactive plugin first"
         self.pointer = self.spawn(
-            [str(REPO / "build/test-pointer")],
+            [str(self.artifact("test-pointer"))],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True,
         )
-        assert self.pointer.stdout.readline().strip() == "ready"
+        assert reply(self.pointer) == "ready"
         self.ctl("keyword", "animations:enabled", "false")
 
     def request(self, message):
@@ -109,7 +118,7 @@ class Physical(Suite):
         # Native dwindle insertion depends on pointer position and map order.
         # Seed both before comparing a desktop gesture with its overview peer.
         for count, title in enumerate(("hs-A", "hs-B", "hs-C"), 1):
-            self.spawn(["python3", str(CLIENT), title])
+            self.spawn(["python3", str(self.client), title])
             wait_for(lambda: len(self.windows()) == count)
             self.ctl(
                 "dispatch", "focuswindow", "address:" + self.windows()[title]["address"]
@@ -323,7 +332,7 @@ class Physical(Suite):
         entry = applications / f"{name}.desktop"
         assert not entry.exists()
         entry.write_text(
-            f'[Desktop Entry]\nType=Application\nName={name}\nExec=/usr/bin/python3 "{CLIENT}" hs-live-launch\nTerminal=false\nStartupNotify=true\n'
+            f'[Desktop Entry]\nType=Application\nName={name}\nExec=/usr/bin/python3 "{self.client}" hs-live-launch\nTerminal=false\nStartupNotify=true\n'
         )
         try:
             time.sleep(0.4)

@@ -13,6 +13,11 @@ windows = []
 log = Path(os.environ.get("HS_INPUT_LOG", "/dev/null"))
 
 
+def content_marker(widget, context):
+    context.set_source_rgb(36 / 255, 229 / 255, 87 / 255)
+    context.paint()
+
+
 def event(window, event):
     with log.open("a") as output:
         output.write(
@@ -24,7 +29,12 @@ def event(window, event):
 for title in sys.argv[1:]:
     window = Gtk.Window(title=title)
     window.set_default_size(640, 400)
-    window.add(Gtk.Label(label=title))
+    if title == os.environ.get("HS_CONTENT_MARKER"):
+        content = Gtk.DrawingArea()
+        content.connect("draw", content_marker)
+        window.add(content)
+    else:
+        window.add(Gtk.Label(label=title))
     window.connect("key-press-event", event)
     window.connect("key-release-event", event)
     window.connect("destroy", lambda w: Gtk.main_quit())

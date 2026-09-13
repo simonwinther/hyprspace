@@ -1,7 +1,6 @@
 """A private headless parent for Hyprland's renderer, with no desktop socket."""
 
 import os
-from pathlib import Path
 import signal
 import subprocess
 import time
@@ -25,7 +24,8 @@ def stop_process_group(process):
 
 
 class BackgroundDisplay:
-    def __init__(self, root, env):
+    def __init__(self, root, env, host):
+        self.host = host
         self.root = root / "parent"
         self.root.mkdir(mode=0o700)
         self.env = env.copy()
@@ -41,7 +41,7 @@ class BackgroundDisplay:
         self.process = None
 
     def start(self):
-        host = Path(__file__).resolve().parents[2] / "build/test-headless"
+        host = self.host
         if not host.is_file():
             raise RuntimeError(
                 "Build the private display host with make integration-fixtures "

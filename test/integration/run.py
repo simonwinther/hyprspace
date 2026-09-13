@@ -11,14 +11,15 @@ import shlex
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
 from background import BackgroundDisplay, stop_process_group
+from artifacts import Snapshot, prune_snapshots
+from protocol import reply
 
 REPO = Path(__file__).resolve().parents[2]
-PLUGIN = REPO / "build/hyprspace.so"
-CLIENT = REPO / "test/integration/client.py"
 
 
 class OutputUnavailable(RuntimeError):
@@ -76,8 +77,19 @@ def validate_runtime(root, saved, metadata, visible):
 
 
 class Suite:
-    def __init__(self, runtime=None, visible=False, plugin=None):
-        self.plugin = Path(plugin or PLUGIN).resolve()
+    def __init__(self, runtime=None, visible=False, plugin=None, snapshot=None, group="all", companions=None, build_dir=None):
+        self.build_dir = Path(build_dir or REPO / "build").resolve()
+        self.plugin = Path(plugin or self.build_dir / "hyprspace.so").resolve()
+        if runtime and build_dir:
+            raise ValueError("--build requires a fresh private session; an existing runtime retains its original generation")
+        self.snapshot = snapshot
+        self.owns_snapshot = snapshot is None and runtime is None
+        self.packaged_plugin = Path(plugin).resolve() if plugin else None
+        self.group = group
+        self.companion_directory = companions
+        self.started = time.time()
+        self.compositor_identity = None
+        self.compositor_pid = None
         if plugin and (runtime or not self.plugin.is_file()):
             raise ValueError("--plugin requires an existing library and a fresh private session")
         self.processes = []
@@ -138,12 +150,12 @@ class Suite:
             raise
         try:
             self.pointer = self.spawn(
-                [str(REPO / "build/test-pointer")],
+                [str(self.artifact("test-pointer"))],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 text=True,
             )
-            assert self.pointer.stdout.readline().strip() == "ready"
+            assert reply(self.pointer) == "ready"
         except BaseException:
             self.finish()
             raise
@@ -152,9 +164,21 @@ class Suite:
         saved = json.loads((self.root / "env.json").read_text())
         metadata = json.loads((self.root / "session.json").read_text())
         validate_runtime(self.root, saved, metadata, self.visible)
+        self.snapshot = Snapshot.attach(self.root)
+        self.plugin = self.artifact("hyprspace.so")
+        self.client = self.artifact("client.py")
         self.env.update(saved)
         self.names = metadata["outputs"]
         self.connected = True
+        self.record_compositor()
+
+    def record_compositor(self):
+        self.compositor_identity = self.data("version")
+        lock = next((self.root / "hypr").glob("*/hyprland.lock"))
+        self.compositor_pid = int(lock.read_text().splitlines()[0])
+
+    def artifact(self, name):
+        return self.snapshot.path(name)
 
     def spawn(self, command, **kwargs):
         kwargs.setdefault("stdout", subprocess.DEVNULL)
@@ -224,12 +248,21 @@ class Suite:
 
     def start(self):
         self.root.chmod(0o700)
+        if self.snapshot is None:
+            prune_snapshots(self.root.parent)
+            self.snapshot = Snapshot.create(
+                self.root, self.build_dir / "integration.json", self.packaged_plugin,
+                installation=self.group == "install", companions=self.companion_directory,
+            )
+        self.plugin = self.artifact("hyprspace.so")
+        self.client = self.artifact("client.py")
+        (self.root / "generation.json").write_text(json.dumps(self.snapshot.record, indent=2))
         if self.visible:
             parent = str(
                 Path(os.environ["XDG_RUNTIME_DIR"]) / os.environ["WAYLAND_DISPLAY"]
             )
         else:
-            self.background = BackgroundDisplay(self.root, self.env)
+            self.background = BackgroundDisplay(self.root, self.env, self.artifact("test-headless"))
             parent = self.background.start()
         self.env["WAYLAND_DISPLAY"] = parent
         config = self.root / "hyprland.conf"
@@ -288,6 +321,7 @@ bindm = SUPER,mouse:273,resizewindow
             DBUS_SESSION_BUS_ADDRESS=(self.root / "dbus").read_text(),
         )
         self.connected = True
+        self.record_compositor()
         (self.root / "env.json").write_text(
             json.dumps(
                 {
@@ -330,7 +364,7 @@ bindm = SUPER,mouse:273,resizewindow
         # Register plugin bindings only after its dispatchers exist. An initial
         # parse error reserves a transient error-bar strip and changes geometry.
         with config.open("a") as output:
-            output.write((REPO / "contrib/bindings.conf").read_text())
+            output.write(self.artifact("bindings.conf").read_text())
             output.write("\nbind = SUPER,L,hyprspace:layoutcycle\n")
         self.ctl("reload")
         wait_for(lambda: len(self.status()["views"]) == 0)
@@ -352,11 +386,7 @@ bindm = SUPER,mouse:273,resizewindow
         assert self.visible, "Desktop windows require --visible"
         # Keep all disposable outputs visible on the host. Fully occluded
         # Wayland windows stop receiving frames, which also stalls teardown.
-        pid = int(
-            next((self.root / "hypr").glob("*/hyprland.lock"))
-            .read_text()
-            .splitlines()[0]
-        )
+        pid = self.compositor_pid
 
         def host_windows():
             return [
@@ -475,7 +505,7 @@ bindm = SUPER,mouse:273,resizewindow
         # Dwindle insertion depends on pointer position and map order. Seed both
         # so background scheduling cannot give native and overview different trees.
         for count, title in enumerate(("hs-A", "hs-B", "hs-C"), 1):
-            self.spawn(["python3", str(CLIENT), title])
+            self.spawn(["python3", str(self.client), title])
             wait_for(lambda: len(self.windows()) == count)
             self.ctl(
                 "dispatch", "focuswindow", "address:" + self.windows()[title]["address"]
@@ -507,12 +537,12 @@ bindm = SUPER,mouse:273,resizewindow
     def button(self, state, button=272):
         self.pointer.stdin.write(f"{button} {state}\n")
         self.pointer.stdin.flush()
-        assert self.pointer.stdout.readline().strip() == "ok"
+        assert reply(self.pointer) == "ok"
 
     def scroll(self, delta=15, discrete=1, axis=0, source=0):
         self.pointer.stdin.write(f"axis {axis} {delta} {discrete} {source}\n")
         self.pointer.stdin.flush()
-        assert self.pointer.stdout.readline().strip() == "ok"
+        assert reply(self.pointer) == "ok"
 
     def drag(self, source, destination, overview, cancel=False, button=272):
         self.move(source)
@@ -540,7 +570,7 @@ bindm = SUPER,mouse:273,resizewindow
     def key(self, code, state):
         self.pointer.stdin.write(f"key {code} {state}\n")
         self.pointer.stdin.flush()
-        assert self.pointer.stdout.readline().strip() == "ok"
+        assert reply(self.pointer) == "ok"
 
     @staticmethod
     def point(window, x=0.35, y=0.4):
@@ -600,7 +630,7 @@ bindm = SUPER,mouse:273,resizewindow
         self.move(self.preview_point("hs-A"))
         entry = self.root / "entry"
         foreground = self.spawn(
-            ["python3", str(REPO / "test/integration/layer.py"), str(entry)]
+            ["python3", str(self.artifact("layer.py")), str(entry)]
         )
         wait_for(lambda: self.layer("hs-foreground"))
         self.move(self.preview_point("hs-B"))
@@ -672,7 +702,7 @@ bindm = SUPER,mouse:273,resizewindow
             ).getbbox()
         self.check("software cursor is visible above overview previews")
         foreground = self.spawn(
-            ["python3", str(REPO / "test/integration/layer.py"), str(entry)]
+            ["python3", str(self.artifact("layer.py")), str(entry)]
         )
         wait_for(lambda: self.layer("hs-foreground"))
         foreground.kill()
@@ -684,7 +714,7 @@ bindm = SUPER,mouse:273,resizewindow
         self.ctl(
             "keyword",
             "bind",
-            f',Print,exec,python3 {shlex.quote(str(REPO/"test/integration/layer.py"))} {shlex.quote(str(entry))} slurp',
+            f',Print,exec,python3 {shlex.quote(str(self.artifact("layer.py")))} {shlex.quote(str(entry))} slurp',
         )
         self.ctl("dispatch", "hyprspace:overview", "on")
         time.sleep(0.15)
@@ -702,7 +732,7 @@ bindm = SUPER,mouse:273,resizewindow
         panel = self.spawn(
             [
                 "python3",
-                str(REPO / "test/integration/layer.py"),
+                str(self.artifact("layer.py")),
                 str(entry),
                 "waybar",
                 "bottom",
@@ -741,7 +771,7 @@ bindm = SUPER,mouse:273,resizewindow
     def protocol(process, message):
         process.stdin.write(message + "\n")
         process.stdin.flush()
-        return process.stdout.readline().strip()
+        return reply(process)
 
     def activation(self):
         from regressions import events, offsets
@@ -752,12 +782,12 @@ bindm = SUPER,mouse:273,resizewindow
         finally:
             self.env.pop("WAYLAND_DEBUG")
         app = self.spawn(
-            [str(REPO / "build/test-activation")],
+            [str(self.artifact("test-activation"))],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True,
         )
-        assert app.stdout.readline().strip() == "ready"
+        assert reply(app) == "ready"
         assert self.protocol(app, "after hs-existing -") == "ok"
         wait_for(lambda: "hs-existing" in self.windows())
         self.ctl(
@@ -854,7 +884,7 @@ bindm = SUPER,mouse:273,resizewindow
         self.move(self.preview_point("hs-B"))
         self.spawn(
             [
-                str(REPO / "build/hyprspace-launch"),
+                str(self.artifact("hyprspace-launch")),
                 "--context",
                 token,
                 "--",
@@ -885,7 +915,7 @@ bindm = SUPER,mouse:273,resizewindow
         token = self.request("capture")
         before = {address: w["workspace"]["id"] for address, w in browsers().items()}
         self.run(
-            str(REPO / "build/hyprspace-launch"),
+            str(self.artifact("hyprspace-launch")),
             "--context",
             token,
             "--",
@@ -970,7 +1000,7 @@ bindm = SUPER,mouse:273,resizewindow
             assert token
             process = self.spawn(
                 [
-                    str(REPO / "build/hyprspace-launch"),
+                    str(self.artifact("hyprspace-launch")),
                     "--context",
                     token,
                     "--",
@@ -997,13 +1027,13 @@ bindm = SUPER,mouse:273,resizewindow
             self.env = previous
 
     def companions(self, directory):
-        directory = directory.resolve()
+        directory = self.artifact("companions/compatibility.json").parent
         assert (directory / "walker").is_file() and (directory / "elephant").is_file()
         record = json.loads((directory / "compatibility.json").read_text())
-        versions = json.loads((REPO / "companion/versions.json").read_text())
+        versions = json.loads(self.artifact("companion-versions.json").read_text())
         for name, spec in versions.items():
             assert all(record[name][key] == value for key, value in spec.items())
-            patch = REPO / f'companion/{name}-{spec["version"]}.patch'
+            patch = self.artifact(f'{name}-{spec["version"]}.patch')
             assert (
                 record[name]["patch_sha256"]
                 == hashlib.sha256(patch.read_bytes()).hexdigest()
@@ -1019,10 +1049,10 @@ bindm = SUPER,mouse:273,resizewindow
         for name in ("hs-walker-one", "hs-walker-two", "hs-walker-mouse"):
             script = bins / name
             script.write_text(
-                f"#!/bin/sh\nsleep .25\nexec python3 {shlex.quote(str(CLIENT))} {name}\n"
+                f"#!/bin/sh\nsleep .25\nexec python3 {shlex.quote(str(self.client))} {name}\n"
             )
             script.chmod(0o755)
-        self.env["PATH"] = f'{bins}:{directory}:{REPO / "build"}:' + self.env["PATH"]
+        self.env["PATH"] = f'{bins}:{directory}:{self.snapshot.root}:' + self.env["PATH"]
         self.env["GTK_A11Y"] = "none"
         self.env["ELEPHANT_PROVIDER_DIR"] = str(directory / "providers")
         config = self.root / "config/elephant"
@@ -1298,7 +1328,7 @@ runner = [
             self.ctl(
                 "keyword",
                 "bind",
-                f"{binding},exec,sleep {delay}; exec python3 {shlex.quote(str(CLIENT))} {title}",
+                f"{binding},exec,sleep {delay}; exec python3 {shlex.quote(str(self.client))} {title}",
             )
         self.move(self.preview_point("hs-A"))
         self.run("wtype", "-M", "logo", "-k", "b", "-m", "logo")
@@ -1434,12 +1464,12 @@ runner = [
         )
         self.spawn(
             [
-                str(REPO / "build/hyprspace-launch"),
+                str(self.artifact("hyprspace-launch")),
                 "--context",
                 token,
                 "--",
                 "python3",
-                str(CLIENT),
+                str(self.client),
                 "hs-transfer",
             ]
         )
@@ -1529,13 +1559,13 @@ runner = [
         self.move(self.preview_point("hs-B"))
         self.spawn(
             [
-                str(REPO / "build/hyprspace-launch"),
+                str(self.artifact("hyprspace-launch")),
                 "--context",
                 token,
                 "--",
                 "sh",
                 "-c",
-                f"sleep .2; exec python3 {shlex.quote(str(CLIENT))} hs-launch",
+                f"sleep .2; exec python3 {shlex.quote(str(self.client))} hs-launch",
             ]
         )
         wait_for(lambda: "hs-launch" in self.windows())
@@ -1557,6 +1587,7 @@ runner = [
         self.check("unload removes private interface and restores window visibility")
 
     def finish(self):
+        error = sys.exc_info()[1]
         try:
             windows = self.windows() if getattr(self, "connected", True) else {}
             for pid in {window["pid"] for window in windows.values()}:
@@ -1581,8 +1612,17 @@ runner = [
             if getattr(self, "background", None):
                 self.background.finish()
         (self.root / "results.json").write_text(
-            json.dumps({"passed": self.checks}, indent=2)
+            json.dumps({"passed": self.checks, "group": self.group,
+                        "status": "timed-out" if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)) or error and "timed out" in str(error)
+                                  else "failed" if error else "passed",
+                        "error": repr(error) if error else None,
+                        "started": self.started, "finished": time.time(),
+                        "compositor": self.compositor_identity,
+                        "compositor_pid": getattr(self, "compositor_pid", None),
+                        "generation": self.snapshot.record if self.snapshot else None}, indent=2)
         )
+        if self.owns_snapshot and self.snapshot:
+            self.snapshot.finish(failed=error is not None)
         print("Artifacts:", self.root, flush=True)
 
 
@@ -1598,6 +1638,7 @@ def main():
     )
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--plugin", type=Path, help="load a packaged library in a fresh private session")
+    parser.add_argument("--build", type=Path, help="build directory containing the integration inventory (default: build/)")
     parser.add_argument(
         "--only",
         choices=(
@@ -1607,6 +1648,12 @@ def main():
             "matrix",
             "foreground",
             "activation",
+            "lock",
+            "dispatchers",
+            "selection",
+            "layout",
+            "resources",
+            "configuration",
             "companions",
             "special",
             "keyboard",
@@ -1652,15 +1699,48 @@ def main():
     )
     for attempt in range(3):
         try:
-            suite = Suite(args.runtime, visible=args.visible, plugin=args.plugin)
+            suite = Suite(args.runtime, visible=args.visible, plugin=args.plugin, group=args.only, companions=args.companions, build_dir=args.build)
             break
         except OutputUnavailable as error:
             if attempt == 2:
                 raise
             print("Retrying unavailable nested output backend:", error, flush=True)
     try:
+        if args.only in ("all", "dispatchers"):
+            import dispatchers
+
+            if args.only == "all" or args.runtime:
+                # The ownership fixture deliberately removes native handlers.
+                # Always give it a disposable table, including with --runtime.
+                isolated = Suite(snapshot=suite.snapshot, group="dispatchers")
+                try:
+                    dispatchers.lifecycle(isolated)
+                finally:
+                    isolated.finish()
+            else:
+                dispatchers.lifecycle(suite)
+        if args.only in ("all", "configuration"):
+            import configuration
+
+            configuration.contracts(suite, wait_for)
+        if args.only in ("all", "lock"):
+            import lock
+
+            lock.lifecycle(suite, wait_for)
         if args.only == "install":
             suite.installation()
+        if args.only in ("all", "resources"):
+            import resources
+
+            resources.limits(suite, wait_for)
+        if args.only in ("all", "layout"):
+            import layout
+
+            layout.reuse(suite, wait_for)
+        if args.only in ("all", "selection"):
+            import selection
+
+            selection.consistency(suite, wait_for)
         if args.only in ("all", "switcher"):
             import switcher
 
