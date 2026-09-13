@@ -25,9 +25,11 @@
 #include <hyprland/src/protocols/InputMethodV2.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
 #include <hyprland/src/plugins/HookSystem.hpp>
+#include <hyprland/src/plugins/PluginSystem.hpp>
 #include <hyprutils/utils/ScopeGuard.hpp>
 
 #include <any>
+#include <dlfcn.h>
 #include <stdexcept>
 
 namespace hyprspace::hooks {
@@ -40,8 +42,40 @@ namespace hyprspace::hooks {
         std::function<bool()>                    ownsKeyboard;
         std::function<bool()>                    launchEnabled;
         std::function<bool(PHLMONITOR)>          promotePanels;
-        decltype(CKeybindManager::m_dispatchers) dispatchers;
-        int                                      dispatchDepth = 0;
+
+        using Dispatcher = decltype(CKeybindManager::m_dispatchers)::mapped_type;
+        struct SDispatcherRegistration {
+            Dispatcher original;
+            uint64_t   id;
+        };
+        struct SDispatcherWrapper {
+            Dispatcher callback;
+            uint64_t   registration;
+            SDispatchResult operator()(std::string args) const {
+                return callback(std::move(args));
+            }
+        };
+        std::unordered_map<std::string, SDispatcherRegistration> dispatchers;
+        uint64_t nextRegistration = 0;
+        int      dispatchDepth    = 0;
+
+        bool compositorDispatcher(const std::string& name, const Dispatcher& dispatcher) {
+            // Registration names also cover the legacy API, whose trampoline
+            // lives in Hyprland but captures a plugin-owned callable.
+            for (const auto& plugin : g_pPluginSystem->getAllPlugins())
+                if (std::ranges::contains(plugin->m_registeredDispatchers, name))
+                    return false;
+
+            // Unregistered foreign replacements are not safe to retain either.
+            // Native closures in the supported compositor have executable-owned
+            // RTTI; a plain function pointer needs its code owner checked too.
+            const void* owner = &dispatcher.target_type();
+            if (const auto function = dispatcher.target<SDispatchResult (*)(std::string)>())
+                owner = reinterpret_cast<const void*>(*function);
+            Dl_info executable{}, provider{};
+            return dladdr(reinterpret_cast<const void*>(__hyprland_api_get_hash), &executable) && dladdr(owner, &provider) &&
+                   executable.dli_fbase == provider.dli_fbase;
+        }
 
         struct SKey {
             WP<IKeyboard> keyboard;
@@ -692,10 +726,11 @@ namespace hyprspace::hooks {
             imeModsHook   = hook("sendMods", "CInputMethodKeyboardGrabV2::sendMods(", reinterpret_cast<void*>(imeModifiers));
             mouseBindHook = hook("ensureMouseBindState", "CKeybindManager::ensureMouseBindState(", reinterpret_cast<void*>(ensureMouseBindState));
             for (auto& [name, dispatcher] : g_pKeybindManager->m_dispatchers) {
-                if (name.starts_with("hyprspace:") || name == "movecursor")
+                if (name.starts_with("hyprspace:") || name == "movecursor" || !compositorDispatcher(name, dispatcher))
                     continue;
-                dispatchers.emplace(name, dispatcher);
-                dispatcher = [name, original = dispatcher](std::string args) {
+                const auto registration = ++nextRegistration;
+                dispatchers.emplace(name, SDispatcherRegistration{dispatcher, registration});
+                auto callback = [name, original = dispatcher](std::string args) {
                     if (dispatchDepth)
                         return original(std::move(args));
                     const bool owned = keyboardOwned();
@@ -739,6 +774,7 @@ namespace hyprspace::hooks {
                         session().followKeyboardFocus();
                     return result;
                 };
+                dispatcher = SDispatcherWrapper{std::move(callback), registration};
             }
         } catch (...) {
             uninstall();
@@ -752,8 +788,14 @@ namespace hyprspace::hooks {
         ownsKeyboard  = {};
         launchEnabled = {};
         syncKeyboardFocus();
-        for (auto& [name, dispatcher] : dispatchers)
-            g_pKeybindManager->m_dispatchers[name] = std::move(dispatcher);
+        for (auto& [name, registration] : dispatchers) {
+            const auto current = g_pKeybindManager->m_dispatchers.find(name);
+            if (current == g_pKeybindManager->m_dispatchers.end())
+                continue;
+            const auto wrapper = current->second.target<SDispatcherWrapper>();
+            if (wrapper && wrapper->registration == registration.id)
+                current->second = std::move(registration.original);
+        }
         dispatchers.clear();
         for (auto handle : {keyHook, inputHook, focusHook, coordsHook, warpHook, pointerHook, imeModsHook, axisHook, mouseBindHook})
             if (handle)
