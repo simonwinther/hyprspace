@@ -61,6 +61,8 @@ namespace hyprspace {
         };
 
         collect();
+        for (auto& entry : m_entries)
+            updateWindowLayout(entry);
         computeLayout();
 
         // Start on the workspace the user is already looking at.
@@ -165,8 +167,6 @@ namespace hyprspace {
         }
 
         std::ranges::sort(m_entries, [](const SEntry& a, const SEntry& b) { return a.workspaceId < b.workspaceId; });
-        for (auto& entry : m_entries)
-            updateWindowLayout(entry);
     }
 
     void COverview::refreshWindows() {
@@ -191,6 +191,14 @@ namespace hyprspace {
             }
             m_entries = std::move(previous);
         } else {
+            for (auto& entry : m_entries) {
+                const auto old = std::ranges::find_if(previous, [&](const auto& e) {
+                    return e.workspaceId == entry.workspaceId && e.workspaceName == entry.workspaceName;
+                });
+                if (old != previous.end())
+                    entry.windowLayout = std::move(old->windowLayout);
+                updateWindowLayout(entry);
+            }
             computeLayout();
             if (selected)
                 selectTarget(*selected);
@@ -198,6 +206,7 @@ namespace hyprspace {
     }
 
     void COverview::updateWindowLayout(SEntry& entry) {
+        ++m_layoutCounters.windowUpdates;
         std::vector<SOverviewWindowInput> input;
         entry.drawOrder.clear();
         for (size_t i = 0; i < entry.windows.size(); ++i) {
@@ -216,7 +225,17 @@ namespace hyprspace {
         // A focus commit can change fullscreen and desktop geometry. Keep the
         // overview endpoint fixed throughout the closing animation.
         if (!m_closing) {
-            const auto LAYOUT    = layoutOverviewWindows(input, m_usable, session().drag.active() ? entry.previewColumns : 0);
+            const size_t columns = session().drag.active() ? entry.previewColumns : 0;
+            // Cache only geometry. Window identities, desktop bounds and draw
+            // order are refreshed above, including during closing animations.
+            if (!entry.windowLayout || entry.windowLayout->input != input || entry.windowLayout->usable != m_usable || entry.windowLayout->fixedColumns != columns) {
+                ++m_layoutCounters.windowLayouts;
+                if (input.size() > 1 && std::ranges::any_of(input, [](const auto& window) { return window.fullscreen; }))
+                    ++m_layoutCounters.spreadLayouts;
+                auto result        = layoutOverviewWindows(input, m_usable, columns);
+                entry.windowLayout = SWindowLayoutState{std::move(input), m_usable, columns, std::move(result)};
+            }
+            const auto& LAYOUT   = entry.windowLayout->result;
             entry.spread         = LAYOUT.spread;
             entry.previewColumns = LAYOUT.columns;
             for (size_t i = 0; i < entry.drawOrder.size(); ++i)
@@ -229,40 +248,49 @@ namespace hyprspace {
     }
 
     void COverview::computeLayout() {
-        // Entries are replaced on every refresh, including frames where no
-        // workspace remains on this output. Never retain keys into the old list.
-        m_tiles.clear();
+        // Tile keys are indices into the ordered entries. Empty membership must
+        // invalidate both the keys and the cached geometry.
         m_animationAnchor = -1;
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR || m_entries.empty()) {
+            m_tiles.clear();
+            m_tileLayoutKey.reset();
             m_selected = m_hovered = -1;
             m_clickedWindow.reset();
             m_hoveredWindow.reset();
             return;
         }
 
-        std::vector<STileInput> input;
-        input.reserve(m_entries.size());
-        for (size_t i = 0; i < m_entries.size(); ++i)
-            input.push_back(STileInput{.key = i, .workspaceId = m_entries[i].workspaceId});
+        const STileLayoutKey key{m_usable, m_entries.size(), config::overviewPadding(), config::overviewGap(), config::overviewShowLabels()};
+        if (!m_tileLayoutKey || *m_tileLayoutKey != key) {
+            std::vector<STileInput> input;
+            input.reserve(m_entries.size());
+            for (size_t i = 0; i < m_entries.size(); ++i)
+                input.push_back(STileInput{.key = i, .workspaceId = m_entries[i].workspaceId});
 
-        SLayoutParams params;
-        params.screenW    = m_usable.w;
-        params.screenH    = m_usable.h;
-        params.padding    = config::overviewPadding();
-        params.gap        = config::overviewGap();
-        params.aspect     = m_usable.h > 0 ? m_usable.w / m_usable.h : 16.0 / 9.0;
-        params.labelSpace = config::overviewShowLabels() ? 34.0 : 0.0;
+            SLayoutParams params;
+            params.screenW    = m_usable.w;
+            params.screenH    = m_usable.h;
+            params.padding    = key.padding;
+            params.gap        = key.gap;
+            params.aspect     = m_usable.h > 0 ? m_usable.w / m_usable.h : 16.0 / 9.0;
+            params.labelSpace = key.labels ? 34.0 : 0.0;
 
-        auto result = layout(input, params);
-        m_tiles     = std::move(result.tiles);
+            ++m_layoutCounters.gridLayouts;
+            auto result = layout(input, params);
+            m_tiles     = std::move(result.tiles);
+            for (auto& tile : m_tiles) {
+                tile.box.x += m_usable.x;
+                tile.box.y += m_usable.y;
+            }
+            m_tileLayoutKey = key;
+        }
         m_selected  = m_tiles.empty() ? -1 : std::clamp(m_selected, 0, static_cast<int>(m_tiles.size()) - 1);
 
-        for (auto& t : m_tiles) {
-            t.box.x += m_usable.x;
-            t.box.y += m_usable.y;
+        // Workspace identities and the animation anchor can change even when
+        // the ordered grid's count and dimensions remain the same.
+        for (const auto& t : m_tiles)
             m_entries[t.key].target = t.box;
-        }
 
         int active = -1;
         for (size_t i = 0; i < m_entries.size(); ++i) {
@@ -874,6 +902,7 @@ namespace hyprspace {
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR)
             return;
+        ++m_layoutCounters.frames;
 
         // Every frame of the close, not just the moment of the commit: Hyprland
         // may not have started its workspace slide yet when the selection is
@@ -888,7 +917,8 @@ namespace hyprspace {
         m_needsBlur = false;
 
         for (auto& e : m_entries) {
-            updateWindowLayout(e);
+            if (m_closing)
+                updateWindowLayout(e);
             for (auto& slot : e.windows) {
                 const auto W = slot.window.lock();
                 if (!W || !W->m_isMapped || W->isHidden() || !W->m_workspace)

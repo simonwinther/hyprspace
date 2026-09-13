@@ -10,6 +10,7 @@ namespace hyprspace {
     struct SOverviewWindowInput {
         SBoxF desktop;
         bool  fullscreen = false;
+        bool operator==(const SOverviewWindowInput&) const = default;
     };
 
     struct SOverviewWindowLayout {

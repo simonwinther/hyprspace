@@ -311,7 +311,11 @@ namespace hyprspace::launch {
                                              {"w", box.w},
                                              {"h", box.h}});
                         }
-                        result["views"].push_back({{"monitor", mon->m_name}, {"tiles", tiles}});
+                        const auto& counts = view->layoutCounters();
+                        result["views"].push_back({{"monitor", mon->m_name}, {"tiles", tiles},
+                                                   {"layout", {{"frames", counts.frames}, {"window_updates", counts.windowUpdates},
+                                                               {"window_layouts", counts.windowLayouts}, {"spread_layouts", counts.spreadLayouts},
+                                                               {"grid_layouts", counts.gridLayouts}}}});
                     }
                 }
                 const auto& captures = captureResources();

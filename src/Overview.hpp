@@ -9,6 +9,7 @@
 #include "Geometry.hpp"
 #include "Input.hpp"
 #include "OverviewSession.hpp"
+#include "OverviewLayout.hpp"
 #include "PreviewStyle.hpp"
 #include "Scrolling.hpp"
 #include "globals.hpp"
@@ -52,6 +53,13 @@ namespace hyprspace {
             return m_needsBlur;
         }
 
+        struct SLayoutCounters {
+            uint64_t frames = 0, windowUpdates = 0, windowLayouts = 0, spreadLayouts = 0, gridLayouts = 0;
+        };
+        const SLayoutCounters& layoutCounters() const {
+            return m_layoutCounters;
+        }
+
         PHLMONITOR monitor() const {
             return m_monitor.lock();
         }
@@ -85,18 +93,26 @@ namespace hyprspace {
             bool                        blur        = false;
         };
 
+        struct SWindowLayoutState {
+            std::vector<SOverviewWindowInput> input;
+            SBoxF                            usable;
+            size_t                           fixedColumns;
+            SOverviewWindowLayout            result;
+        };
+
         // One workspace tile.
         struct SEntry {
-            long                     workspaceId = 0;
-            std::string              name;
-            std::string              workspaceName;
-            std::vector<SWindowSlot> windows;
-            std::vector<size_t>      drawOrder;
-            size_t                   previewColumns = 0;
-            bool                     spread         = false;
-            bool                     isActive       = false;
-            SBoxF                    target         = {}; // final cell
-            SBoxF                    start          = {}; // where it animates from
+            long                              workspaceId = 0;
+            std::string                       name;
+            std::string                       workspaceName;
+            std::vector<SWindowSlot>           windows;
+            std::vector<size_t>                drawOrder;
+            std::optional<SWindowLayoutState> windowLayout;
+            size_t                            previewColumns = 0;
+            bool                              spread         = false;
+            bool                              isActive       = false;
+            SBoxF                             target         = {}; // final cell
+            SBoxF                             start          = {}; // where it animates from
         };
 
         void collect();
@@ -141,7 +157,17 @@ namespace hyprspace {
         std::vector<SEntry> m_entries;
         std::vector<STile>  m_tiles;
 
-        CWindowCapture m_capture;
+        struct STileLayoutKey {
+            SBoxF  usable;
+            size_t count;
+            int    padding, gap;
+            bool   labels;
+            bool operator==(const STileLayoutKey&) const = default;
+        };
+        std::optional<STileLayoutKey> m_tileLayoutKey;
+
+        CWindowCapture  m_capture;
+        SLayoutCounters m_layoutCounters;
 
         int  m_selected        = -1;
         int  m_hovered         = -1;

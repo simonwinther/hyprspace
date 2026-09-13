@@ -16,6 +16,7 @@ namespace hyprspace {
 
     struct SBoxF {
         double x = 0, y = 0, w = 0, h = 0;
+        bool operator==(const SBoxF&) const = default;
 
         double cx() const {
             return x + w / 2.0;
