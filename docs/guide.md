@@ -322,6 +322,30 @@ XDG directory precedence, then lexical desktop ID. `Exec` is not used for icon
 matching. Sorting file paths also makes the specification's otherwise undefined
 `foo-bar.desktop` versus `foo/bar.desktop` collision deterministic.
 
+#### Resource limits
+
+Capture allocation failures retain a valid previous image. Without one, a
+clipped backing rectangle represents the window until capture succeeds. Failed
+allocations wait one second before retrying, even during animated resizing.
+Captures larger than 32 MiB are represented by this fallback; all captures
+together are limited to 256 MiB of RGBA pixels and 256 live textures. Existing full-resolution captures
+within those limits retain the normal output scale and rotation behavior.
+
+Text and icon textures share a 16 MiB budget and at most 512 live textures/cache entries.
+Least recently used entries are evicted first. Textures referenced by a frame
+remain valid and count against the budget until that frame releases them. If
+those references fill the budget, new labels/icons are omitted temporarily.
+The final overlay's teardown drops cached GPU resources. Decoded icons can
+remain in the existing 16 MiB / 128-entry CPU cache; icon path lookups are limited
+to 512 entries. Text keys are limited to 4096 UTF-8 bytes, and individual CPU
+rasters to 4 MiB and 8192 pixels per dimension.
+
+The private diagnostic `status` response includes `resources` counters for live
+and peak pixel bytes, cache entries, hits, misses, evictions, allocation failures
+and capture fallbacks. Byte counts estimate pixel storage; they exclude driver
+metadata. The resource integration fixture exercises title/width churn, retained
+frame references, failed GL allocation and repeated overlay close/reopen.
+
 ### Animations
 
 The transitions reuse Hyprland's own animation curves rather than inventing

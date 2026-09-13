@@ -12,6 +12,20 @@
 
 namespace hyprspace {
 
+    std::string boundedText(const std::string& text) {
+        constexpr size_t LIMIT = 4096;
+        if (text.size() <= LIMIT)
+            return text;
+        size_t end = LIMIT;
+        while (end && (static_cast<unsigned char>(text[end]) & 0xc0) == 0x80)
+            --end;
+        return text.substr(0, end);
+    }
+
+    static bool boundedRaster(int w, int h) {
+        return w > 0 && h > 0 && w <= MAX_RASTER_DIMENSION && h <= MAX_RASTER_DIMENSION && static_cast<size_t>(w) <= MAX_RASTER_BYTES / 4 / static_cast<size_t>(h);
+    }
+
     static SImage fromSurface(cairo_surface_t* surf) {
         SImage out;
         if (!surf || cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS)
@@ -36,7 +50,7 @@ namespace hyprspace {
     static PangoLayout* makeLayout(cairo_t* cr, const std::string& text, const std::string& font, int maxWidth, double scale = 1.0) {
         PangoLayout* layout = pango_cairo_create_layout(cr);
 
-        PangoFontDescription* desc = pango_font_description_from_string(font.c_str());
+        PangoFontDescription* desc = pango_font_description_from_string(boundedText(font).c_str());
 
         // Scale the point size rather than the cairo matrix so hinting and
         // metrics are computed at the real output resolution.
@@ -44,20 +58,20 @@ namespace hyprspace {
             const int size = pango_font_description_get_size(desc);
             if (size > 0) {
                 if (pango_font_description_get_size_is_absolute(desc))
-                    pango_font_description_set_absolute_size(desc, size * scale);
+                    pango_font_description_set_absolute_size(desc, std::min(size * scale, static_cast<double>(MAX_RASTER_DIMENSION * PANGO_SCALE)));
                 else
-                    pango_font_description_set_size(desc, static_cast<gint>(size * scale));
+                    pango_font_description_set_size(desc, static_cast<gint>(std::min(size * scale, static_cast<double>(MAX_RASTER_DIMENSION * PANGO_SCALE))));
             }
         }
 
         pango_layout_set_font_description(layout, desc);
         pango_font_description_free(desc);
 
-        pango_layout_set_text(layout, text.c_str(), -1);
+        pango_layout_set_text(layout, boundedText(text).c_str(), -1);
         pango_layout_set_single_paragraph_mode(layout, TRUE);
 
         if (maxWidth > 0) {
-            pango_layout_set_width(layout, static_cast<int>(maxWidth * scale) * PANGO_SCALE);
+            pango_layout_set_width(layout, static_cast<int>(std::min(maxWidth * scale, static_cast<double>(MAX_RASTER_DIMENSION))) * PANGO_SCALE);
             pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
         }
 
@@ -66,6 +80,8 @@ namespace hyprspace {
 
     void measureText(const std::string& text, const std::string& font, int& outW, int& outH, double scale) {
         outW = outH = 0;
+        if (!std::isfinite(scale) || scale <= 0)
+            return;
 
         cairo_surface_t* tmp = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
         cairo_t*         cr  = cairo_create(tmp);
@@ -79,7 +95,7 @@ namespace hyprspace {
     }
 
     SImage renderText(const std::string& text, const std::string& font, const SRgba& color, int maxWidth, double scale) {
-        if (text.empty())
+        if (text.empty() || !std::isfinite(scale) || scale <= 0)
             return {};
 
         int w = 0, h = 0;
@@ -93,7 +109,7 @@ namespace hyprspace {
             cairo_surface_destroy(tmp);
         }
 
-        if (w <= 0 || h <= 0)
+        if (!boundedRaster(w, h))
             return {};
 
         cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
@@ -198,10 +214,10 @@ namespace hyprspace {
     }
 
     SImage loadIcon(const std::string& path, int size) {
-        if (path.empty() || size <= 0)
+        if (path.empty() || !boundedRaster(size, size))
             return {};
 
-        const auto dot = path.find_last_of('.');
+        const auto  dot = path.find_last_of('.');
         std::string ext = dot == std::string::npos ? "" : path.substr(dot);
         std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
@@ -222,7 +238,7 @@ namespace hyprspace {
     }
 
     SImage placeholderIcon(const std::string& letters, const std::string& font, int size, const SRgba& fg, const SRgba& bg) {
-        if (size <= 0)
+        if (!boundedRaster(size, size))
             return {};
 
         cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size);

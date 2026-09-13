@@ -1006,6 +1006,27 @@ static void testImageCache() {
     CHECK(!valid.ok());
 }
 
+static void testRasterBounds() {
+    section("raster: bounded title keys, dimensions and allocations");
+    CHECK(boundedText("short title") == "short title");
+    CHECK(boundedText(std::string(100000, 'x')).size() == 4096);
+    CHECK(boundedText(std::string(4095, 'x') + "\xe2\x82\xac" + "tail").size() == 4095);
+    CHECK(!renderText("title", "Sans 12", {}, 100, std::numeric_limits<double>::infinity()).ok());
+    CHECK(!renderText("title", "Sans 12", {}, 100, 0).ok());
+    CHECK(!renderText(std::string(100, 'M'), "Sans 4096", {}, 8192).ok());
+    CHECK(!placeholderIcon("X", "Sans 12", 1025, {}, {}).ok());
+    CHECK(!loadIcon("missing.png", std::numeric_limits<int>::max()).ok());
+    const auto wide = renderText(std::string(100000, 'x'), "Sans 12", {}, std::numeric_limits<int>::max(), 2);
+    CHECK(wide.ok() && wide.w <= MAX_RASTER_DIMENSION && wide.data.size() <= MAX_RASTER_BYTES);
+    CDesktopDb db;
+    db.setIconRoots({});
+    for (int i = 0; i < 1500; ++i)
+        CHECK(!db.resolveIconPath("missing-icon-" + std::to_string(i)));
+    CHECK(db.iconCacheSize() == CDesktopDb::MAX_ICON_LOOKUPS);
+    CHECK(!db.resolveIconPath(std::string(10000, 'x')));
+    CHECK(db.iconCacheSize() == CDesktopDb::MAX_ICON_LOOKUPS);
+}
+
 static void testPreviewStyle() {
     section("preview: preserve window opacity and fade workspace plates out before the desktop hand-off");
 
@@ -1352,7 +1373,19 @@ static void testInteraction() {
     CHECK(!launches.consume("lock", now));
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2) {
+        const std::string group = argv[1];
+        if (group == "desktop")
+            testDesktopPrecedence();
+        else if (group == "resources") {
+            testImageCache();
+            testRasterBounds();
+        } else
+            return 2;
+        std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
+        return g_failures == 0 ? 0 : 1;
+    }
     testResizeBounds();
     testInteraction();
     std::printf("hyprspace test suite\n\n");
@@ -1382,6 +1415,7 @@ int main() {
     testScrollViewport();
     testSwitcherLayout();
     testImageCache();
+    testRasterBounds();
     testPreviewStyle();
     testOverviewWindowLayout();
     testFullscreenPreviewGeometry();

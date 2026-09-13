@@ -12,6 +12,10 @@
 
 namespace hyprspace {
 
+    inline constexpr size_t MAX_RASTER_BYTES     = 4 * 1024 * 1024;
+    inline constexpr int    MAX_RASTER_DIMENSION = 8192;
+    std::string             boundedText(const std::string& text);
+
     // Premultiplied ARGB32, little-endian byte order (B,G,R,A) — matches both
     // CAIRO_FORMAT_ARGB32 and DRM_FORMAT_ARGB8888 on LE hosts.
     struct SImage {

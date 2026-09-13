@@ -352,8 +352,10 @@ namespace hyprspace {
         }
 
         const std::string cacheKey = iconName + "@" + std::to_string(preferredSize);
-        if (auto it = m_iconCache.find(cacheKey); it != m_iconCache.end())
-            return it->second.empty() ? std::nullopt : std::optional<std::string>(it->second);
+        if (auto it = m_iconCache.find(cacheKey); it != m_iconCache.end()) {
+            it->second.used = ++m_iconSequence;
+            return it->second.path.empty() ? std::nullopt : std::optional<std::string>(it->second.path);
+        }
 
         if (!m_iconIndexReady)
             indexIcons();
@@ -384,7 +386,11 @@ namespace hyprspace {
             }
         }
 
-        m_iconCache[cacheKey] = bestPath;
+        if (cacheKey.size() <= 4096) {
+            if (m_iconCache.size() >= MAX_ICON_LOOKUPS)
+                m_iconCache.erase(std::ranges::min_element(m_iconCache, {}, [](const auto& entry) { return entry.second.used; }));
+            m_iconCache.emplace(cacheKey, SIconLookup{bestPath, ++m_iconSequence});
+        }
         if (bestPath.empty())
             return std::nullopt;
         return bestPath;

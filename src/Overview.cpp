@@ -1036,8 +1036,6 @@ namespace hyprspace {
                     continue;
 
                 auto t = m_capture.textureFor(W);
-                if (!t)
-                    continue;
 
                 const auto  GEOMETRY = geometryFor(entry, slot);
                 const auto& b        = GEOMETRY.box;
@@ -1045,7 +1043,15 @@ namespace hyprspace {
                     continue;
 
                 const float VISIBILITY = overviewWindowVisibility(W->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN), ANCHOR, PROGRESS);
-                windowTexture(W, t, b, ALPHA * VISIBILITY, round, slot.blur, GEOMETRY.clip);
+                if (t)
+                    windowTexture(W, t, b, ALPHA * VISIBILITY, round, slot.blur, GEOMETRY.clip);
+                else {
+                    const auto&  clip = GEOMETRY.clip;
+                    const double left = std::max(b.x, clip.x), top = std::max(b.y, clip.y);
+                    const SBoxF  fallback{left, top, std::min(b.x + b.w, clip.x + clip.w) - left, std::min(b.y + b.h, clip.y + clip.h) - top};
+                    if (fallback.w > 0 && fallback.h > 0)
+                        rect(fallback, config::overviewTitleBgColor().modifyA(ALPHA * VISIBILITY), round);
+                }
 
                 const bool   FULLSCREEN = slot.fullscreen != Fullscreen::FSMODE_NONE;
                 const auto&  target     = session().selection.command();

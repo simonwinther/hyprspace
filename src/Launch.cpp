@@ -1,4 +1,5 @@
 #include "Launch.hpp"
+#include "Texture.hpp"
 
 #include "CompositorHooks.hpp"
 #include "Overview.hpp"
@@ -313,6 +314,30 @@ namespace hyprspace::launch {
                         result["views"].push_back({{"monitor", mon->m_name}, {"tiles", tiles}});
                     }
                 }
+                const auto& captures = captureResources();
+                const auto& tex      = CTextureCache::resources();
+                result["resources"]  = {{"captures",
+                                         {{"bytes", captures.bytes},
+                                          {"peak_bytes", captures.peakBytes},
+                                          {"limit_bytes", SCaptureResources::MAX_BYTES},
+                                          {"per_capture_bytes", SCaptureResources::MAX_CAPTURE_BYTES},
+                                          {"limit_entries", SCaptureResources::MAX_CAPTURES},
+                                          {"attempts", captures.attempts},
+                                          {"failures", captures.failures},
+                                          {"fallbacks", captures.fallbacks},
+                                          {"previous", captures.previous},
+                                          {"omitted", captures.omitted}}},
+                                        {"textures",
+                                         {{"entries", textures().size()},
+                                          {"peak_entries", tex.peakEntries},
+                                          {"limit_entries", CTextureCache::SResources::MAX_ENTRIES},
+                                          {"bytes", tex.bytes},
+                                          {"peak_bytes", tex.peakBytes},
+                                          {"limit_bytes", CTextureCache::SResources::MAX_BYTES},
+                                          {"hits", tex.hits},
+                                          {"misses", tex.misses},
+                                          {"evictions", tex.evictions},
+                                          {"failures", tex.failures}}}};
                 result["windows"] = nlohmann::json::array();
                 for (const auto& w : Desktop::windowState()->windows())
                     if (w->m_isMapped)

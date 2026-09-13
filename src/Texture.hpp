@@ -9,7 +9,7 @@
 
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
+#include <chrono>
 
 namespace hyprspace {
 
@@ -20,6 +20,12 @@ namespace hyprspace {
     // that GPU memory is not held while idle.
     class CTextureCache {
       public:
+        struct SResources {
+            static constexpr size_t MAX_BYTES   = 16 * 1024 * 1024;
+            static constexpr size_t MAX_ENTRIES = 512;
+            size_t                  bytes = 0, peakBytes = 0, peakEntries = 0, hits = 0, misses = 0, evictions = 0, failures = 0;
+        };
+        static const SResources& resources();
         struct SIconTexture {
             SP<Render::ITexture> texture;
             bool                 pending = false;
@@ -40,9 +46,16 @@ namespace hyprspace {
         }
 
       private:
-        std::unordered_map<std::string, SP<Render::ITexture>> m_cache;
-        std::unordered_set<std::string>                       m_provisionalIcons;
-        CImageCache                                           m_iconImages;
+        struct SEntry {
+            SP<Render::ITexture> texture;
+            size_t               used        = 0;
+            bool                 provisional = false;
+        };
+        SP<Render::ITexture>                    store(const std::string& key, const SImage& image, bool provisional = false);
+        std::unordered_map<std::string, SEntry> m_cache;
+        size_t                                  m_sequence = 0;
+        std::chrono::steady_clock::time_point   m_retryAfter{};
+        CImageCache                             m_iconImages;
     };
 
     CTextureCache& textures();

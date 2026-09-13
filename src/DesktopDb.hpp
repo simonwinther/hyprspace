@@ -75,6 +75,10 @@ namespace hyprspace {
         // once, including hidden/iconless overrides. Alias ties use directory
         // precedence, then lexical desktop ID, independently of scan order.
         void                    addEntry(const SDesktopEntry& e, size_t directoryPriority = 0);
+        static constexpr size_t MAX_ICON_LOOKUPS = 512;
+        size_t                  iconCacheSize() const {
+            return m_iconCache.size();
+        }
 
       private:
         struct SIconFile {
@@ -97,7 +101,12 @@ namespace hyprspace {
         std::unordered_set<std::string> m_canonicalIds;
         std::map<std::string, SAlias>   m_byClass;
         std::vector<std::string>        m_iconRoots;
-        mutable std::map<std::string, std::string>                      m_iconCache; // "name@size" -> path
+        struct SIconLookup {
+            std::string path;
+            size_t      used = 0;
+        };
+        mutable std::map<std::string, SIconLookup>                      m_iconCache;
+        mutable size_t                                                  m_iconSequence = 0;
         mutable std::unordered_map<std::string, std::vector<SIconFile>> m_iconIndex;
         mutable bool                                                    m_iconIndexReady = false;
     };
