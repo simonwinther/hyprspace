@@ -13,6 +13,7 @@
 #include "Input.hpp"
 #include "Overview.hpp"
 #include "OverviewSession.hpp"
+#include "OverlayPolicy.hpp"
 #include "CompositorHooks.hpp"
 #include "Launch.hpp"
 #include <hyprland/src/layout/algorithm/Algorithm.hpp>
@@ -66,6 +67,7 @@ using namespace hyprspace;
 namespace {
 
     std::unique_ptr<CSwitcher> g_switcher;
+    bool                      g_sessionLocked = true;
 
     // Print Screen starts an external layer-shell UI (Omarchy uses a frozen
     // hyprpicker surface plus slurp). While that UI exists, it must sit above
@@ -111,6 +113,7 @@ namespace {
         CHyprSignalListener layerOpened;
         CHyprSignalListener layerClosed;
         CHyprSignalListener sessionLock;
+        CHyprSignalListener sessionUnlock;
     };
 
     SListeners g_listeners;
@@ -146,7 +149,7 @@ namespace {
     }
 
     bool ownsInput() {
-        return overviewLive() || switcherLive();
+        return overlaysAllowed() && (overviewLive() || switcherLive());
     }
 
     COverview* overviewOn(const PHLMONITOR& monitor) {
@@ -705,7 +708,7 @@ namespace {
     // ------------------------------------------------------------ render ----
 
     void onRenderPreChecks(PHLMONITOR monitor) {
-        if (!monitor || (!overviewOn(monitor) && !(g_switcher && g_switcher->monitor() == monitor)))
+        if (!overlaysAllowed() || !monitor || (!overviewOn(monitor) && !(g_switcher && g_switcher->monitor() == monitor)))
             return;
 
         // A solitary fullscreen client bypasses the workspace render stages.
@@ -716,6 +719,8 @@ namespace {
     }
 
     void onRenderPre(PHLMONITOR monitor) {
+        if (!overlaysAllowed())
+            return;
         hooks::syncKeyboardFocus();
         if (overviewLive()) {
             const bool own = !yieldingInput() && !foregroundPointer();
@@ -756,7 +761,7 @@ namespace {
     }
 
     void onRenderStage(eRenderStage stage) {
-        if (!active())
+        if (!overlaysAllowed() || !active())
             return;
 
         // Hidden real windows no longer request the wallpaper blur themselves.
@@ -816,14 +821,16 @@ namespace {
         // as open, otherwise a quick second press would be swallowed instead of
         // reopening.
 
+        if (args == "off") {
+            closeOverviews();
+            return {.success = true};
+        }
+        if (!overlaysAllowed())
+            return {.success = false, .error = "hyprspace: session is locked"};
+
         if (overviewLive()) {
             if (args != "on")
                 closeOverviews();
-            return {.success = true};
-        }
-
-        if (args == "off") {
-            closeOverviews();
             return {.success = true};
         }
 
@@ -856,6 +863,8 @@ namespace {
     }
 
     SDispatchResult dispatchSwitch(std::string args) {
+        if (!overlaysAllowed())
+            return {.success = false, .error = "hyprspace: session is locked"};
         const bool FORWARD = args != "prev" && args != "backward";
 
         closeOverviews();
@@ -929,6 +938,10 @@ namespace {
 
 } // namespace
 
+bool hyprspace::overlaysAllowed() {
+    return !g_sessionLocked;
+}
+
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
 }
@@ -953,6 +966,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (!BUILT.starts_with("efb50993780079460b0cbed1363e2166a2de1d9f_"))
         throw std::runtime_error("[hyprspace] interactive hooks require Hyprland 0.56.2; see docs/interactive.md");
 
+    g_sessionLocked = g_pSessionLockManager->isSessionLocked();
     g_overviewSession = std::make_unique<COverviewSession>();
     config::registerAll();
 
@@ -991,14 +1005,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_listeners.layerClosed     = bus.layer.closed.listen(onLayerClosed);
 
     g_listeners.sessionLock = g_pSessionLockManager->m_events.lock.listen([] {
+        g_sessionLocked = true;
         destroyOverviews();
         destroySwitcher();
         finishExternalUi();
         launch::clear();
     });
-    hooks::install([] { return overviewLive() && !switcherLive() && !yieldingInput() && !foregroundKeyboard(); },
-                   [] { return overviewLive() && !switcherLive() && !yieldingInput(); },
-                   [](PHLMONITOR monitor) { return isOverlayMonitor(monitor) && !yieldingInput(); });
+    g_listeners.sessionUnlock = g_pSessionLockManager->m_events.unlock.listen([] { g_sessionLocked = false; });
+    hooks::install([] { return overlaysAllowed() && overviewLive() && !switcherLive() && !yieldingInput() && !foregroundKeyboard(); },
+                   [] { return overlaysAllowed() && overviewLive() && !switcherLive() && !yieldingInput(); },
+                   [](PHLMONITOR monitor) { return overlaysAllowed() && isOverlayMonitor(monitor) && !yieldingInput(); });
     try {
         launch::install();
     } catch (...) {

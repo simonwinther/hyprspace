@@ -1,4 +1,5 @@
 #include "Launch.hpp"
+#include "OverlayPolicy.hpp"
 #include "Texture.hpp"
 
 #include "CompositorHooks.hpp"
@@ -14,7 +15,6 @@
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/layout/algorithm/Algorithm.hpp>
 #include <hyprland/src/layout/space/Space.hpp>
-#include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/TokenManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/protocols/XDGActivation.hpp>
@@ -104,7 +104,7 @@ namespace hyprspace::launch {
         }
 
         std::string capture(const std::optional<SOverviewTarget>& target) {
-            if (!session().live() || g_pSessionLockManager->isSessionLocked() || !target)
+            if (!session().live() || !overlaysAllowed() || !target)
                 return {};
             SContext context{.target = *target};
             for (const auto& w : Desktop::windowState()->windows())
@@ -116,7 +116,7 @@ namespace hyprspace::launch {
 
         std::string consume(const std::string& token) {
             prune();
-            if (launches.size() >= CLaunchContexts<SContext>::LIMIT || g_pSessionLockManager->isSessionLocked())
+            if (launches.size() >= CLaunchContexts<SContext>::LIMIT || !overlaysAllowed())
                 return {};
             auto context = captures.consume(token, Clock::now());
             if (!context || !session().workspace(context->target))
@@ -257,7 +257,7 @@ namespace hyprspace::launch {
 
         std::string request(const std::string& line) {
             if (line == "active")
-                return session().live() && !g_pSessionLockManager->isSessionLocked() ? "1" : "";
+                return session().live() && overlaysAllowed() ? "1" : "";
             if (line == "capture")
                 return capture(session().selection.command());
             if (line.starts_with("consume "))

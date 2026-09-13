@@ -2,6 +2,7 @@
 
 #include "Overview.hpp"
 #include "Launch.hpp"
+#include "OverlayPolicy.hpp"
 
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
@@ -16,7 +17,6 @@
 #include <hyprland/src/layout/space/Space.hpp>
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
-#include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/pointer/PointerController.hpp>
@@ -440,7 +440,7 @@ namespace hyprspace::hooks {
             if (!g_pSeatManager->m_state.keyboardFocus) {
                 const auto surface = Desktop::focusState()->surface();
                 const auto grab    = g_pSeatManager->m_seatGrab;
-                if (surface && !g_pSessionLockManager->isSessionLocked() && (!grab || !grab->m_keyboard || grab->accepts(surface)))
+                if (surface && overlaysAllowed() && (!grab || !grab->m_keyboard || grab->accepts(surface)))
                     original(g_pSeatManager.get(), surface);
                 if (auto keyboard = g_pSeatManager->m_keyboard.lock())
                     g_pInputManager->onKeyboardMod(keyboard);

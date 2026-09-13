@@ -3,6 +3,7 @@
 #include "CompositorHooks.hpp"
 #include "Config.hpp"
 #include "Overview.hpp"
+#include "OverlayPolicy.hpp"
 
 #include <hyprland/src/config/ConfigValue.hpp>
 
@@ -12,7 +13,6 @@
 #include <hyprland/src/desktop/state/GlobalWindowController.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
-#include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
@@ -66,7 +66,7 @@ namespace hyprspace {
         });
         Desktop::globalWindowController()->updateSuspendedStates();
         hooks::syncKeyboardFocus();
-        if (g_overviewSession.get() == this && !live() && !g_pSessionLockManager->isSessionLocked())
+        if (g_overviewSession.get() == this && !live() && overlaysAllowed())
             g_pInputManager->simulateMouseMovement();
     }
 
@@ -86,6 +86,7 @@ namespace hyprspace {
     }
 
     void COverviewSession::ownCursor(bool own) {
+        own = own && overlaysAllowed();
         if (own == m_cursorOwned)
             return;
         m_cursorOwned = own;
