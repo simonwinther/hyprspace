@@ -166,12 +166,8 @@ namespace {
         return o && !o->closing() ? o : nullptr;
     }
 
-    // The overview the keyboard drives. With several on screen that is the one
-    // under the pointer — the same one whose highlight is already following the
-    // mouse, so the keys go where the eye is. If the pointer sits on an output
-    // that has no overview, which only happens with all_monitors off, the most
-    // recently opened one keeps the keyboard rather than the keystroke falling
-    // on the floor.
+    // Keyboard navigation and native commands use the session's selected
+    // identity. Pointer motion changes it only when follow_mouse is enabled.
     COverview* keyboardOverview() {
         return session().keyboardView();
     }

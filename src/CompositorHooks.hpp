@@ -19,6 +19,7 @@ namespace hyprspace::hooks {
     // Desktop coordinates are scoped to one synchronous native operation.
     // The hardware pointer never warps into a miniature's desktop position.
     void                           atDesktopPoint(const Vector2D& point, const std::function<void()>& action);
+    bool                           mappingPointer();
     bool                           place(PHLWINDOW window, const SOverviewTarget& source, const SOverviewTarget& destination, bool resize = false);
     void                           cancelPlacement();
     std::optional<SBoxF>           resizeGeometry(PHLWINDOW window, const SBoxF& initial, SPoint delta, bool left, bool top);

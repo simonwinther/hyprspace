@@ -74,11 +74,13 @@ namespace hyprspace {
     // A missing hit retains the command destination but is never a valid drop.
     template <typename Target> class CTargetSelection {
       public:
-        void pointer(std::optional<Target> hit) {
-            m_followsPointer = true;
-            refresh(std::move(hit));
+        void pointer(std::optional<Target> hit, bool follow = true) {
+            m_followsPointer = follow;
+            refresh(std::move(hit), follow);
         }
-        void refresh(std::optional<Target> hit) {
+        void refresh(std::optional<Target> hit, bool follow = true) {
+            if (!follow)
+                m_followsPointer = false;
             m_hit = hit;
             if (hit && m_followsPointer)
                 m_selected = hit;

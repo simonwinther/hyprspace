@@ -359,6 +359,10 @@ namespace hyprspace::hooks {
         desktopPoint = previous;
     }
 
+    bool mappingPointer() {
+        return desktopPoint.has_value();
+    }
+
     void ownCursor(bool own) {
         using namespace Pointer::Cursor;
         auto& overrides = overrideController.get()->*member(SCursorOverrides{});

@@ -277,8 +277,10 @@ pointer across outputs, including their offsets, scale and rotation. The source
 and destination use workspace identities and weak window references. Tile
 positions stay fixed during the drag while window membership is reconciled.
 The last valid target is retained over gaps and foreground UI for commands;
-gaps never become valid drop destinations. Keyboard focus navigation updates
-the selected window until the pointer moves again.
+gaps never become valid drop destinations. With `follow_mouse = true`, pointer
+movement resumes selection after keyboard navigation. With `false`, pointer
+motion updates hover/drop targets while commands and Enter retain the keyboard
+selection.
 
 Committing always acts on the monitor you picked from, not on the one Hyprland
 still calls focused. That distinction matters here: the overview holds the

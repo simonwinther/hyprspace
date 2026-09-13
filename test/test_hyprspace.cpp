@@ -1319,6 +1319,25 @@ static void testInteraction() {
     selection.clear();
     CHECK(!selection.command());
 
+    section("interaction: disabled follow_mouse changes hits without changing commands");
+    selection.keyboard(first);
+    selection.pointer(second, false);
+    CHECK(selection.command() == first);
+    CHECK(selection.drop() == second);
+    CHECK(!selection.followsPointer());
+    selection.refresh(std::nullopt, false);
+    CHECK(selection.command() == first);
+    CHECK(!selection.drop());
+    selection.pointer(second, true);
+    CHECK(selection.command() == second);
+    selection.refresh(first, false); // disabling it also stops stationary refresh
+    CHECK(selection.command() == second);
+    CHECK(selection.drop() == first);
+    selection.refresh(first, true); // enabling waits for real pointer movement
+    CHECK(selection.command() == second);
+    selection.pointer(first, true);
+    CHECK(selection.command() == first);
+
     section("interaction: visibility restored once after monitor transfers");
     CVisibilityLedger<std::weak_ptr<float>> visibility;
     auto                                    window = std::make_shared<float>(0.75F);

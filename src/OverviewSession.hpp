@@ -67,6 +67,7 @@ namespace hyprspace {
         std::optional<SOverviewTarget> hit(const Vector2D& pos) const;
 
       private:
+        void syncSelection();
         CVisibilityLedger<PHLWINDOWREF> m_visibility;
         SP<Render::ITexture>            m_dragTexture;
         bool                            m_cursorOwned = false;

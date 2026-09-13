@@ -1,6 +1,7 @@
 #include "OverviewSession.hpp"
 
 #include "CompositorHooks.hpp"
+#include "Config.hpp"
 #include "Overview.hpp"
 
 #include <hyprland/src/config/ConfigValue.hpp>
@@ -35,6 +36,8 @@ namespace hyprspace {
 
     void COverviewSession::begin() {
         selection.clear();
+        if (!config::followMouse() && covers(Desktop::focusState()->monitor()))
+            followKeyboardFocus();
         m_pointer = g_pInputManager->getMouseCoordsInternal();
         pointer(m_pointer);
         if (!selection.command() && !views.empty())
@@ -100,11 +103,16 @@ namespace hyprspace {
     }
 
     void COverviewSession::pointer(const Vector2D& pos) {
+        // Native commands may synthesize motion while their coordinates are
+        // mapped to the desktop. Those are not overview pointer coordinates.
+        if (hooks::mappingPointer())
+            return;
         m_pointer = pos;
-        selection.pointer(hit(pos));
+        selection.pointer(hit(pos), config::followMouse());
         for (const auto& view : views)
             if (!view->closing())
                 view->onMouseMove(pos);
+        syncSelection();
         if (drag.active()) {
             const auto w = drag.window.lock();
             if (!w || !w->m_isMapped) {
@@ -134,21 +142,30 @@ namespace hyprspace {
         damage();
     }
 
+    void COverviewSession::syncSelection() {
+        if (const auto& target = selection.command())
+            for (const auto& view : views)
+                if (!view->closing() && view->monitor() == target->monitor)
+                    view->selectTarget(*target);
+    }
+
     void COverviewSession::refreshPointerTarget() {
         if (!live() || !m_cursorOwned)
             return;
-        selection.refresh(hit(m_pointer));
-        if (selection.followsPointer())
-            for (const auto& view : views)
-                if (!view->closing())
-                    view->onMouseMove(m_pointer);
+        selection.refresh(hit(m_pointer), config::followMouse());
+        for (const auto& view : views)
+            if (!view->closing())
+                view->onMouseMove(m_pointer);
+        syncSelection();
     }
 
     COverview* COverviewSession::keyboardView() const {
         if (const auto& target = selection.command(); target)
             for (const auto& view : views)
-                if (!view->closing() && view->monitor() == target->monitor)
+                if (!view->closing() && view->monitor() == target->monitor) {
+                    view->selectTarget(*target);
                     return view.get();
+                }
         for (const auto& view : views)
             if (!view->closing())
                 return view.get();

@@ -384,6 +384,9 @@ namespace hyprspace {
         if (m_closing)
             return;
 
+        if (commitSelection)
+            session().keyboard(*this);
+
         m_closing = true;
 
         if (commitSelection) {
@@ -796,21 +799,14 @@ namespace hyprspace {
         const int  IDX    = tileAtLocal(LOCAL);
         const auto WINDOW = windowAtLocal(LOCAL);
 
-        if (IDX >= 0 && config::followMouse()) {
-            selectIndex(IDX);
-            m_clickedWindow = WINDOW;
-        }
-
         if (IDX == m_hovered && WINDOW == m_hoveredWindow.lock())
             return;
 
         m_hovered       = IDX;
         m_hoveredWindow = WINDOW;
 
-        if (IDX >= 0 && config::followMouse()) {
+        if (IDX >= 0 && session().selection.followsPointer())
             m_scroll.reset();
-            selectIndex(IDX);
-        }
 
         damage();
     }
@@ -829,7 +825,6 @@ namespace hyprspace {
         if (index >= 0) {
             const auto& entry = m_entries[m_tiles[index].key];
             if (auto state = scrollingFor(entry)) {
-                selectIndex(index);
                 session().pointer(pos);
                 const auto target = targetAt(pos);
                 const auto cell   = interpolate(entry);
