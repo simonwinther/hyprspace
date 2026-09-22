@@ -713,6 +713,23 @@ static void testTextRaster() {
     CHECK(capped.ok());
     CHECK(capped.w <= 121);
     CHECK(capped.w < wide.w);
+
+    // Measurement and painting must agree at fractional output scales, for
+    // both point-sized and absolute-pixel fonts, including fallback glyphs.
+    for (const auto* text : {"Scaled window title", "Résumé — Ελληνικά", "العربية עברית", "日本語 中文"}) {
+        for (const auto* font : {"Sans 14", "Monospace 18px"}) {
+            for (double scale : {1.0, 1.25, 1.5, 2.0}) {
+                int width = 0, height = 0;
+                measureText(text, font, width, height, scale);
+                const auto full = renderText(text, font, SRgba{0.2, 0.6, 0.9, 0.7}, 0, scale);
+                CHECK(full.ok());
+                CHECK(full.w == width && full.h == height);
+                const auto clipped = renderText(text, font, SRgba{0.2, 0.6, 0.9, 0.7}, 40, scale);
+                CHECK(clipped.ok());
+                CHECK(clipped.w <= std::ceil(40 * scale));
+            }
+        }
+    }
 }
 
 static void testPlaceholderIcon() {

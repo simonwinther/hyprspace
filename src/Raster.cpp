@@ -98,19 +98,21 @@ namespace hyprspace {
         if (text.empty() || !std::isfinite(scale) || scale <= 0)
             return {};
 
-        int w = 0, h = 0;
+        int          w = 0, h = 0;
+        PangoLayout* layout = nullptr;
         {
             cairo_surface_t* tmp = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
             cairo_t*         cr  = cairo_create(tmp);
-            PangoLayout*     l   = makeLayout(cr, text, font, maxWidth, scale);
-            pango_layout_get_pixel_size(l, &w, &h);
-            g_object_unref(l);
+            layout               = makeLayout(cr, text, font, maxWidth, scale);
+            pango_layout_get_pixel_size(layout, &w, &h);
             cairo_destroy(cr);
             cairo_surface_destroy(tmp);
         }
 
-        if (!boundedRaster(w, h))
+        if (!boundedRaster(w, h)) {
+            g_object_unref(layout);
             return {};
+        }
 
         cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
         cairo_t*         cr   = cairo_create(surf);
@@ -120,7 +122,9 @@ namespace hyprspace {
         cairo_paint(cr);
         cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
-        PangoLayout* layout = makeLayout(cr, text, font, maxWidth, scale);
+        // Keep the shaped text from measurement, updating its Cairo target
+        // before drawing so font options and transforms remain synchronized.
+        pango_cairo_update_layout(cr, layout);
         cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
         pango_cairo_show_layout(cr, layout);
         g_object_unref(layout);
