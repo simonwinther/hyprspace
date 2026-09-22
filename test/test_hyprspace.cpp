@@ -600,6 +600,9 @@ static void testIconResolution() {
     fs::remove_all(fallback);
 
     fs::create_directories(root / "hicolor" / "48x48" / "apps");
+    fs::create_directories(root / "hicolor" / "48x48@2x" / "apps");
+    fs::create_directories(root / "hicolor" / "48x48@2" / "apps");
+    fs::create_directories(root / "hicolor" / "64x64" / "apps");
     fs::create_directories(root / "hicolor" / "256x256" / "apps");
     fs::create_directories(root / "hicolor" / "scalable" / "apps");
     fs::create_directories(fallback / "hicolor" / "scalable" / "apps");
@@ -608,8 +611,22 @@ static void testIconResolution() {
     touch(root / "hicolor" / "48x48" / "apps" / "sized-only.png");
     touch(root / "hicolor" / "256x256" / "apps" / "sized-only.png");
     touch(root / "hicolor" / "scalable" / "apps" / "vector.svg");
+    touch(root / "hicolor" / "48x48" / "apps" / "compressed.svgz");
+    touch(root / "hicolor" / "256x256" / "apps" / "compressed.png");
+    touch(root / "hicolor" / "48x48@2x" / "apps" / "scaled.png");
+    touch(root / "hicolor" / "64x64" / "apps" / "scaled.png");
+    touch(root / "hicolor" / "48x48@2" / "apps" / "scaled-no-unit.png");
+    touch(root / "hicolor" / "64x64" / "apps" / "scaled-no-unit.png");
     touch(root / "hicolor" / "48x48" / "apps" / "priority.png");
     touch(fallback / "hicolor" / "scalable" / "apps" / "priority.svg");
+
+    const std::vector<std::string> invalidScales = {"0", "-2x", "2147483647x", "999999999999x", "2junk"};
+    for (const auto& scale : invalidScales) {
+        const auto directory = root / "hicolor" / ("48x48@" + scale) / "apps";
+        fs::create_directories(directory);
+        touch(directory / ("invalid-scale-" + scale + ".png"));
+        touch(root / "hicolor" / "64x64" / "apps" / ("invalid-scale-" + scale + ".png"));
+    }
 
     CDesktopDb db;
     db.setIconRoots({root.string(), fallback.string()});
@@ -618,6 +635,22 @@ static void testIconResolution() {
     const auto vec = db.resolveIconPath("vector", 64);
     CHECK(vec.has_value());
     CHECK(vec && vec->ends_with("vector.svg"));
+
+    // Compressed SVGs remain scalable even outside a scalable directory.
+    const auto compressed = db.resolveIconPath("compressed", 128);
+    CHECK(compressed && compressed->ends_with("compressed.svgz"));
+
+    // Requests use physical pixels: 48x48 at scale 2 is a 96-pixel icon.
+    const auto scaled = db.resolveIconPath("scaled", 96);
+    CHECK(scaled && scaled->ends_with("48x48@2x/apps/scaled.png"));
+    const auto scaledNoUnit = db.resolveIconPath("scaled-no-unit", 96);
+    CHECK(scaledNoUnit && scaledNoUnit->ends_with("48x48@2/apps/scaled-no-unit.png"));
+    const auto unscaled = db.resolveIconPath("scaled", 64);
+    CHECK(unscaled && unscaled->ends_with("64x64/apps/scaled.png"));
+    for (const auto& scale : invalidScales) {
+        const auto icon = db.resolveIconPath("invalid-scale-" + scale, 32);
+        CHECK(icon && icon->ends_with("64x64/apps/invalid-scale-" + scale + ".png"));
+    }
 
     // Otherwise the smallest size at or above the request wins.
     const auto sized = db.resolveIconPath("sized-only", 48);

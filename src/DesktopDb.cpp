@@ -1,12 +1,14 @@
 #include "DesktopDb.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <sstream>
+#include <string_view>
 #include <tuple>
 
 namespace fs = std::filesystem;
@@ -276,9 +278,16 @@ namespace hyprspace {
         return "";
     }
 
-    // Pull a pixel size out of an icon theme path segment, e.g. ".../48x48/apps/x.png"
-    // or ".../scalable/apps/x.svg". Scalable sorts as "perfect at any size".
+    // Pull a physical pixel size out of an icon theme path segment, including
+    // scaled directories such as "48x48@2" and "48x48@2x". Scalable sorts as
+    // "perfect at any size".
     static int sizeFromPath(const fs::path& p, bool& scalable) {
+        const auto positiveInt = [](std::string_view text) {
+            int        value  = 0;
+            const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+            return result.ec == std::errc{} && result.ptr == text.data() + text.size() && value > 0 ? value : 0;
+        };
+
         scalable = false;
         for (const auto& part : p) {
             const auto s = part.string();
@@ -289,12 +298,25 @@ namespace hyprspace {
             const auto x = s.find('x');
             if (x == std::string::npos || x == 0)
                 continue;
-            if (!std::all_of(s.begin(), s.begin() + x, [](unsigned char c) { return std::isdigit(c); }))
+
+            const std::string_view segment = s;
+            const auto             at      = segment.find('@', x + 1);
+            const int              width   = positiveInt(segment.substr(0, x));
+            const int              height  = positiveInt(segment.substr(x + 1, at == std::string_view::npos ? at : at - x - 1));
+            if (!width || !height)
                 continue;
-            try {
-                return std::stoi(s.substr(0, x));
-            } catch (...) { /* not a size segment */
+
+            int scale = 1;
+            if (at != std::string_view::npos) {
+                auto suffix = segment.substr(at + 1);
+                if (suffix.ends_with('x'))
+                    suffix.remove_suffix(1);
+                scale = positiveInt(suffix);
             }
+            if (!scale || width > std::numeric_limits<int>::max() / scale)
+                continue;
+
+            return width * scale;
         }
         return 0;
     }
@@ -302,7 +324,7 @@ namespace hyprspace {
     void CDesktopDb::indexIcons() const {
         m_iconIndex.clear();
 
-        static const std::vector<std::string> EXTS = {".svg", ".png", ".xpm"};
+        static const std::vector<std::string> EXTS = {".svg", ".svgz", ".png", ".xpm"};
 
         for (size_t rootIndex = 0; rootIndex < m_iconRoots.size(); ++rootIndex) {
             const auto&     root = m_iconRoots[rootIndex];
@@ -330,7 +352,7 @@ namespace hyprspace {
                     .root     = rootIndex,
                     .size     = size,
                     .scalable = scalable,
-                    .svg      = ext == ".svg",
+                    .svg      = ext == ".svg" || ext == ".svgz",
                 });
             }
         }
