@@ -57,15 +57,21 @@ def forward_service(name, args):
     token = os.environ.get("HYPRSPACE_LAUNCH_TOKEN", "")
     if not re.fullmatch(r"[A-Za-z0-9-]{1,128}", token):
         os.execv(original, [original, *args])
+    if name == "uwsm" and (not args or args[0] != "app"):
+        os.execv(original, [original, *args])
     # Omarchy's launchers use an explicit --. Simple app2unit invocations
     # without options are equivalent. Unknown option forms keep native routing.
-    if "--" in args:
-        split = args.index("--") + 1
-    elif args and not args[0].startswith("-") and name != "uwsm":
+    command_offset = 1 if name == "uwsm" else 0
+    if len(args) > command_offset and not args[command_offset].startswith("-"):
+        # UWSM parses options throughout argv until --, even after a command.
+        # Preserve its native interpretation when no launcher delimiter is used.
+        if name != "app2unit":
+            os.execv(original, [original, *args])
+        # For app2unit, any later -- belongs to the already-started command.
         split = 0
+    elif "--" in args:
+        split = args.index("--") + 1
     else:
-        os.execv(original, [original, *args])
-    if name == "uwsm" and (not args or args[0] != "app"):
         os.execv(original, [original, *args])
     # Desktop IDs and their action suffixes must still be interpreted by the
     # service launcher. They are not executable paths for this helper.

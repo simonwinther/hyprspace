@@ -67,6 +67,79 @@ class LaunchHelperTests(unittest.TestCase):
                 ],
             )
 
+    def test_service_payload_separators_preserve_native_arguments_and_context(self):
+        program = (
+            "import os,sys,json; "
+            "print(json.dumps([sys.argv[1:],os.getenv('HYPRSPACE_LAUNCH_TOKEN'),"
+            "os.getenv('XDG_ACTIVATION_TOKEN')]))"
+        )
+        payloads = [
+            ["plain argument"],
+            ["hello world", "--", "after separator", "--"],
+            ["--", "org.example.App.desktop:NewWindow", "url with spaces"],
+            ["--"],
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, PATH=f"{directory}:/usr/bin")
+            application = Path(directory) / "dump.py"
+            application.write_text(program)
+            launchers = {
+                "app2unit": [[], ["--"]],
+                "uwsm-app": [[], ["--"], ["-s", "a", "--"]],
+                "uwsm": [["app"], ["app", "--"], ["app", "-s", "a", "--"]],
+            }
+            for name, prefixes in launchers.items():
+                original = Path(directory) / name
+                original.write_text(
+                    "#!/usr/bin/python3\n"
+                    "import argparse,os,sys\n"
+                    "name = os.path.basename(sys.argv[0])\n"
+                    "args = sys.argv[1:]\n"
+                    "if name == 'uwsm':\n"
+                    "    assert args.pop(0) == 'app'\n"
+                    "if name == 'app2unit':\n"
+                    "    if args[0] == '--':\n"
+                    "        args.pop(0)\n"
+                    "else:\n"
+                    "    parser = argparse.ArgumentParser()\n"
+                    "    parser.add_argument('-s')\n"
+                    "    parser.add_argument('cmdline', nargs='+')\n"
+                    "    args = parser.parse_args(args).cmdline\n"
+                    "env = os.environ.copy()\n"
+                    "env.pop('HYPRSPACE_LAUNCH_TOKEN', None)\n"
+                    "env.pop('XDG_ACTIVATION_TOKEN', None)\n"
+                    "os.execvpe(args[0], args, env)\n"
+                )
+                original.chmod(0o755)
+                for prefix in prefixes:
+                    for args in payloads:
+                        with self.subTest(launcher=name, prefix=prefix, args=args):
+                            expected_args = args.copy()
+                            token = "service-token"
+                            if name != "app2unit" and "--" not in prefix:
+                                # UWSM consumes its first separator even after
+                                # the command. Such forms keep native routing.
+                                if "--" in expected_args:
+                                    expected_args.remove("--")
+                                token = None
+                            result = subprocess.check_output(
+                                [
+                                    str(HELPER),
+                                    "--launch-token",
+                                    "service-token",
+                                    "--",
+                                    name,
+                                    *prefix,
+                                    "python3",
+                                    str(application),
+                                    *args,
+                                ],
+                                env=env,
+                                text=True,
+                                timeout=5,
+                            )
+                            self.assertEqual(json.loads(result), [expected_args, token, token])
+
     def test_private_instance_socket_and_one_packet(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hypr/instance"
