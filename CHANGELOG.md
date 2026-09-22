@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.1.0](https://github.com/simonwinther/hyprspace/compare/v1.0.2...v1.1.0) (2026-09-22)
+
+
+### Features
+
+* **config:** add Lua dispatcher bindings ([21d165d](https://github.com/simonwinther/hyprspace/commit/21d165dc514b9b3d6e3602359c25d04147abe073))
+
+
+### Bug Fixes
+
+* **config:** align workspace option defaults ([cb4036a](https://github.com/simonwinther/hyprspace/commit/cb4036a7e09b2cdba7b27d30dbf9e728a33c4ffd))
+* **hooks:** preserve foreign dispatchers ([658dcdc](https://github.com/simonwinther/hyprspace/commit/658dcdc3262a1573f6430aff7b13c98ff1720a73))
+* **icons:** resolve compressed and scaled assets ([6a5fade](https://github.com/simonwinther/hyprspace/commit/6a5fade2145eebee415d65ed39d91c9e135948e9))
+* **icons:** respect desktop entry precedence ([43d0cc6](https://github.com/simonwinther/hyprspace/commit/43d0cc6b853e0610e3c36695ff5aa1da8cf70a82))
+* **launch:** preserve service command arguments ([665dcaa](https://github.com/simonwinther/hyprspace/commit/665dcaa90ff794b28617d8a4808868b324269643))
+* **overlays:** block activation while locked ([d93b9c3](https://github.com/simonwinther/hyprspace/commit/d93b9c36d22ac03ce5a5e4c7968af89ce787a543))
+* **overview:** clear stale tiles on empty refresh ([e032e24](https://github.com/simonwinther/hyprspace/commit/e032e24f9d9752d5cf20c5de110f24bda4403a0f))
+* **overview:** retain keyboard selection ([08239f6](https://github.com/simonwinther/hyprspace/commit/08239f666d80489deb28f6d32cb942f7f1a8da28))
+* **render:** cap capture and texture memory ([838b8b5](https://github.com/simonwinther/hyprspace/commit/838b8b58dbed1f733862b18d4428446fba132163))
+
+
+### Performance Improvements
+
+* **overview:** reuse unchanged layouts ([48f48a4](https://github.com/simonwinther/hyprspace/commit/48f48a4744b3a04751591f67408cc2687648fbb7))
+* **raster:** reuse measured text layouts ([5de62a1](https://github.com/simonwinther/hyprspace/commit/5de62a1378307bf591b4db35a9c6bc88270c3320))
+
 ## [1.0.2](https://github.com/simonwinther/hyprspace/compare/v1.0.1...v1.0.2) (2026-09-10)
 
 
