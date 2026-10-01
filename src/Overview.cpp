@@ -40,14 +40,6 @@
 
 namespace hyprspace {
 
-    static float lerpf(float a, float b, float t) {
-        return a + (b - a) * t;
-    }
-
-    static SBoxF lerpBox(const SBoxF& a, const SBoxF& b, float t) {
-        return SBoxF{lerpf(a.x, b.x, t), lerpf(a.y, b.y, t), lerpf(a.w, b.w, t), lerpf(a.h, b.h, t)};
-    }
-
     COverview::COverview(PHLMONITOR monitor) : m_monitor(monitor) {
         m_originalFocus     = Desktop::focusState()->window();
         m_originalWorkspace = monitor->m_activeWorkspace;
@@ -75,7 +67,11 @@ namespace hyprspace {
         }
 
         Animation::mgr()->createAnimation(0.F, m_progress, Config::animationTree()->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
+        Animation::mgr()->createAnimation(1.F, m_zoomScale, Config::animationTree()->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
+        Animation::mgr()->createAnimation(Vector2D{}, m_zoomOffset, Config::animationTree()->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
         m_progress->setUpdateCallback([this](auto) { damage(); });
+        m_zoomScale->setUpdateCallback([this](auto) { damage(); });
+        m_zoomOffset->setUpdateCallback([this](auto) { damage(); });
         m_progress->setValueAndWarp(0.F);
         *m_progress = 1.F;
 
@@ -192,9 +188,8 @@ namespace hyprspace {
             m_entries = std::move(previous);
         } else {
             for (auto& entry : m_entries) {
-                const auto old = std::ranges::find_if(previous, [&](const auto& e) {
-                    return e.workspaceId == entry.workspaceId && e.workspaceName == entry.workspaceName;
-                });
+                const auto old =
+                    std::ranges::find_if(previous, [&](const auto& e) { return e.workspaceId == entry.workspaceId && e.workspaceName == entry.workspaceName; });
                 if (old != previous.end())
                     entry.windowLayout = std::move(old->windowLayout);
                 updateWindowLayout(entry);
@@ -250,7 +245,7 @@ namespace hyprspace {
     void COverview::computeLayout() {
         // Tile keys are indices into the ordered entries. Empty membership must
         // invalidate both the keys and the cached geometry.
-        m_animationAnchor = -1;
+        m_animationAnchor  = -1;
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR || m_entries.empty()) {
             m_tiles.clear();
@@ -285,7 +280,7 @@ namespace hyprspace {
             }
             m_tileLayoutKey = key;
         }
-        m_selected  = m_tiles.empty() ? -1 : std::clamp(m_selected, 0, static_cast<int>(m_tiles.size()) - 1);
+        m_selected = m_tiles.empty() ? -1 : std::clamp(m_selected, 0, static_cast<int>(m_tiles.size()) - 1);
 
         // Workspace identities and the animation anchor can change even when
         // the ordered grid's count and dimensions remain the same.
@@ -353,7 +348,66 @@ namespace hyprspace {
     }
 
     SBoxF COverview::interpolate(const SEntry& e) const {
-        return lerpBox(e.start, e.target, m_progress->value());
+        return interpolateBox(e.start, e.target, m_progress->value());
+    }
+
+    float COverview::overviewProgress() const {
+        const float remaining = previewUnit(m_progress->value());
+        return m_closing ? m_closeStartProgress * remaining : remaining;
+    }
+
+    SOverviewCamera COverview::camera() const {
+        const auto& offset = m_zoomOffset->value();
+        return overviewCameraAt({m_zoomScale->value(), offset.x, offset.y}, overviewProgress());
+    }
+
+    SBoxF COverview::displayedCell(const SEntry& e) const {
+        if (m_closing && e.closeCell)
+            return interpolateBox(e.start, *e.closeCell, m_progress->value());
+        return camera().apply(interpolate(e));
+    }
+
+    SBoxF COverview::workspaceCell(const SWorkspaceIdentity& workspace) const {
+        const auto entry = std::ranges::find_if(m_entries, [&](const auto& e) { return workspace == SWorkspaceIdentity{e.workspaceId, e.workspaceName}; });
+        return entry == m_entries.end() ? SBoxF{} : displayedCell(*entry);
+    }
+
+    bool COverview::zoomTo(const SWorkspaceIdentity& workspace) {
+        if (m_closing)
+            return false;
+        const auto entry = std::ranges::find_if(m_entries, [&](const auto& e) { return workspace == SWorkspaceIdentity{e.workspaceId, e.workspaceName}; });
+        if (entry == m_entries.end() || entry->target.w <= 0 || entry->target.h <= 0)
+            return false;
+        const auto fitted = overviewZoomCamera(entry->target, m_usable, config::overviewPadding(), config::overviewShowLabels() ? 34.0 : 0.0);
+        const auto scale  = static_cast<float>(fitted.scale);
+        const auto offset = Vector2D{fitted.x, fitted.y};
+        // Called during live geometry refresh as well as keyboard navigation.
+        // Restarting an unchanged goal here would keep the camera in motion.
+        if (m_zoomScale->goal() != scale)
+            *m_zoomScale = scale;
+        if (m_zoomOffset->goal() != offset)
+            *m_zoomOffset = offset;
+        return true;
+    }
+
+    void COverview::releaseZoom() {
+        if (m_closing)
+            return;
+        if (m_zoomScale->goal() != 1.F)
+            *m_zoomScale = 1.F;
+        if (m_zoomOffset->goal() != Vector2D{})
+            *m_zoomOffset = Vector2D{};
+    }
+
+    bool COverview::zoomTransitioning() const {
+        return !m_closing && (m_zoomScale->isBeingAnimated() || m_zoomOffset->isBeingAnimated());
+    }
+
+    void COverview::freezeZoom() {
+        if (m_closing)
+            return;
+        m_zoomScale->setValueAndWarp(m_zoomScale->value());
+        m_zoomOffset->setValueAndWarp(m_zoomOffset->value());
     }
 
     SBoxF COverview::windowBoxInCell(const SBoxF& r, const SBoxF& cell) const {
@@ -367,9 +421,35 @@ namespace hyprspace {
             return {};
 
         const bool  ANCHOR = m_animationAnchor >= 0 && &entry == &m_entries[m_animationAnchor];
-        const auto  CELL   = ANCHOR ? entry.target : interpolate(entry);
         const SBoxF CLIP   = slot.fullscreen != Fullscreen::FSMODE_NONE ? SBoxF{0, 0, MONITOR->m_size.x, MONITOR->m_size.y} : m_usable;
-        return overviewWindowGeometry({windowBoxInCell(slot.previewRect, CELL), CELL}, {slot.desktopRect, CLIP}, ANCHOR, m_progress->value());
+        if (m_closing && slot.closeGeometry) {
+            const SWindowPreviewGeometry endpoint =
+                ANCHOR ? SWindowPreviewGeometry{slot.desktopRect, CLIP} : SWindowPreviewGeometry{windowBoxInCell(slot.previewRect, entry.start), entry.start};
+            return closingWindowPreviewGeometry(*slot.closeGeometry, endpoint, m_progress->value());
+        }
+        const auto CELL = ANCHOR ? entry.target : interpolate(entry);
+        const auto raw  = overviewWindowGeometry({windowBoxInCell(slot.previewRect, CELL), CELL}, {slot.desktopRect, CLIP}, ANCHOR, m_progress->value());
+        const auto view = camera();
+        return {view.apply(raw.box), view.apply(raw.clip)};
+    }
+
+    SWorkspacePreviewStyle COverview::styleFor(const SEntry& entry, bool selected) const {
+        const bool anchor = m_animationAnchor >= 0 && &entry == &m_entries[m_animationAnchor];
+        if (m_closing)
+            return closingWorkspacePreviewStyle(entry.closeStyle, anchor, m_progress->value());
+        return workspacePreviewStyle(anchor, selected, overviewProgress());
+    }
+
+    float COverview::visibilityFor(const SEntry& entry, const SWindowSlot& slot) const {
+        const auto window = slot.window.lock();
+        if (!window)
+            return 0.F;
+        const bool anchor  = m_animationAnchor >= 0 && &entry == &m_entries[m_animationAnchor];
+        const auto desktop = window->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN);
+        if (m_closing)
+            return closingWindowPreviewVisibility(slot.closeVisibility, desktop, anchor, m_progress->value());
+        const bool selected = m_selected >= 0 && m_selected < static_cast<int>(m_tiles.size()) && &entry == &m_entries[m_tiles[m_selected].key];
+        return styleFor(entry, selected).windowVisibility * overviewWindowVisibility(desktop, anchor, overviewProgress());
     }
 
     void COverview::selectIndex(int idx) {
@@ -387,6 +467,19 @@ namespace hyprspace {
         if (commitSelection)
             session().keyboard(*this);
 
+        // Re-anchoring while an opening or inspection zoom is in flight must
+        // start from exactly the displayed frame, including old anchor opacity.
+        m_closeStartProgress = overviewProgress();
+        for (auto& entry : m_entries) {
+            const bool selected = m_selected >= 0 && m_selected < static_cast<int>(m_tiles.size()) && &entry == &m_entries[m_tiles[m_selected].key];
+            entry.closeCell     = displayedCell(entry);
+            entry.closeStyle    = styleFor(entry, selected);
+            for (auto& slot : entry.windows) {
+                slot.closeGeometry   = geometryFor(entry, slot);
+                slot.closeVisibility = visibilityFor(entry, slot);
+            }
+        }
+        freezeZoom();
         m_closing = true;
 
         if (commitSelection) {
@@ -403,6 +496,9 @@ namespace hyprspace {
             commit();
         }
 
+        // Closing geometry uses snapshots and its own normalized remaining
+        // fraction; visual styling retains the original overview progress.
+        m_progress->setValueAndWarp(1.F);
         *m_progress = 0.F;
         damage();
     }
@@ -629,7 +725,7 @@ namespace hyprspace {
     int COverview::tileAtLocal(const Vector2D& local) const {
         for (int i = static_cast<int>(m_tiles.size()) - 1; i >= 0; --i) {
             const auto& entry = m_entries[m_tiles[i].key];
-            if (interpolate(entry).contains(local.x, local.y))
+            if (displayedCell(entry).contains(local.x, local.y))
                 return i;
             for (const auto index : entry.drawOrder) {
                 if (previewContains(geometryFor(entry, entry.windows[index]), local.x, local.y))
@@ -674,7 +770,7 @@ namespace hyprspace {
         SOverviewTarget target;
         target.workspace   = {entry.workspaceId, entry.workspaceName};
         target.monitor     = mon;
-        target.preview     = interpolate(entry);
+        target.preview     = displayedCell(entry);
         target.previewClip = target.preview;
         target.desktopBox  = m_usable;
         target.window      = windowAtLocal(local);
@@ -711,7 +807,7 @@ namespace hyprspace {
             return std::nullopt;
         const auto&     entry = m_entries[m_tiles[m_selected].key];
         SOverviewTarget target{.workspace = {entry.workspaceId, entry.workspaceName}, .monitor = mon};
-        target.preview     = interpolate(entry);
+        target.preview     = displayedCell(entry);
         target.previewClip = target.preview;
         target.desktopBox  = m_usable;
         target.monitorBox  = m_usable;
@@ -748,7 +844,7 @@ namespace hyprspace {
             const auto  state = scrollingFor(entry);
             if (!state)
                 continue;
-            const auto controls = scrollControls(interpolate(entry), state->horizontal);
+            const auto controls = scrollControls(displayedCell(entry), state->horizontal);
             if (state->previous && controls.previous.contains(local.x, local.y))
                 return std::pair{i, -1};
             if (state->next && controls.next.contains(local.x, local.y))
@@ -763,7 +859,7 @@ namespace hyprspace {
         if (!mon)
             return result;
         for (const auto& entry : m_entries) {
-            auto cell = interpolate(entry);
+            auto cell = displayedCell(entry);
             cell.x += mon->m_position.x;
             cell.y += mon->m_position.y;
             result.push_back({.workspace = {entry.workspaceId, entry.workspaceName}, .monitor = mon, .preview = cell});
@@ -827,12 +923,14 @@ namespace hyprspace {
             if (auto state = scrollingFor(entry)) {
                 session().pointer(pos);
                 const auto target = targetAt(pos);
-                const auto cell   = interpolate(entry);
+                const auto cell   = displayedCell(entry);
                 if (target)
                     hooks::panWorkspace(*target, scrollDistance(event, state->horizontal ? cell.w : cell.h) * hooks::scrollFactor());
                 return;
             }
         }
+        if (session().zoomLocked())
+            return;
         if (event.horizontal)
             return;
         const int STEPS = m_scroll.steps(event);
@@ -941,7 +1039,7 @@ namespace hyprspace {
         if (!MONITOR)
             return out;
 
-        const float  PROGRESS = std::clamp(m_progress->value(), 0.F, 1.F);
+        const float  PROGRESS = overviewProgress();
         const double SCALE    = MONITOR->m_scale;
 
         const int  ROUNDING = config::overviewRounding();
@@ -1018,7 +1116,7 @@ namespace hyprspace {
         for (size_t i = 0; i < m_tiles.size(); ++i) {
             const auto& entry = m_entries[m_tiles[i].key];
 
-            const SBoxF cell = interpolate(entry);
+            const SBoxF cell = displayedCell(entry);
             if (cell.w <= 1 || cell.h <= 1)
                 continue;
 
@@ -1030,11 +1128,9 @@ namespace hyprspace {
 
             // The zoom's anchor stays visible all the way to the desktop, also
             // when closing into a different workspace from the original one.
-            const bool   ANCHOR = static_cast<int>(m_tiles[i].key) == m_animationAnchor;
-            const auto   STYLE  = workspacePreviewStyle(ANCHOR, SELECTED, PROGRESS);
-            const float  FADE   = STYLE.visibility;
-            const float  ALPHA  = STYLE.windowVisibility;
-            const double round  = ROUNDING * PROGRESS;
+            const auto   STYLE = styleFor(entry, SELECTED);
+            const float  FADE  = STYLE.visibility;
+            const double round = ROUNDING * PROGRESS;
 
             // A hairline around every tile so they read as distinct cards against
             // the wallpaper, with the accent border replacing it on selection.
@@ -1067,15 +1163,15 @@ namespace hyprspace {
                 if (b.w < 1 || b.h < 1)
                     continue;
 
-                const float VISIBILITY = overviewWindowVisibility(W->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN), ANCHOR, PROGRESS);
+                const float VISIBILITY = visibilityFor(entry, slot);
                 if (t)
-                    windowTexture(W, t, b, ALPHA * VISIBILITY, round, slot.blur, GEOMETRY.clip);
+                    windowTexture(W, t, b, VISIBILITY, round, slot.blur, GEOMETRY.clip);
                 else {
                     const auto&  clip = GEOMETRY.clip;
                     const double left = std::max(b.x, clip.x), top = std::max(b.y, clip.y);
                     const SBoxF  fallback{left, top, std::min(b.x + b.w, clip.x + clip.w) - left, std::min(b.y + b.h, clip.y + clip.h) - top};
                     if (fallback.w > 0 && fallback.h > 0)
-                        rect(fallback, config::overviewTitleBgColor().modifyA(ALPHA * VISIBILITY), round);
+                        rect(fallback, config::overviewTitleBgColor().modifyA(VISIBILITY), round);
                 }
 
                 const bool   FULLSCREEN = slot.fullscreen != Fullscreen::FSMODE_NONE;
@@ -1188,7 +1284,7 @@ namespace hyprspace {
                 // than as part of whichever tile it happens to be over.
                 const double LIFT = drag.mode == SOverviewDrag::RESIZE ? 1.0 : 1.04;
 
-                const SBoxF box{
+                SBoxF box{
                     drag.box.x - MONITOR->m_position.x - drag.box.w * (LIFT - 1) / 2,
                     drag.box.y - MONITOR->m_position.y - drag.box.h * (LIFT - 1) / 2,
                     drag.box.w * LIFT,
@@ -1202,14 +1298,14 @@ namespace hyprspace {
                     auto clip = drag.source.previewClip;
                     clip.x -= MONITOR->m_position.x;
                     clip.y -= MONITOR->m_position.y;
-                    // A resize can start before the opening zoom finishes.
-                    // Keep its pickup mapping fixed and clip to the workspace's
-                    // current animated boundary.
-                    for (const auto& entry : m_entries)
-                        if (drag.source.workspace == SWorkspaceIdentity{entry.workspaceId, entry.workspaceName}) {
-                            clip = interpolate(entry);
-                            break;
-                        }
+                    // Input retains the pickup preview and scale. Reproject
+                    // only this picture when inspection zoom returns to the
+                    // grid, including with a stationary resize pointer.
+                    const auto currentCell = workspaceCell(drag.source.workspace);
+                    if (currentCell.w > 0 && currentCell.h > 0) {
+                        box  = reprojectOverviewBox(box, drag.sourceCell, currentCell);
+                        clip = currentCell;
+                    }
                     const double x = std::max(box.x, clip.x), y = std::max(box.y, clip.y);
                     const double w = std::min(box.x + box.w, clip.x + clip.w) - x, h = std::min(box.y + box.h, clip.y + clip.h) - y;
                     windowTexture(DRAGGED, t, box, 0.92F, ROUNDING, hidden::shouldBlurWindow(DRAGGED), clip);

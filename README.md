@@ -114,6 +114,7 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | Super + A | Open or close the workspace overview |
 | Click a preview | Focus that window |
 | Arrows or Tab, then Enter | Select and open a workspace |
+| Hold Z | Enlarge the selected workspace; release to return to the grid |
 | 1 through 9, or 0 | Open workspace 1 through 10 |
 | Super + left drag | Rearrange a window or move it across workspaces and outputs |
 | Super + right drag | Resize a window in its preview |
@@ -126,6 +127,11 @@ The overview opens on all monitors by default, with each showing its own
 workspaces. Alt+Tab uses the active normal workspace on the monitor under the
 pointer. Setting `switcher:current_workspace_only = false` includes windows
 across all workspaces and monitors.
+
+On a small screen, hold **Z** to smoothly enlarge one workspace. While holding
+it, use arrows or Tab/Shift+Tab to browse that monitor's workspaces. Releasing
+Z smoothly restores the grid. Change `overview:zoom_key` to another XKB key
+name, or leave it empty to disable this control.
 
 In a scrolling workspace, use the wheel or two-finger scrolling to pan its preview.
 Edge arrows reveal hidden columns. Page Up/Page Down select columns and Enter

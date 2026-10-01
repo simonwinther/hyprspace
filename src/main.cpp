@@ -67,7 +67,7 @@ using namespace hyprspace;
 namespace {
 
     std::unique_ptr<CSwitcher> g_switcher;
-    bool                      g_sessionLocked = true;
+    bool                       g_sessionLocked = true;
 
     // Print Screen starts an external layer-shell UI (Omarchy uses a frozen
     // hyprpicker surface plus slurp). While that UI exists, it must sit above
@@ -903,14 +903,14 @@ namespace {
             target ? session().workspace(*target) : (mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr);
         if (!ws || !ws->m_space || !ws->m_space->algorithm())
             return {.success = false, .error = "hyprspace: no workspace for layout cycle"};
-        const auto& tiled  = ws->m_space->algorithm()->tiledAlgo();
-        const auto  name   = Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(&typeid(*tiled.get()));
-        const auto  next   = name == "dwindle" ? "scrolling" : "dwindle";
+        const auto&            tiled = ws->m_space->algorithm()->tiledAlgo();
+        const auto             name  = Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(&typeid(*tiled.get()));
+        const auto             next  = name == "dwindle" ? "scrolling" : "dwindle";
         Config::CWorkspaceRule rule;
         rule.m_workspaceString = ws->getConfigName();
-        rule.m_workspaceName = ws->m_name;
-        rule.m_workspaceId = ws->m_id;
-        rule.m_layout = next;
+        rule.m_workspaceName   = ws->m_name;
+        rule.m_workspaceId     = ws->m_id;
+        rule.m_layout          = next;
         Config::workspaceRuleMgr()->replaceOrAdd(std::move(rule));
         Config::Supplementary::refresher()->scheduleRefresh(Config::Supplementary::REFRESH_MONITOR_STATES | Config::Supplementary::REFRESH_WINDOW_STATES);
         session().damage();
@@ -966,7 +966,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (!BUILT.starts_with("efb50993780079460b0cbed1363e2166a2de1d9f_"))
         throw std::runtime_error("[hyprspace] interactive hooks require Hyprland 0.56.2; see docs/interactive.md");
 
-    g_sessionLocked = g_pSessionLockManager->isSessionLocked();
+    g_sessionLocked   = g_pSessionLockManager->isSessionLocked();
     g_overviewSession = std::make_unique<COverviewSession>();
     config::registerAll();
 
@@ -997,6 +997,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             session().views.push_back(std::make_unique<COverview>(mon));
     });
     g_listeners.configReloaded  = bus.config.reloaded.listen([] {
+        session().cancelZoom();
         textures().invalidate();
         if (g_switcher)
             g_switcher->reconfigure();
@@ -1004,7 +1005,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_listeners.layerOpened     = bus.layer.opened.listen(onLayerOpened);
     g_listeners.layerClosed     = bus.layer.closed.listen(onLayerClosed);
 
-    g_listeners.sessionLock = g_pSessionLockManager->m_events.lock.listen([] {
+    g_listeners.sessionLock   = g_pSessionLockManager->m_events.lock.listen([] {
         g_sessionLocked = true;
         destroyOverviews();
         destroySwitcher();

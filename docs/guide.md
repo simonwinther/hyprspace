@@ -90,6 +90,7 @@ keyboard grab, which makes it a reliable escape hatch.
 | `Esc` | Close, keep the current workspace |
 | `Enter` / `Space` | Switch to the selected workspace and close |
 | `Tab` / `Shift+Tab` | Next / previous workspace |
+| Hold `Z` | Enlarge the selected workspace; release to smoothly restore the grid |
 | `←` `↓` `↑` `→` | Move to the nearest tile in that direction |
 | `h/j/k/l` | Same, vim style |
 | `1` through `9`, `0` | Go to that workspace at once, no Enter needed (`0` = workspace 10) |
@@ -102,6 +103,21 @@ keyboard grab, which makes it a reliable escape hatch.
 | `Super` + drag right | Resize that window in place, scaled into the tile |
 | Wheel / two-finger scroll | Pan the scrolling workspace under the pointer; other layouts step the workspace selection |
 | Edge arrows inside a scrolling tile | Reveal the next hidden column and keep the overview open |
+
+Hold **Z** without modifiers to fit the selected workspace into most of its
+monitor, keeping the existing padding and workspace label. Arrows, Tab and
+Shift+Tab smoothly browse that monitor's workspaces while Z remains held.
+Moving the pointer leaves the enlarged workspace selected, and scrolling
+layouts still accept panning. Wheel selection of other workspaces pauses during
+zoom. Release Z to return immediately through the reverse animation; pointer
+selection resumes on the next movement after the grid has returned.
+
+Zoom affects previews and keeps the overview open. Clicking a window or pressing
+Enter still opens the selection, and Escape still dismisses the overview. An
+output already showing a single workspace keeps its existing geometry. New zoom
+presses and workspace browsing pause during a drag; releasing Z during a drag
+still restores the grid, with resize gestures retaining their pickup scale.
+Foreground keyboard handoff cancels held zoom and requires a new press afterward.
 
 Scrolling previews accept horizontal and vertical wheel/trackpad input. Wheel
 detents move a quarter viewport and high-resolution detents retain their fraction;
@@ -251,6 +267,7 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:tile_border_color` | color | `rgba(ffffff1a)` | Hairline around every tile |
 | `overview:padding` | int | `56` | Outer padding |
 | `overview:gap` | int | `28` | Gap between workspace tiles |
+| `overview:zoom_key` | string | `z` | Unmodified hold-to-zoom key; empty disables it. Use an XKB key name that does not conflict with overview navigation or system keys |
 | `overview:band_gap` | int | `28` | Deprecated compatibility key; ignored. `overview:gap` controls both axes |
 | `overview:all_workspaces` | bool | `true` | Deprecated compatibility key; ignored. Populated, active and persistent workspaces are always included |
 | `overview:rounding` | int | `14` | Tile corner radius |
@@ -361,7 +378,7 @@ frame references, failed GL allocation and repeated overlay close/reopen.
 The transitions reuse Hyprland's own animation curves rather than inventing
 their own timing, so they match the rest of your desktop:
 
-* overview open/close → `windowsMove`
+* overview open/close, held zoom and workspace panning → `windowsMove`
 * switcher fade → `fadeIn`
 
 Retune those in your `animations` block to change the feel.
@@ -495,6 +512,10 @@ overlapping bottom panels and popups, launch destinations after output removal,
 and visibility when a window leaves a single-monitor overview. Scrolling checks
 cover all four directions, wheel and finger input, bounds, arrows, keyboard
 selection, inactive workspaces, foreground typing and animated pointer targeting.
+Hold-to-zoom checks cover ten-workspace fitting, keyboard browsing, pointer
+pinning, key release and device ownership, foreground handoff, drag mapping,
+scrolling and closing during transitions. Run them alone with
+`make integration-test INTEGRATION_ARGS='--only zoom'`.
 
 [Verification instructions and release gates](interactive.md#verification)
 describe the automated and physical suites. The

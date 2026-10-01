@@ -1659,6 +1659,7 @@ def main():
             "keyboard",
             "lifecycle",
             "overview",
+            "zoom",
             "resize",
             "browser",
             "discord",
@@ -1775,6 +1776,10 @@ def main():
             import overview
 
             overview.lifecycle(suite, wait_for)
+        if args.only in ("all", "zoom"):
+            import zoom
+
+            zoom.lifecycle(suite, wait_for)
         if args.only == "companions" or args.only == "all" and args.companions:
             assert args.companions, "--companions is required for the companion suite"
             suite.companions(args.companions)

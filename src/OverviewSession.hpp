@@ -24,6 +24,7 @@ namespace hyprspace {
         SOverviewTarget source;
         Vector2D        pickup, offset, desktopOffset;
         SBoxF           box;
+        SBoxF           sourceCell; // monitor-local displayed workspace at pickup
         Vector2D        scale      = {1, 1};
         bool            resizeLeft = false, resizeTop = false;
         bool            moved = false;
@@ -40,26 +41,32 @@ namespace hyprspace {
         CTargetSelection<SOverviewTarget>       selection;
         SOverviewDrag                           drag;
 
-        bool         live() const;
-        void         begin();
-        void         stopInput();
-        void         restoreVisibility();
-        void         reconcileVisibility();
-        bool         covers(PHLMONITOR monitor) const;
-        void         hideWindow(PHLWINDOW window);
-        void         pointer(const Vector2D& pos);
-        void         refreshPointerTarget();
-        void         keyboard(COverview& view);
-        void         followKeyboardFocus();
-        bool         button(uint32_t button, bool pressed, uint32_t mods);
-        void         cancelDrag();
-        void         monitorRemoved(PHLMONITOR monitor);
-        void         damage();
-        PHLWORKSPACE workspace(const SOverviewTarget& target) const;
-        Vector2D     desktopPoint(const SOverviewTarget& target) const;
-        void         establishTarget();
-        void         ownCursor(bool own);
-        bool         cursorOwned() const {
+        bool                           live() const;
+        void                           begin();
+        void                           stopInput();
+        void                           restoreVisibility();
+        void                           reconcileVisibility();
+        bool                           covers(PHLMONITOR monitor) const;
+        void                           hideWindow(PHLWINDOW window);
+        void                           pointer(const Vector2D& pos);
+        void                           refreshPointerTarget();
+        void                           keyboard(COverview& view);
+        std::optional<uint64_t>        zoomPress();
+        void                           zoomRelease(uint64_t token);
+        void                           cancelZoom();
+        bool                           zoomHeld() const;
+        bool                           zoomLocked() const;
+        std::optional<SOverviewTarget> zoomTarget() const;
+        void                           followKeyboardFocus();
+        bool                           button(uint32_t button, bool pressed, uint32_t mods);
+        void                           cancelDrag();
+        void                           monitorRemoved(PHLMONITOR monitor);
+        void                           damage();
+        PHLWORKSPACE                   workspace(const SOverviewTarget& target) const;
+        Vector2D                       desktopPoint(const SOverviewTarget& target) const;
+        void                           establishTarget();
+        void                           ownCursor(bool own);
+        bool                           cursorOwned() const {
             return m_cursorOwned;
         }
         SP<Render::ITexture>           dragTexture() const;
@@ -67,7 +74,10 @@ namespace hyprspace {
         std::optional<SOverviewTarget> hit(const Vector2D& pos) const;
 
       private:
-        void syncSelection();
+        void                            syncSelection();
+        void                            updateZoom();
+        CZoomHoldState                  m_zoomHolds;
+        std::optional<SOverviewTarget>  m_zoomTarget;
         CVisibilityLedger<PHLWINDOWREF> m_visibility;
         SP<Render::ITexture>            m_dragTexture;
         bool                            m_cursorOwned = false;

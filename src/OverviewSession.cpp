@@ -35,6 +35,8 @@ namespace hyprspace {
     }
 
     void COverviewSession::begin() {
+        cancelZoom();
+        m_zoomTarget.reset();
         selection.clear();
         if (!config::followMouse() && covers(Desktop::focusState()->monitor()))
             followKeyboardFocus();
@@ -47,6 +49,7 @@ namespace hyprspace {
     }
 
     void COverviewSession::stopInput() {
+        cancelZoom();
         cancelDrag();
         hooks::cancelPlacement();
         ownCursor(false);
@@ -108,8 +111,14 @@ namespace hyprspace {
         // mapped to the desktop. Those are not overview pointer coordinates.
         if (hooks::mappingPointer())
             return;
-        m_pointer = pos;
-        selection.pointer(hit(pos), config::followMouse());
+        const bool moved  = pos != m_pointer;
+        m_pointer         = pos;
+        const auto target = hit(pos);
+        selection.pointer(target, config::followMouse() && !zoomLocked());
+        // Real pointer motion can inspect another window in the enlarged
+        // workspace, but camera motion must never select a different workspace.
+        if (moved && config::followMouse() && m_zoomTarget && target && target->workspace == m_zoomTarget->workspace && target->monitor == m_zoomTarget->monitor)
+            selection.keyboard(*target);
         for (const auto& view : views)
             if (!view->closing())
                 view->onMouseMove(pos);
@@ -138,9 +147,84 @@ namespace hyprspace {
     }
 
     void COverviewSession::keyboard(COverview& view) {
-        if (auto target = view.selectedTarget())
+        if (drag.active()) {
+            syncSelection();
+            return;
+        }
+        if (auto target = view.selectedTarget()) {
             selection.keyboard(*target);
+            if (zoomHeld()) {
+                if (m_zoomTarget && m_zoomTarget->monitor != target->monitor)
+                    for (const auto& other : views)
+                        if (other->monitor() == m_zoomTarget->monitor)
+                            other->releaseZoom();
+                m_zoomTarget = *target;
+                if (!view.zoomTo(target->workspace))
+                    cancelZoom();
+            }
+        }
         damage();
+    }
+
+    std::optional<uint64_t> COverviewSession::zoomPress() {
+        if (!live() || drag.active())
+            return std::nullopt;
+        if (zoomHeld())
+            return m_zoomHolds.press();
+        auto* view = keyboardView();
+        if (!view)
+            return std::nullopt;
+        auto target = selection.command();
+        if (!target)
+            target = view->selectedTarget();
+        if (!target || !view->zoomTo(target->workspace))
+            return std::nullopt;
+        m_zoomTarget = *target;
+        selection.keyboard(*target);
+        damage();
+        return m_zoomHolds.press();
+    }
+
+    void COverviewSession::zoomRelease(uint64_t token) {
+        if (m_zoomHolds.release(token) && !zoomHeld()) {
+            for (const auto& view : views)
+                view->releaseZoom();
+            damage();
+        }
+    }
+
+    void COverviewSession::cancelZoom() {
+        m_zoomHolds.cancel();
+        for (const auto& view : views)
+            view->releaseZoom();
+    }
+
+    bool COverviewSession::zoomHeld() const {
+        return m_zoomHolds.held();
+    }
+
+    bool COverviewSession::zoomLocked() const {
+        return m_zoomTarget.has_value();
+    }
+
+    std::optional<SOverviewTarget> COverviewSession::zoomTarget() const {
+        return m_zoomTarget;
+    }
+
+    void COverviewSession::updateZoom() {
+        if (!m_zoomTarget)
+            return;
+        if (zoomHeld() && !drag.active()) {
+            auto view = std::ranges::find_if(views, [&](const auto& candidate) { return !candidate->closing() && candidate->monitor() == m_zoomTarget->monitor; });
+            if (view == views.end() || !(*view)->zoomTo(m_zoomTarget->workspace)) {
+                cancelZoom();
+                if (view != views.end())
+                    if (auto target = (*view)->selectedTarget())
+                        selection.keyboard(*target);
+            }
+        }
+        if (!zoomHeld() && std::ranges::none_of(views, [](const auto& view) { return !view->closing() && view->zoomTransitioning(); }))
+            m_zoomTarget.reset();
     }
 
     void COverviewSession::syncSelection() {
@@ -151,9 +235,10 @@ namespace hyprspace {
     }
 
     void COverviewSession::refreshPointerTarget() {
+        updateZoom();
         if (!live() || !m_cursorOwned)
             return;
-        selection.refresh(hit(m_pointer), config::followMouse());
+        selection.refresh(hit(m_pointer), config::followMouse() && !zoomLocked());
         for (const auto& view : views)
             if (!view->closing())
                 view->onMouseMove(m_pointer);
@@ -229,6 +314,8 @@ namespace hyprspace {
         const auto ws  = w ? w->m_workspace : (mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr);
         if (!ws || !mon)
             return;
+        if (m_zoomTarget && (m_zoomTarget->workspace != SWorkspaceIdentity{ws->m_id, ws->m_name} || m_zoomTarget->monitor != mon))
+            return;
         auto target             = selection.command().value_or(SOverviewTarget{});
         target.workspace        = {ws->m_id, ws->m_name};
         target.monitor          = mon;
@@ -260,10 +347,16 @@ namespace hyprspace {
             drag.offset        = m_pointer - Vector2D{target->preview.x, target->preview.y};
             drag.desktopOffset = target->desktop - Vector2D{target->desktopBox.x, target->desktopBox.y};
             drag.box           = target->preview;
-            drag.scale         = {target->preview.w / target->desktopBox.w, target->preview.h / target->desktopBox.h};
-            drag.resizeLeft    = drag.desktopOffset.x < target->desktopBox.w / 2;
-            drag.resizeTop     = drag.desktopOffset.y < target->desktopBox.h / 2;
-            const auto corner  = *CConfigValue<Config::INTEGER>("general:resize_corner");
+            for (const auto& view : views) {
+                if (view->monitor() == target->monitor)
+                    drag.sourceCell = view->workspaceCell(target->workspace);
+                if (zoomHeld())
+                    view->freezeZoom();
+            }
+            drag.scale        = {target->preview.w / target->desktopBox.w, target->preview.h / target->desktopBox.h};
+            drag.resizeLeft   = drag.desktopOffset.x < target->desktopBox.w / 2;
+            drag.resizeTop    = drag.desktopOffset.y < target->desktopBox.h / 2;
+            const auto corner = *CConfigValue<Config::INTEGER>("general:resize_corner");
             if (target->window->m_isFloating && corner >= 1 && corner <= 4) {
                 drag.resizeLeft = corner == 1 || corner == 4;
                 drag.resizeTop  = corner == 1 || corner == 2;
@@ -294,12 +387,17 @@ namespace hyprspace {
     void COverviewSession::cancelDrag() {
         drag = {};
         m_dragTexture.reset();
+        updateZoom();
         damage();
     }
     SP<Render::ITexture> COverviewSession::dragTexture() const {
         return m_dragTexture;
     }
     void COverviewSession::monitorRemoved(PHLMONITOR mon) {
+        if (m_zoomTarget && m_zoomTarget->monitor == mon) {
+            cancelZoom();
+            m_zoomTarget.reset();
+        }
         cancelDrag();
         hooks::cancelPlacement();
         if (selection.command() && selection.command()->monitor == mon)

@@ -3,9 +3,40 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include <unordered_set>
 
 namespace hyprspace {
+
+    // Independent keyboard holds share one zoom. Cancellation drops their
+    // tokens without reusing them, so a late release cannot end a newer hold.
+    class CZoomHoldState {
+      public:
+        uint64_t press() {
+            if (m_nextToken == std::numeric_limits<uint64_t>::max())
+                throw std::overflow_error("zoom hold tokens exhausted");
+            const auto token = ++m_nextToken;
+            m_tokens.insert(token);
+            return token;
+        }
+
+        bool release(uint64_t token) {
+            return m_tokens.erase(token) > 0;
+        }
+
+        void cancel() {
+            m_tokens.clear();
+        }
+
+        bool held() const {
+            return !m_tokens.empty();
+        }
+
+      private:
+        uint64_t                     m_nextToken = 0;
+        std::unordered_set<uint64_t> m_tokens;
+    };
 
     struct SScrollInput {
         double   delta      = 0.0;

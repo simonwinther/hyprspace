@@ -1,10 +1,12 @@
 #include "Config.hpp"
+#include "CompositorHooks.hpp"
 
 #include <hyprland/src/config/values/types/BoolValue.hpp>
 #include <hyprland/src/config/values/types/ColorValue.hpp>
 #include <hyprland/src/config/values/types/FloatValue.hpp>
 #include <hyprland/src/config/values/types/IntValue.hpp>
 #include <hyprland/src/config/values/types/StringValue.hpp>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <memory>
 
@@ -31,6 +33,7 @@ namespace hyprspace::config {
             SP<Config::Values::CColorValue>  overviewTileBorderColor;
             SP<Config::Values::CColorValue>  overviewTitleBgColor;
             SP<Config::Values::CStringValue> overviewFont;
+            SP<Config::Values::CStringValue> overviewZoomKey;
             SP<Config::Values::CColorValue>  overviewFullscreenBorder;
 
             SP<Config::Values::CIntValue>    switcherIconSize;
@@ -44,14 +47,13 @@ namespace hyprspace::config {
             SP<Config::Values::CBoolValue>   switcherCurrentWorkspaceOnly;
             SP<Config::Values::CStringValue> switcherFont;
 
-            SP<Config::Values::CBoolValue>   followMouse;
-            SP<Config::Values::CBoolValue>   warpCursor;
+            SP<Config::Values::CBoolValue> followMouse;
+            SP<Config::Values::CBoolValue> warpCursor;
         };
 
         SValues g_values;
 
-        template <typename T, typename... Args>
-        SP<T> reg(Args&&... args) {
+        template <typename T, typename... Args> SP<T> reg(Args&&... args) {
             auto v = makeShared<T>(std::forward<Args>(args)...);
             HyprlandAPI::addConfigValueV2(PHANDLE, v);
             return v;
@@ -60,46 +62,58 @@ namespace hyprspace::config {
         CHyprColor colorOf(const SP<Config::Values::CColorValue>& v, uint64_t fallback) {
             return CHyprColor(v ? static_cast<uint64_t>(v->value()) : fallback);
         }
-    }
+    } // namespace
 
     void registerAll() {
         using namespace Config::Values;
 
         // ---- overview ----
-        g_values.overviewBgDim = reg<CFloatValue>("plugin:hyprspace:overview:bg_dim", "how much to dim the desktop behind the overview (0-1)", 0.80F,
-                                                  SFloatValueOptions{.min = 0.F, .max = 1.F});
-        g_values.overviewBgColor =
-            reg<CColorValue>("plugin:hyprspace:overview:bg_color", "colour mixed over the desktop behind the overview", 0xff11111b);
-        g_values.overviewPadding    = reg<CIntValue>("plugin:hyprspace:overview:padding", "outer padding of the overview, in px", 56, SIntValueOptions{.min = 0, .max = 512});
-        g_values.overviewGap        = reg<CIntValue>("plugin:hyprspace:overview:gap", "gap between workspace tiles, in px", 28, SIntValueOptions{.min = 0, .max = 256});
-        g_values.overviewBandGap    = reg<CIntValue>("plugin:hyprspace:overview:band_gap", "deprecated compatibility option; ignored, use overview:gap for both axes", 28, SIntValueOptions{.min = 0, .max = 256});
-        g_values.overviewRounding   = reg<CIntValue>("plugin:hyprspace:overview:rounding", "corner radius of workspace tiles, in px", 14, SIntValueOptions{.min = 0, .max = 64});
-        g_values.overviewBorderSize = reg<CIntValue>("plugin:hyprspace:overview:border_size", "selection border thickness, in px", 3, SIntValueOptions{.min = 0, .max = 16});
-        g_values.overviewActiveBorder = reg<CColorValue>("plugin:hyprspace:overview:active_border", "border colour of the selected tile", 0xff89b4fa);
-        g_values.overviewHoverBorder  = reg<CColorValue>("plugin:hyprspace:overview:hover_border", "border colour of the hovered tile", 0x8089b4fa);
-        g_values.overviewShowLabels   = reg<CBoolValue>("plugin:hyprspace:overview:workspace_labels", "show the workspace name under each tile", true);
+        g_values.overviewBgDim   = reg<CFloatValue>("plugin:hyprspace:overview:bg_dim", "how much to dim the desktop behind the overview (0-1)", 0.80F,
+                                                    SFloatValueOptions{.min = 0.F, .max = 1.F});
+        g_values.overviewBgColor = reg<CColorValue>("plugin:hyprspace:overview:bg_color", "colour mixed over the desktop behind the overview", 0xff11111b);
+        g_values.overviewPadding =
+            reg<CIntValue>("plugin:hyprspace:overview:padding", "outer padding of the overview, in px", 56, SIntValueOptions{.min = 0, .max = 512});
+        g_values.overviewGap     = reg<CIntValue>("plugin:hyprspace:overview:gap", "gap between workspace tiles, in px", 28, SIntValueOptions{.min = 0, .max = 256});
+        g_values.overviewBandGap = reg<CIntValue>("plugin:hyprspace:overview:band_gap", "deprecated compatibility option; ignored, use overview:gap for both axes", 28,
+                                                  SIntValueOptions{.min = 0, .max = 256});
+        g_values.overviewRounding =
+            reg<CIntValue>("plugin:hyprspace:overview:rounding", "corner radius of workspace tiles, in px", 14, SIntValueOptions{.min = 0, .max = 64});
+        g_values.overviewBorderSize =
+            reg<CIntValue>("plugin:hyprspace:overview:border_size", "selection border thickness, in px", 3, SIntValueOptions{.min = 0, .max = 16});
+        g_values.overviewActiveBorder   = reg<CColorValue>("plugin:hyprspace:overview:active_border", "border colour of the selected tile", 0xff89b4fa);
+        g_values.overviewHoverBorder    = reg<CColorValue>("plugin:hyprspace:overview:hover_border", "border colour of the hovered tile", 0x8089b4fa);
+        g_values.overviewShowLabels     = reg<CBoolValue>("plugin:hyprspace:overview:workspace_labels", "show the workspace name under each tile", true);
         g_values.overviewIncludeSpecial = reg<CBoolValue>("plugin:hyprspace:overview:include_special", "include special (scratchpad) workspaces", true);
-        g_values.overviewAllWorkspaces  = reg<CBoolValue>("plugin:hyprspace:overview:all_workspaces", "deprecated compatibility option; ignored, views always include populated, active and persistent workspaces", true);
-        g_values.overviewAllMonitors    = reg<CBoolValue>("plugin:hyprspace:overview:all_monitors", "open the overview on every monitor at once, not just the one under the pointer", true);
-        g_values.overviewLabelColor     = reg<CColorValue>("plugin:hyprspace:overview:label_color", "workspace label colour", 0xffcdd6f4);
-        g_values.overviewTileBgColor    = reg<CColorValue>("plugin:hyprspace:overview:tile_bg_color", "backing plate drawn behind each workspace tile", 0xd90d0d14);
+        g_values.overviewAllWorkspaces =
+            reg<CBoolValue>("plugin:hyprspace:overview:all_workspaces",
+                            "deprecated compatibility option; ignored, views always include populated, active and persistent workspaces", true);
+        g_values.overviewAllMonitors =
+            reg<CBoolValue>("plugin:hyprspace:overview:all_monitors", "open the overview on every monitor at once, not just the one under the pointer", true);
+        g_values.overviewLabelColor      = reg<CColorValue>("plugin:hyprspace:overview:label_color", "workspace label colour", 0xffcdd6f4);
+        g_values.overviewTileBgColor     = reg<CColorValue>("plugin:hyprspace:overview:tile_bg_color", "backing plate drawn behind each workspace tile", 0xd90d0d14);
         g_values.overviewTileBorderColor = reg<CColorValue>("plugin:hyprspace:overview:tile_border_color", "hairline drawn around every workspace tile", 0x1affffff);
-        g_values.overviewTitleBgColor   = reg<CColorValue>("plugin:hyprspace:overview:title_bg_color", "window title backdrop colour", 0xe61e1e2e);
-        g_values.overviewFont           = reg<CStringValue>("plugin:hyprspace:overview:font", "pango font description used in the overview", "Sans 12");
+        g_values.overviewTitleBgColor    = reg<CColorValue>("plugin:hyprspace:overview:title_bg_color", "window title backdrop colour", 0xe61e1e2e);
+        g_values.overviewFont            = reg<CStringValue>("plugin:hyprspace:overview:font", "pango font description used in the overview", "Sans 12");
+        g_values.overviewZoomKey = reg<CStringValue>("plugin:hyprspace:overview:zoom_key", "unmodified XKB key held to enlarge the selected workspace; empty disables",
+                                                     "z", SStringValueOptions{.validator = hooks::validateZoomKey});
         g_values.overviewFullscreenBorder =
             reg<CColorValue>("plugin:hyprspace:overview:fullscreen_border", "outline and badge marking the window that is fullscreen", 0xff89b4fa);
 
         // ---- switcher ----
-        g_values.switcherIconSize = reg<CIntValue>("plugin:hyprspace:switcher:icon_size", "app icon size in the alt-tab switcher, in px", 96, SIntValueOptions{.min = 24, .max = 256});
-        g_values.switcherPadding  = reg<CIntValue>("plugin:hyprspace:switcher:padding", "inner padding of the switcher panel, in px", 24, SIntValueOptions{.min = 0, .max = 128});
-        g_values.switcherGap      = reg<CIntValue>("plugin:hyprspace:switcher:gap", "gap between switcher entries, in px", 12, SIntValueOptions{.min = 0, .max = 128});
-        g_values.switcherRounding = reg<CIntValue>("plugin:hyprspace:switcher:rounding", "corner radius of the switcher panel, in px", 20, SIntValueOptions{.min = 0, .max = 64});
-        g_values.switcherBgColor  = reg<CColorValue>("plugin:hyprspace:switcher:bg_color", "switcher panel background colour", 0xf01e1e2e);
+        g_values.switcherIconSize =
+            reg<CIntValue>("plugin:hyprspace:switcher:icon_size", "app icon size in the alt-tab switcher, in px", 96, SIntValueOptions{.min = 24, .max = 256});
+        g_values.switcherPadding =
+            reg<CIntValue>("plugin:hyprspace:switcher:padding", "inner padding of the switcher panel, in px", 24, SIntValueOptions{.min = 0, .max = 128});
+        g_values.switcherGap = reg<CIntValue>("plugin:hyprspace:switcher:gap", "gap between switcher entries, in px", 12, SIntValueOptions{.min = 0, .max = 128});
+        g_values.switcherRounding =
+            reg<CIntValue>("plugin:hyprspace:switcher:rounding", "corner radius of the switcher panel, in px", 20, SIntValueOptions{.min = 0, .max = 64});
+        g_values.switcherBgColor        = reg<CColorValue>("plugin:hyprspace:switcher:bg_color", "switcher panel background colour", 0xf01e1e2e);
         g_values.switcherHighlightColor = reg<CColorValue>("plugin:hyprspace:switcher:highlight_color", "selection highlight colour", 0x4089b4fa);
         g_values.switcherTextColor      = reg<CColorValue>("plugin:hyprspace:switcher:text_color", "switcher title colour", 0xffcdd6f4);
         g_values.switcherShowTitle      = reg<CBoolValue>("plugin:hyprspace:switcher:show_title", "show the selected window's title under the icons", true);
         g_values.switcherCurrentWorkspaceOnly =
-            reg<CBoolValue>("plugin:hyprspace:switcher:current_workspace_only", "restrict to the target monitor's active normal workspace; false includes all outputs/workspaces", SWITCHER_CURRENT_WORKSPACE_ONLY_DEFAULT);
+            reg<CBoolValue>("plugin:hyprspace:switcher:current_workspace_only",
+                            "restrict to the target monitor's active normal workspace; false includes all outputs/workspaces", SWITCHER_CURRENT_WORKSPACE_ONLY_DEFAULT);
         g_values.switcherFont = reg<CStringValue>("plugin:hyprspace:switcher:font", "pango font description used in the switcher", "Sans 13");
 
         // ---- shared ----
@@ -163,6 +177,12 @@ namespace hyprspace::config {
     }
     std::string overviewFont() {
         return g_values.overviewFont ? g_values.overviewFont->value() : "Sans 12";
+    }
+    xkb_keysym_t overviewZoomKey() {
+        const auto name = g_values.overviewZoomKey ? g_values.overviewZoomKey->value() : "z";
+        if (name.empty() || !hooks::validateZoomKey(name))
+            return XKB_KEY_NoSymbol;
+        return xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
     }
     CHyprColor overviewFullscreenBorder() {
         return colorOf(g_values.overviewFullscreenBorder, 0xff89b4fa);

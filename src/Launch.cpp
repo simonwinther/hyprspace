@@ -267,6 +267,12 @@ namespace hyprspace::launch {
                 result["modifiers"]      = g_pInputManager->getModsFromAllKBs();
                 result["keyboard_owned"] = hooks::keyboardOwned();
                 result["cursor_owned"]   = session().cursorOwned();
+                const auto zoomTarget    = session().zoomTarget();
+                const auto zoomMonitor   = zoomTarget ? zoomTarget->monitor.lock() : nullptr;
+                result["zoom"]           = {{"held", session().zoomHeld()},
+                                            {"workspace", zoomTarget ? zoomTarget->workspace.id : 0},
+                                            {"monitor", zoomMonitor ? zoomMonitor->m_name : ""},
+                                            {"returning", session().zoomLocked() && !session().zoomHeld()}};
                 if (session().drag.active()) {
                     const auto& drag    = session().drag;
                     const auto  boxJSON = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
@@ -312,10 +318,14 @@ namespace hyprspace::launch {
                                              {"h", box.h}});
                         }
                         const auto& counts = view->layoutCounters();
-                        result["views"].push_back({{"monitor", mon->m_name}, {"tiles", tiles},
-                                                   {"layout", {{"frames", counts.frames}, {"window_updates", counts.windowUpdates},
-                                                               {"window_layouts", counts.windowLayouts}, {"spread_layouts", counts.spreadLayouts},
-                                                               {"grid_layouts", counts.gridLayouts}}}});
+                        result["views"].push_back({{"monitor", mon->m_name},
+                                                   {"tiles", tiles},
+                                                   {"layout",
+                                                    {{"frames", counts.frames},
+                                                     {"window_updates", counts.windowUpdates},
+                                                     {"window_layouts", counts.windowLayouts},
+                                                     {"spread_layouts", counts.spreadLayouts},
+                                                     {"grid_layouts", counts.gridLayouts}}}});
                     }
                 }
                 const auto& captures = captureResources();
@@ -342,7 +352,7 @@ namespace hyprspace::launch {
                                           {"misses", tex.misses},
                                           {"evictions", tex.evictions},
                                           {"failures", tex.failures}}}};
-                result["windows"] = nlohmann::json::array();
+                result["windows"]    = nlohmann::json::array();
                 for (const auto& w : Desktop::windowState()->windows())
                     if (w->m_isMapped)
                         result["windows"].push_back(

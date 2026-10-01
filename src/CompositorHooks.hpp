@@ -4,17 +4,19 @@
 #include "Scrolling.hpp"
 
 #include <functional>
+#include <expected>
 #include <hyprland/src/plugins/HookSystem.hpp>
 
 namespace hyprspace::hooks {
-    void           install(std::function<bool()> ownsKeyboard, std::function<bool()> launchEnabled, std::function<bool(PHLMONITOR)> promotePanels);
-    void           uninstall();
-    void           ownCursor(bool own);
-    void           renderPanels(PHLMONITOR monitor);
-    bool           keyboardOwned();
-    double         scrollFactor();
-    void           syncKeyboardFocus();
-    CFunctionHook* attach(const std::string& name, const std::string& signature, void* callback);
+    void                             install(std::function<bool()> ownsKeyboard, std::function<bool()> launchEnabled, std::function<bool(PHLMONITOR)> promotePanels);
+    void                             uninstall();
+    void                             ownCursor(bool own);
+    void                             renderPanels(PHLMONITOR monitor);
+    bool                             keyboardOwned();
+    std::expected<void, std::string> validateZoomKey(const std::string& name);
+    double                           scrollFactor();
+    void                             syncKeyboardFocus();
+    CFunctionHook*                   attach(const std::string& name, const std::string& signature, void* callback);
 
     // Desktop coordinates are scoped to one synchronous native operation.
     // The hardware pointer never warps into a miniature's desktop position.

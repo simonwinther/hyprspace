@@ -78,6 +78,11 @@ namespace hyprspace {
         std::optional<SOverviewTarget> selectedTarget() const;
         void                           selectTarget(const SOverviewTarget& target);
         std::vector<SOverviewTarget>   inspectTargets() const;
+        bool                           zoomTo(const SWorkspaceIdentity& workspace);
+        void                           releaseZoom();
+        bool                           zoomTransitioning() const;
+        void                           freezeZoom();
+        SBoxF                          workspaceCell(const SWorkspaceIdentity& workspace) const;
         SP<Render::ITexture>           textureFor(PHLWINDOW window) const {
             return m_capture.textureFor(window);
         }
@@ -85,19 +90,21 @@ namespace hyprspace {
       private:
         // Desktop and preview bounds are both in monitor-local logical pixels.
         struct SWindowSlot {
-            PHLWINDOWREF                window;
-            SBoxF                       desktopRect;
-            SBoxF                       previewRect;
-            Fullscreen::eFullscreenMode fullscreen  = Fullscreen::FSMODE_NONE;
-            int                         renderLayer = 0;
-            bool                        blur        = false;
+            PHLWINDOWREF                          window;
+            SBoxF                                 desktopRect;
+            SBoxF                                 previewRect;
+            Fullscreen::eFullscreenMode           fullscreen  = Fullscreen::FSMODE_NONE;
+            int                                   renderLayer = 0;
+            bool                                  blur        = false;
+            std::optional<SWindowPreviewGeometry> closeGeometry;
+            float                                 closeVisibility = 0;
         };
 
         struct SWindowLayoutState {
             std::vector<SOverviewWindowInput> input;
-            SBoxF                            usable;
-            size_t                           fixedColumns;
-            SOverviewWindowLayout            result;
+            SBoxF                             usable;
+            size_t                            fixedColumns;
+            SOverviewWindowLayout             result;
         };
 
         // One workspace tile.
@@ -105,14 +112,16 @@ namespace hyprspace {
             long                              workspaceId = 0;
             std::string                       name;
             std::string                       workspaceName;
-            std::vector<SWindowSlot>           windows;
-            std::vector<size_t>                drawOrder;
+            std::vector<SWindowSlot>          windows;
+            std::vector<size_t>               drawOrder;
             std::optional<SWindowLayoutState> windowLayout;
             size_t                            previewColumns = 0;
             bool                              spread         = false;
             bool                              isActive       = false;
             SBoxF                             target         = {}; // final cell
             SBoxF                             start          = {}; // where it animates from
+            std::optional<SBoxF>              closeCell;
+            SWorkspacePreviewStyle            closeStyle = {};
         };
 
         void collect();
@@ -132,8 +141,13 @@ namespace hyprspace {
         // Actual desktop bounds, independent of its overview placement.
         SBoxF                  boxFor(const PHLWINDOW& w) const;
         SWindowPreviewGeometry geometryFor(const SEntry& entry, const SWindowSlot& slot) const;
+        SWorkspacePreviewStyle styleFor(const SEntry& entry, bool selected) const;
+        float                  visibilityFor(const SEntry& entry, const SWindowSlot& slot) const;
 
-        SBoxF interpolate(const SEntry& e) const;
+        SBoxF           interpolate(const SEntry& e) const;
+        SBoxF           displayedCell(const SEntry& e) const;
+        SOverviewCamera camera() const;
+        float           overviewProgress() const;
 
         // Where a window at monitor-local logical `r` lands inside cell `cell`.
         SBoxF windowBoxInCell(const SBoxF& r, const SBoxF& cell) const;
@@ -162,7 +176,7 @@ namespace hyprspace {
             size_t count;
             int    padding, gap;
             bool   labels;
-            bool operator==(const STileLayoutKey&) const = default;
+            bool   operator==(const STileLayoutKey&) const = default;
         };
         std::optional<STileLayoutKey> m_tileLayoutKey;
 
@@ -186,7 +200,10 @@ namespace hyprspace {
         // switches to it (creating it) instead of using the selection.
         long m_gotoWorkspace = 0;
 
-        PHLANIMVAR<float> m_progress; // 0 = desktop, 1 = overview
+        PHLANIMVAR<float>    m_progress; // opening: 0 = desktop, 1 = overview; closing: remaining fraction
+        PHLANIMVAR<float>    m_zoomScale;
+        PHLANIMVAR<Vector2D> m_zoomOffset;
+        float                m_closeStartProgress = 1.F;
     };
 
 } // namespace hyprspace

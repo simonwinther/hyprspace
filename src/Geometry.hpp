@@ -16,7 +16,7 @@ namespace hyprspace {
 
     struct SBoxF {
         double x = 0, y = 0, w = 0, h = 0;
-        bool operator==(const SBoxF&) const = default;
+        bool   operator==(const SBoxF&) const = default;
 
         double cx() const {
             return x + w / 2.0;
@@ -28,6 +28,39 @@ namespace hyprspace {
             return px >= x && px < x + w && py >= y && py < y + h;
         }
     };
+
+    inline SBoxF interpolateBox(const SBoxF& from, const SBoxF& to, double progress) {
+        const double p = std::isfinite(progress) ? std::clamp(progress, 0.0, 1.0) : 0.0;
+        return {std::lerp(from.x, to.x, p), std::lerp(from.y, to.y, p), std::lerp(from.w, to.w, p), std::lerp(from.h, to.h, p)};
+    }
+
+    // Camera coordinates stay in monitor-local logical pixels. The same
+    // transform supplies drawing, hit testing and preview-to-desktop mapping.
+    struct SOverviewCamera {
+        double scale = 1, x = 0, y = 0;
+        bool   operator==(const SOverviewCamera&) const = default;
+
+        SBoxF apply(const SBoxF& box) const {
+            return {box.x * scale + x, box.y * scale + y, box.w * scale, box.h * scale};
+        }
+    };
+
+    inline SOverviewCamera overviewCameraAt(const SOverviewCamera& camera, double progress) {
+        const double p = std::isfinite(progress) ? std::clamp(progress, 0.0, 1.0) : 0.0;
+        if (!std::isfinite(camera.scale) || camera.scale <= 0 || !std::isfinite(camera.x) || !std::isfinite(camera.y))
+            return {};
+        return {std::lerp(1.0, camera.scale, p), camera.x * p, camera.y * p};
+    }
+
+    // A carried resize preview retains its pickup mapping for input, while its
+    // picture follows the workspace's current displayed cell.
+    inline SBoxF reprojectOverviewBox(const SBoxF& box, const SBoxF& sourceCell, const SBoxF& destinationCell) {
+        if (!std::isfinite(sourceCell.w) || !std::isfinite(sourceCell.h) || !std::isfinite(destinationCell.w) || !std::isfinite(destinationCell.h) || sourceCell.w <= 0 ||
+            sourceCell.h <= 0 || destinationCell.w <= 0 || destinationCell.h <= 0)
+            return box;
+        const double sx = destinationCell.w / sourceCell.w, sy = destinationCell.h / sourceCell.h;
+        return {destinationCell.x + (box.x - sourceCell.x) * sx, destinationCell.y + (box.y - sourceCell.y) * sy, box.w * sx, box.h * sy};
+    }
 
     // One workspace as far as the layout engine is concerned.
     struct STileInput {
@@ -44,12 +77,12 @@ namespace hyprspace {
     };
 
     struct SLayoutParams {
-        double screenW = 1920;
-        double screenH = 1080;
-        double padding    = 56;  // outer padding
-        double gap        = 28;  // gap between cells
+        double screenW    = 1920;
+        double screenH    = 1080;
+        double padding    = 56; // outer padding
+        double gap        = 28; // gap between cells
         double aspect     = 16.0 / 9.0;
-        double labelSpace = 0;   // room reserved under each cell for its label
+        double labelSpace = 0; // room reserved under each cell for its label
     };
 
     struct SLayoutResult {
@@ -120,11 +153,11 @@ namespace hyprspace {
         out.cols = static_cast<int>(cols);
 
         for (size_t i = 0; i < n; ++i) {
-            const size_t row     = i / cols;
-            const size_t col     = i % cols;
-            const size_t inRow   = std::min(cols, n - row * cols);
-            const double rowW    = cellW * static_cast<double>(inRow) + p.gap * static_cast<double>(inRow - 1);
-            const double startX  = p.padding + (usableW - rowW) / 2.0; // last row stays centred
+            const size_t row    = i / cols;
+            const size_t col    = i % cols;
+            const size_t inRow  = std::min(cols, n - row * cols);
+            const double rowW   = cellW * static_cast<double>(inRow) + p.gap * static_cast<double>(inRow - 1);
+            const double startX = p.padding + (usableW - rowW) / 2.0; // last row stays centred
 
             STile tile;
             tile.key   = input[i].key;
@@ -150,8 +183,8 @@ namespace hyprspace {
         if (current < 0 || current >= static_cast<int>(tiles.size()))
             return 0;
 
-        const auto& from = tiles[current].box;
-        int         best = -1;
+        const auto& from      = tiles[current].box;
+        int         best      = -1;
         double      bestScore = 0;
 
         for (size_t i = 0; i < tiles.size(); ++i) {
@@ -164,22 +197,22 @@ namespace hyprspace {
 
             double along = 0, perp = 0;
             switch (dir) {
-                case EDirection::LEFT:
-                    along = -dx;
-                    perp  = std::abs(dy);
-                    break;
-                case EDirection::RIGHT:
-                    along = dx;
-                    perp  = std::abs(dy);
-                    break;
-                case EDirection::UP:
-                    along = -dy;
-                    perp  = std::abs(dx);
-                    break;
-                case EDirection::DOWN:
-                    along = dy;
-                    perp  = std::abs(dx);
-                    break;
+            case EDirection::LEFT:
+                along = -dx;
+                perp  = std::abs(dy);
+                break;
+            case EDirection::RIGHT:
+                along = dx;
+                perp  = std::abs(dy);
+                break;
+            case EDirection::UP:
+                along = -dy;
+                perp  = std::abs(dx);
+                break;
+            case EDirection::DOWN:
+                along = dy;
+                perp  = std::abs(dx);
+                break;
             }
 
             if (along <= 1.0) // must actually move that way
@@ -231,6 +264,23 @@ namespace hyprspace {
 
         const double w = b.h * aspect;
         return SBoxF{b.x + (b.w - w) / 2.0, b.y, w, b.h};
+    }
+
+    inline SOverviewCamera overviewZoomCamera(const SBoxF& focus, const SBoxF& usable, double padding, double labelSpace) {
+        const auto valid = [](const SBoxF& box) {
+            return std::isfinite(box.x) && std::isfinite(box.y) && std::isfinite(box.w) && std::isfinite(box.h) && box.w > 0 && box.h > 0;
+        };
+        if (!valid(focus) || !valid(usable) || !std::isfinite(padding) || !std::isfinite(labelSpace))
+            return {};
+        const double pad = std::max(0.0, padding), labels = std::max(0.0, labelSpace);
+        const SBoxF  inner{usable.x + pad, usable.y + pad, usable.w - 2 * pad, usable.h - 2 * pad - labels};
+        if (!valid(inner))
+            return {};
+        const auto   fitted = fitBox(inner, focus.w / focus.h);
+        const double scale  = fitted.w / focus.w;
+        if (!std::isfinite(scale) || scale <= 1.0 + 1e-9)
+            return {};
+        return {scale, fitted.cx() - focus.cx() * scale, fitted.cy() - focus.cy() * scale};
     }
 
     // The label under a workspace tile.

@@ -23,6 +23,16 @@ namespace hyprspace {
         return {visibility, visibility * (1.F - (selected ? 0.F : 0.1F) * p), visibility * p};
     }
 
+    inline SWorkspacePreviewStyle closingWorkspacePreviewStyle(const SWorkspacePreviewStyle& start, bool anchor, float remaining) {
+        const float p        = previewUnit(remaining);
+        const float endpoint = anchor ? 1.F : 0.F;
+        return {std::lerp(endpoint, start.visibility, p), std::lerp(endpoint, start.windowVisibility, p), start.plateVisibility * p};
+    }
+
+    inline float closingWindowPreviewVisibility(float start, float desktopVisibility, bool anchor, float remaining) {
+        return std::lerp(anchor ? previewUnit(desktopVisibility) : 0.F, previewUnit(start), previewUnit(remaining));
+    }
+
     // Capture omits compositor opacity. Apply it once, independently of the
     // overview's animation; the temporary alpha used to hide real windows must
     // never enter this calculation.
@@ -51,11 +61,13 @@ namespace hyprspace {
         if (!anchor)
             return overview;
 
-        const double p           = previewUnit(progress);
-        const auto   interpolate = [p](const SBoxF& from, const SBoxF& to) {
-            return SBoxF{std::lerp(from.x, to.x, p), std::lerp(from.y, to.y, p), std::lerp(from.w, to.w, p), std::lerp(from.h, to.h, p)};
-        };
-        return {interpolate(desktop.box, overview.box), interpolate(desktop.clip, overview.clip)};
+        const double p = previewUnit(progress);
+        return {interpolateBox(desktop.box, overview.box, p), interpolateBox(desktop.clip, overview.clip, p)};
+    }
+
+    inline SWindowPreviewGeometry closingWindowPreviewGeometry(const SWindowPreviewGeometry& start, const SWindowPreviewGeometry& endpoint, float remaining) {
+        const double p = previewUnit(remaining);
+        return {interpolateBox(endpoint.box, start.box, p), interpolateBox(endpoint.clip, start.clip, p)};
     }
 
 } // namespace hyprspace

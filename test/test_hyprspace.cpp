@@ -53,6 +53,9 @@ static void section(const char* name) {
     std::printf("%s\n", name);
 }
 
+#include "test_zoom_input.hpp"
+#include "test_zoom_geometry.hpp"
+
 // ---------------------------------------------------------------- layout ----
 
 static std::vector<STileInput> makeInput(size_t n) {
@@ -1488,6 +1491,8 @@ int main(int argc, char** argv) {
     testPreviewStyle();
     testOverviewWindowLayout();
     testFullscreenPreviewGeometry();
+    testZoomInput();
+    testZoomGeometry();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
