@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/simonwinther/hyprspace/compare/v1.2.0...v1.2.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **overview:** resume selection after zoom release ([5d47ab1](https://github.com/simonwinther/hyprspace/commit/5d47ab175c4c965a8cbc6eea331d0d781fdcb645))
+
 ## [1.2.0](https://github.com/simonwinther/hyprspace/compare/v1.1.0...v1.2.0) (2026-10-03)
 
 
