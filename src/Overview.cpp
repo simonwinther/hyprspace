@@ -190,8 +190,10 @@ namespace hyprspace {
             for (auto& entry : m_entries) {
                 const auto old =
                     std::ranges::find_if(previous, [&](const auto& e) { return e.workspaceId == entry.workspaceId && e.workspaceName == entry.workspaceName; });
-                if (old != previous.end())
+                if (old != previous.end()) {
                     entry.windowLayout = std::move(old->windowLayout);
+                    entry.labelSize    = old->labelSize;
+                }
                 updateWindowLayout(entry);
             }
             computeLayout();
@@ -401,6 +403,61 @@ namespace hyprspace {
 
     bool COverview::zoomTransitioning() const {
         return !m_closing && (m_zoomScale->isBeingAnimated() || m_zoomOffset->isBeingAnimated());
+    }
+
+    bool COverview::zoomNavigationReady() const {
+        return !m_closing && !m_progress->isBeingAnimated() && m_progress->value() >= 0.99F && !zoomTransitioning();
+    }
+
+    std::optional<EDirection> COverview::zoomEdgeAt(const Vector2D& globalPos) const {
+        const auto mon = monitor();
+        if (!mon)
+            return std::nullopt;
+        const auto local = globalPos - mon->m_position;
+        if (scrollControlAt(local))
+            return std::nullopt;
+        return overviewZoomEdgeAt(m_usable, local.x, local.y);
+    }
+
+    std::optional<SWorkspaceIdentity> COverview::zoomNeighbor(const SWorkspaceIdentity& workspace, EDirection direction) const {
+        for (size_t i = 0; i < m_tiles.size(); ++i) {
+            const auto& source = m_entries[m_tiles[i].key];
+            if (workspace != SWorkspaceIdentity{source.workspaceId, source.workspaceName})
+                continue;
+            const int next = navigate(m_tiles, static_cast<int>(i), direction);
+            if (next < 0 || next == static_cast<int>(i))
+                return std::nullopt;
+            const auto& destination = m_entries[m_tiles[next].key];
+            return SWorkspaceIdentity{destination.workspaceId, destination.workspaceName};
+        }
+        return std::nullopt;
+    }
+
+    std::vector<COverview::SZoomEdgeHint> COverview::zoomEdgeHints() const {
+        std::vector<SZoomEdgeHint> result;
+        if (!session().zoomEdgeReady(*this))
+            return result;
+        std::vector<SBoxF> obstacles;
+        for (const auto& entry : m_entries) {
+            const auto cell = displayedCell(entry);
+            if (auto state = scrollingFor(entry)) {
+                const auto controls = scrollControls(cell, state->horizontal);
+                if (state->previous)
+                    obstacles.push_back(controls.previous);
+                if (state->next)
+                    obstacles.push_back(controls.next);
+            }
+            if (config::overviewShowLabels() && entry.labelSize)
+                obstacles.push_back(overviewWorkspaceLabelBox(cell, entry.labelSize->x, entry.labelSize->y));
+        }
+        const auto source = session().zoomTarget();
+        for (auto direction : {EDirection::LEFT, EDirection::RIGHT, EDirection::UP, EDirection::DOWN}) {
+            const auto neighbor = zoomNeighbor(source->workspace, direction);
+            const auto box      = overviewZoomHintBox(m_usable, direction, obstacles);
+            if (neighbor && box)
+                result.push_back({direction, *neighbor, *box, session().zoomEdgePending() == direction});
+        }
+        return result;
     }
 
     void COverview::freezeZoom() {
@@ -1114,7 +1171,7 @@ namespace hyprspace {
 
         // --- workspace tiles ----------------------------------------------------
         for (size_t i = 0; i < m_tiles.size(); ++i) {
-            const auto& entry = m_entries[m_tiles[i].key];
+            auto& entry = m_entries[m_tiles[i].key];
 
             const SBoxF cell = displayedCell(entry);
             if (cell.w <= 1 || cell.h <= 1)
@@ -1239,6 +1296,7 @@ namespace hyprspace {
             }
 
             // --- workspace label ------------------------------------------------
+            entry.labelSize.reset();
             if (config::overviewShowLabels() && PROGRESS > 0.35F) {
                 const float LABEL_A = (PROGRESS - 0.35F) / 0.65F * FADE;
 
@@ -1247,22 +1305,40 @@ namespace hyprspace {
                 if (!t2)
                     continue;
 
-                const auto       SZ    = logicalSize(t2);
-                constexpr double PAD_X = 14, PAD_Y = 5;
-
-                // A pill centred just under the tile, GNOME-style. Give it a
-                // minimum width so single digits do not become tiny circles.
-                const double PILL_W = std::max(SZ.x + PAD_X * 2, 46.0);
-                const SBoxF  bgBox{
-                    cell.x + (cell.w - PILL_W) / 2.0,
-                    cell.y + cell.h + 9,
-                    PILL_W,
-                    SZ.y + PAD_Y * 2,
-                };
+                const auto SZ    = logicalSize(t2);
+                entry.labelSize  = SZ;
+                const auto bgBox = overviewWorkspaceLabelBox(cell, SZ.x, SZ.y);
 
                 const auto BGCOL = config::overviewTitleBgColor();
                 rect(bgBox, BGCOL.modifyA(BGCOL.a * LABEL_A), bgBox.h / 2.0);
-                tex(t2, SBoxF{bgBox.x + (bgBox.w - SZ.x) / 2.0, bgBox.y + PAD_Y, SZ.x, SZ.y}, LABEL_A);
+                tex(t2, SBoxF{bgBox.x + (bgBox.w - SZ.x) / 2.0, bgBox.y + 5, SZ.x, SZ.y}, LABEL_A);
+            }
+        }
+
+        for (const auto& hint : zoomEdgeHints()) {
+            const char* arrow = "";
+            switch (hint.direction) {
+            case EDirection::LEFT:
+                arrow = "←";
+                break;
+            case EDirection::RIGHT:
+                arrow = "→";
+                break;
+            case EDirection::UP:
+                arrow = "↑";
+                break;
+            case EDirection::DOWN:
+                arrow = "↓";
+                break;
+            }
+            const auto  ink   = config::overviewActiveBorder();
+            const float alpha = hint.pending ? 1.F : 0.65F;
+            rect(hint.box, config::overviewTitleBgColor().modifyA(alpha), 8);
+            constexpr double GLYPH_SCALE = 1.5;
+            if (auto text = textures().text(arrow, FONT, ink, static_cast<int>(hint.box.w / GLYPH_SCALE), SCALE * GLYPH_SCALE)) {
+                const auto size = logicalSize(text);
+                const auto box  = fitBox({hint.box.x + 4, hint.box.y + 4, hint.box.w - 8, hint.box.h - 8}, size.x / size.y);
+                tex(text, box, alpha);
             }
         }
 

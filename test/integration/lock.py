@@ -4,6 +4,9 @@ import json
 from protocol import reply
 import subprocess
 
+from zoom import Z, edge_point, tiles, zoom_edges
+from resize import area
+
 
 def lifecycle(s, wait_for):
     def request(process, command):
@@ -44,10 +47,21 @@ def lifecycle(s, wait_for):
                 s.key(56, 1)
             s.ctl("dispatch", f"hyprspace:{initial}")
             wait_for(lambda: s.status()["cursor_owned"])
+            if initial == "overview":
+                s.ctl("keyword", "workspace", f"21,monitor:{s.names[0]},persistent:true,layout:dwindle")
+                wait_for(lambda: (s.names[0], 21) in tiles(s))
+                s.key(Z, 1)
+                wait_for(lambda: zoom_edges(s, s.names[0]))
+                work = area(next(m for m in s.data("monitors") if m["name"] == s.names[0]))
+                s.move(edge_point(work, "right"))
+                assert any(h["pending"] for h in zoom_edges(s, s.names[0]))
         request(locker, "lock")
         wait_for(lambda: request(locker, "counts")["locked"])
         if initial == "switch":
             s.key(56, 0)
+        if initial == "overview":
+            s.key(Z, 0)
+            assert not s.status()["zoom"]["held"]
         released()
         input_reaches_locker(locker)
         if initial is None:
@@ -77,3 +91,5 @@ def lifecycle(s, wait_for):
         s.check(f"unlocking the {initial or 'idle'} session restores normal overview and switcher activation")
         locker.terminate()
         locker.wait(timeout=3)
+        if initial == "overview":
+            s.ctl("keyword", "workspace", "21,persistent:false")

@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -174,6 +175,59 @@ namespace hyprspace {
     // ---- keyboard navigation over a finished layout -------------------------
 
     enum class EDirection { LEFT, RIGHT, UP, DOWN };
+
+    inline SBoxF overviewWorkspaceLabelBox(const SBoxF& cell, double textWidth, double textHeight) {
+        const double width = std::max(textWidth + 28, 46.0);
+        return {cell.cx() - width / 2, cell.y + cell.h + 9, width, textHeight + 10};
+    }
+
+    inline std::optional<EDirection> overviewZoomEdgeAt(const SBoxF& usable, double x, double y) {
+        constexpr double WIDTH = 48;
+        if (usable.w <= 2 * WIDTH || usable.h <= 2 * WIDTH || !usable.contains(x, y))
+            return std::nullopt;
+        const bool left = x < usable.x + WIDTH, right = x >= usable.x + usable.w - WIDTH;
+        const bool top = y < usable.y + WIDTH, bottom = y >= usable.y + usable.h - WIDTH;
+        if ((left || right) && (top || bottom))
+            return std::nullopt;
+        if (left)
+            return EDirection::LEFT;
+        if (right)
+            return EDirection::RIGHT;
+        if (top)
+            return EDirection::UP;
+        if (bottom)
+            return EDirection::DOWN;
+        return std::nullopt;
+    }
+
+    inline std::optional<SBoxF> overviewZoomHintBox(const SBoxF& usable, EDirection direction, const std::vector<SBoxF>& obstacles) {
+        if (usable.w <= 96 || usable.h <= 96)
+            return std::nullopt;
+        constexpr double SIZE = 32, INSET = 24;
+        SBoxF            box{usable.cx() - SIZE / 2, usable.cy() - SIZE / 2, SIZE, SIZE};
+        const bool       horizontal = direction == EDirection::LEFT || direction == EDirection::RIGHT;
+        if (horizontal)
+            box.x = (direction == EDirection::LEFT ? usable.x + INSET : usable.x + usable.w - INSET) - SIZE / 2;
+        else
+            box.y = (direction == EDirection::UP ? usable.y + INSET : usable.y + usable.h - INSET) - SIZE / 2;
+        const auto fits = [&](const SBoxF& candidate) {
+            if (candidate.x < usable.x || candidate.y < usable.y || candidate.x + candidate.w > usable.x + usable.w || candidate.y + candidate.h > usable.y + usable.h)
+                return false;
+            if (overviewZoomEdgeAt(usable, candidate.x, candidate.y) != direction ||
+                overviewZoomEdgeAt(usable, std::nextafter(candidate.x + candidate.w, candidate.x), std::nextafter(candidate.y + candidate.h, candidate.y)) != direction)
+                return false;
+            return std::ranges::none_of(obstacles, [&](const auto& other) {
+                return candidate.x < other.x + other.w && other.x < candidate.x + candidate.w && candidate.y < other.y + other.h && other.y < candidate.y + candidate.h;
+            });
+        };
+        for (double shift : {0.0, 48.0, -48.0}) {
+            auto candidate = box;
+            (horizontal ? candidate.y : candidate.x) += shift;
+            if (fits(candidate))
+                return candidate;
+        }
+        return std::nullopt;
+    }
 
     // Directional move: pick the closest tile in the requested direction, scoring
     // primarily on the axis of travel and secondarily on perpendicular offset.

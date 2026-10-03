@@ -48,8 +48,9 @@ namespace hyprspace {
         void                           reconcileVisibility();
         bool                           covers(PHLMONITOR monitor) const;
         void                           hideWindow(PHLWINDOW window);
-        void                           pointer(const Vector2D& pos);
-        void                           refreshPointerTarget();
+        void                           pointer(const Vector2D& pos, bool userMotion = false);
+        void                           observePointer(const Vector2D& pos);
+        void                           refreshPointerTarget(PHLMONITOR renderedMonitor);
         void                           keyboard(COverview& view);
         std::optional<uint64_t>        zoomPress();
         void                           zoomRelease(uint64_t token);
@@ -57,6 +58,8 @@ namespace hyprspace {
         bool                           zoomHeld() const;
         bool                           zoomLocked() const;
         std::optional<SOverviewTarget> zoomTarget() const;
+        bool                           zoomEdgeReady(const COverview& view) const;
+        std::optional<EDirection>      zoomEdgePending() const;
         void                           followKeyboardFocus();
         bool                           button(uint32_t button, bool pressed, uint32_t mods);
         void                           cancelDrag();
@@ -74,8 +77,19 @@ namespace hyprspace {
         std::optional<SOverviewTarget> hit(const Vector2D& pos) const;
 
       private:
-        void                            syncSelection();
-        void                            updateZoom();
+        void       syncSelection();
+        void       updateZoom();
+        void       retargetSelection(COverview& view);
+        void       cancelZoomEdge();
+        bool       zoomEdgeEnabled(const COverview& view) const;
+        COverview* zoomView() const;
+        void       advanceZoomEdge(PHLMONITOR renderedMonitor);
+        struct SZoomEdgeIntent {
+            SWorkspaceIdentity source, destination;
+            PHLMONITORREF      monitor;
+        };
+        CZoomEdgeHover                  m_zoomEdgeHover;
+        std::optional<SZoomEdgeIntent>  m_zoomEdgeIntent;
         CZoomHoldState                  m_zoomHolds;
         std::optional<SOverviewTarget>  m_zoomTarget;
         CVisibilityLedger<PHLWINDOWREF> m_visibility;

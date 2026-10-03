@@ -640,6 +640,7 @@ namespace {
         const bool foreground = yieldingInput() || (!session().drag.active() && foregroundPointer());
         session().ownCursor(!foreground);
         if (foreground) {
+            session().observePointer(pos);
             session().selection.pointer(std::nullopt);
             return;
         }
@@ -647,7 +648,7 @@ namespace {
         if (switcherLive())
             g_switcher->onMouseMove(pos);
         else
-            session().pointer(pos);
+            session().pointer(pos, true);
     }
 
     // Scroll belongs to the overlay while one is up. Without this the wheel
@@ -757,7 +758,7 @@ namespace {
 
         if (auto* o = overviewOn(monitor))
             o->prepareFrame();
-        session().refreshPointerTarget();
+        session().refreshPointerTarget(monitor);
     }
 
     void onRenderStage(eRenderStage stage) {

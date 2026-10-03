@@ -107,9 +107,19 @@ keyboard grab, which makes it a reliable escape hatch.
 Hold **Z** without modifiers to fit the selected workspace into most of its
 monitor, keeping the existing padding and workspace label. Arrows, Tab and
 Shift+Tab smoothly browse that monitor's workspaces while Z remains held.
-Moving the pointer leaves the enlarged workspace selected, and scrolling
-layouts still accept panning. Wheel selection of other workspaces pauses during
-zoom. Release Z to return immediately through the reverse animation; pointer
+Moving within the enlarged workspace leaves it selected. With `follow_mouse`
+enabled, hovering for 250 ms within 48 logical pixels of a usable monitor edge
+smoothly enlarges the same neighbor as that direction's arrow key. Edge
+hints show available neighbors without reducing zoom, including above and below.
+Each entry moves once: leave and re-enter the edge area to browse again. Corners
+do not navigate, and crossing onto another monitor retains the zoom destination.
+Entering an edge during an opening or camera animation starts the dwell once
+the animation settles. Drags and foreground input handoff cancel unfinished
+hovers; moving within the edge can start a fresh dwell after input returns.
+Scrolling arrows remain separate from workspace navigation, and scrolling layouts
+still accept panning.
+Wheel selection of other workspaces pauses during zoom. Release Z to return
+immediately through the reverse animation; pointer
 selection resumes on the next movement after the grid has returned.
 
 Zoom affects previews and keeps the overview open. Clicking a window or pressing
@@ -372,6 +382,8 @@ and peak pixel bytes, cache entries, hits, misses, evictions, allocation failure
 and capture fallbacks. Byte counts estimate pixel storage; they exclude driver
 metadata. The resource integration fixture exercises title/width churn, retained
 frame references, failed GL allocation and repeated overlay close/reopen.
+Each overview view also includes `zoom_edges`: available directions, destination
+workspace IDs, hint bounds in global logical pixels, and pending dwell state.
 
 ### Animations
 
@@ -512,8 +524,8 @@ overlapping bottom panels and popups, launch destinations after output removal,
 and visibility when a window leaves a single-monitor overview. Scrolling checks
 cover all four directions, wheel and finger input, bounds, arrows, keyboard
 selection, inactive workspaces, foreground typing and animated pointer targeting.
-Hold-to-zoom checks cover ten-workspace fitting, keyboard browsing, pointer
-pinning, key release and device ownership, foreground handoff, drag mapping,
+Hold-to-zoom checks cover ten-workspace fitting, keyboard and edge-hover browsing,
+pointer pinning, dwell cancellation, key release and device ownership, foreground handoff, drag mapping,
 scrolling and closing during transitions. Run them alone with
 `make integration-test INTEGRATION_ARGS='--only zoom'`.
 

@@ -111,4 +111,41 @@ static void testZoomGeometry() {
     CHECK(overviewZoomCamera(cell, usable, NAN, 34) == SOverviewCamera{});
     CHECK(overviewCameraAt({NAN, 0, 0}, 1) == SOverviewCamera{});
     CHECK(reprojectOverviewBox(preview, {}, cell) == preview);
+
+    section("zoom edges: logical work-area strips exclude corners and other monitors");
+    CHECK(overviewZoomEdgeAt(usable, 1, 400) == EDirection::LEFT);
+    CHECK(overviewZoomEdgeAt(usable, 1365, 400) == EDirection::RIGHT);
+    CHECK(overviewZoomEdgeAt(usable, 680, 33) == EDirection::UP);
+    CHECK(overviewZoomEdgeAt(usable, 680, usable.y + 47) == EDirection::UP);
+    CHECK(!overviewZoomEdgeAt(usable, 680, usable.y + 48));
+    CHECK(overviewZoomEdgeAt(usable, usable.x + 47, 400) == EDirection::LEFT);
+    CHECK(!overviewZoomEdgeAt(usable, usable.x + 48, 400));
+    CHECK(overviewZoomEdgeAt(usable, 680, 767) == EDirection::DOWN);
+    CHECK(!overviewZoomEdgeAt(usable, 1, 33));
+    CHECK(!overviewZoomEdgeAt(usable, 680, 400));
+    CHECK(!overviewZoomEdgeAt(usable, 1366, 400));
+    CHECK(!overviewZoomEdgeAt({0, 0, 64, 64}, 1, 40));
+    CHECK(overviewZoomEdgeAt({-1080, -1880, 1080, 1880}, -1070, -940) == EDirection::LEFT);
+
+    section("zoom hints: scroll arrows retain their boxes and hints move along the edge");
+    for (auto direction : {EDirection::LEFT, EDirection::RIGHT, EDirection::UP, EDirection::DOWN}) {
+        const auto box = overviewZoomHintBox(usable, direction, {});
+        CHECK(box.has_value());
+        CHECK(box->w == 32 && box->h == 32);
+        CHECK(overviewZoomEdgeAt(usable, box->x, box->y) == direction);
+        CHECK(overviewZoomEdgeAt(usable, box->x + box->w - 1, box->y + box->h - 1) == direction);
+        CHECK(overviewZoomEdgeAt(usable, box->cx(), box->cy()) == direction);
+        const auto shifted = overviewZoomHintBox(usable, direction, {*box});
+        CHECK(shifted.has_value());
+        CHECK(overviewZoomEdgeAt(usable, shifted->cx(), shifted->cy()) == direction);
+        CHECK_NEAR(direction == EDirection::LEFT || direction == EDirection::RIGHT ? shifted->y - box->y : shifted->x - box->x, 48, 1e-8);
+    }
+    CHECK(!overviewZoomHintBox({0, 0, 40, 40}, EDirection::LEFT, {{0, 0, 40, 40}}));
+    CHECK(!overviewZoomHintBox({0, 0, 1000, 192}, EDirection::LEFT, {{8, 79, 34, 34}}));
+    CHECK(!overviewZoomHintBox({0, 0, 192, 1000}, EDirection::UP, {{79, 8, 34, 34}}));
+    const SBoxF noPadding{0, 0, 960, 600};
+    const auto  label = overviewWorkspaceLabelBox({0, 0, 960, 566}, 20, 20);
+    const auto  below = overviewZoomHintBox(noPadding, EDirection::DOWN, {label});
+    CHECK(below.has_value());
+    CHECK_NEAR(below->cx(), noPadding.cx() + 48, 1e-8);
 }

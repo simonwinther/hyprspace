@@ -52,6 +52,213 @@ def opened(s, wait_for, workspace=11):
     assert s.status()["target"]["workspace"] == workspace
 
 
+def zoom_edges(s, monitor):
+    return next(view["zoom_edges"] for view in s.status()["views"] if view["monitor"] == monitor)
+
+
+def edge_point(work, direction):
+    x, y = center(work)
+    return {
+        "left": (work["x"] + 1, y),
+        "right": (work["x"] + work["w"] - 1, y),
+        "up": (x, work["y"] + 1),
+        "down": (x, work["y"] + work["h"] - 1),
+    }[direction]
+
+
+def edge_browsing(s, wait_for):
+    s.setup("dwindle", 0, 1)
+    s.ctl("dispatch", "movetoworkspacesilent", f'25,address:{s.windows()["hs-B"]["address"]}')
+    opened(s, wait_for)
+    monitor = s.names[0]
+    work = area(next(m for m in s.data("monitors") if m["name"] == monitor))
+    order = sorted(ws for name, ws in tiles(s) if name == monitor)
+    native = s.geometry()
+    active = {m["name"]: m["activeWorkspace"]["id"] for m in s.data("monitors")}
+
+    def select(workspace):
+        s.key(102, 1)
+        s.key(102, 0)
+        for _ in range(order.index(workspace)):
+            s.key(TAB, 1)
+            s.key(TAB, 0)
+        assert s.status()["target"]["workspace"] == workspace
+
+    select(25)
+    s.key(Z, 1)
+    wait_for(lambda: len(zoom_edges(s, monitor)) == 4)
+    assert {hint["direction"]: hint["workspace"] for hint in zoom_edges(s, monitor)} == {
+        "left": 24, "right": 26, "up": 21, "down": 28,
+    }
+    enlarged = tile(s, 25)
+    s.move(center(enlarged))
+    s.run("grim", "-s", "1", "-o", monitor, str(s.root / "zoom-edge-hints.png"))
+    for direction, destination in (("left", 24), ("right", 26), ("up", 21), ("down", 28)):
+        select(25)
+        s.move(center(tile(s, 25)))
+        hint = next(h for h in zoom_edges(s, monitor) if h["direction"] == direction)
+        assert hint["w"] == hint["h"] == 32
+        s.move(center(hint))
+        wait_for(lambda: s.status()["zoom"]["workspace"] == destination)
+        assert s.status()["zoom"]["monitor"] == monitor
+        assert all(abs(tile(s, destination)[part] - enlarged[part]) < 0.1 for part in ("w", "h"))
+        time.sleep(0.4)
+        assert s.status()["zoom"]["workspace"] == destination
+    assert s.geometry() == native
+    assert {m["name"]: m["activeWorkspace"]["id"] for m in s.data("monitors")} == active
+    s.check("all four enlarged arrow centers browse neighbors after dwell without committing or repeating")
+
+    select(25)
+    s.move(center(tile(s, 25)))
+    s.move((work["x"] + work["w"] / 2, work["y"] + 47))
+    wait_for(lambda: s.status()["zoom"]["workspace"] == 21)
+    s.check("the top hover area reaches 48 logical pixels into the usable monitor")
+
+    select(25)
+    s.move(center(tile(s, 25)))
+    s.move(edge_point(work, "right"))
+    wait_for(lambda: s.status()["zoom"]["workspace"] == 26)
+    s.move(center(tile(s, 26)))
+    s.move(edge_point(work, "right"))
+    wait_for(lambda: s.status()["zoom"]["workspace"] == 27)
+    assert not any(h["direction"] == "right" for h in zoom_edges(s, monitor))
+    time.sleep(0.4)
+    assert s.status()["zoom"]["workspace"] == 27
+    select(25)
+    s.move(center(tile(s, 25)))
+    s.move((work["x"] + work["w"] - 1, work["y"] + 1))
+    time.sleep(0.4)
+    assert s.status()["zoom"]["workspace"] == 25
+    s.move(center(tile(s, 25)))
+    s.move(edge_point(work, "right"))
+    s.move(center(tile(s, 25)))
+    time.sleep(0.4)
+    assert s.status()["zoom"]["workspace"] == 25
+    s.check("zoom edge exit and reentry permit one more step; corners and early exits do not browse")
+
+    s.ctl("keyword", "plugin:hyprspace:follow_mouse", "false")
+    assert not zoom_edges(s, monitor)
+    assert same_geometry({(monitor, 25): enlarged}, {(monitor, 25): tile(s, 25)})
+    s.move(edge_point(work, "right"))
+    time.sleep(0.4)
+    assert s.status()["zoom"]["workspace"] == 25
+    s.ctl("keyword", "plugin:hyprspace:follow_mouse", "true")
+    time.sleep(0.4)
+    assert s.status()["zoom"]["workspace"] == 25
+    s.move((work["x"] + work["w"] - 2, work["y"] + work["h"] / 2))
+    wait_for(lambda: s.status()["zoom"]["workspace"] == 26)
+    s.move(center(tile(s, 26)))
+    s.move(edge_point(work, "right"))
+    select(11)
+    time.sleep(0.4)
+    assert s.status()["zoom"]["workspace"] == 11
+    s.check("follow_mouse recovery requires real motion; keyboard browsing cancels pending dwell")
+
+    panel_namespace = "waybar-workspace-slider-zoom-test"
+    panel = s.spawn(["python3", str(s.artifact("layer.py")), str(s.root / "zoom-panel"), panel_namespace, "bottom"])
+    try:
+        wait_for(lambda: s.layer(panel_namespace))
+        wait_for(lambda: area(next(m for m in s.data("monitors") if m["name"] == monitor))["y"] > work["y"])
+        panel_work = area(next(m for m in s.data("monitors") if m["name"] == monitor))
+        select(25)
+        wait_for(lambda: any(h["direction"] == "up" and h["y"] >= panel_work["y"] for h in zoom_edges(s, monitor)))
+        s.move(center(tile(s, 25)))
+        up = next(h for h in zoom_edges(s, monitor) if h["direction"] == "up")
+        assert up["y"] >= panel_work["y"] and panel_work["y"] > work["y"]
+        panel_native = s.geometry()
+        s.move(center(up))
+        assert any(h["direction"] == "up" and h["pending"] for h in zoom_edges(s, monitor))
+        box = s.layer(panel_namespace)
+        s.move((box["x"] + 20, box["y"] + 20))
+        wait_for(lambda: not s.status()["cursor_owned"])
+        time.sleep(0.4)
+        assert s.status()["zoom"]["held"] and s.status()["zoom"]["workspace"] == 25
+        # Returning to exactly the previous arrow point is still real motion:
+        # pointer coordinates must have followed the intervening panel visit.
+        s.move(center(up))
+        try:
+            wait_for(lambda: s.status()["zoom"]["workspace"] == up["workspace"])
+        except AssertionError:
+            (s.root / "zoom-top-panel-failure.json").write_text(json.dumps({
+                "status": s.status(), "cursor": s.data("cursorpos"),
+                "monitors": s.data("monitors"), "layers": s.data("layers"),
+                "up": up, "panel_work": panel_work,
+            }, indent=2))
+            raise
+        assert s.status()["cursor_owned"] and s.geometry() == panel_native
+        assert {m["name"]: m["activeWorkspace"]["id"] for m in s.data("monitors")} == active
+        s.run("grim", "-s", "1", "-o", monitor, str(s.root / "zoom-top-panel.png"))
+        s.check("top arrow recovers after a panel handoff, including return to the exact same point")
+    finally:
+        panel.terminate()
+        panel.wait(timeout=5)
+        wait_for(lambda: not s.layer(panel_namespace))
+        wait_for(lambda: area(next(m for m in s.data("monitors") if m["name"] == monitor)) == work)
+
+    select(25)
+    s.move(center(tile(s, 25)))
+    s.move(edge_point(work, "right"))
+    s.key(Z, 0)
+    released(s, wait_for)
+    time.sleep(0.4)
+    assert s.status()["target"]["workspace"] == 25
+    s.key(Z, 1)
+    wait_for(lambda: len(zoom_edges(s, monitor)) == 4)
+    time.sleep(0.4)
+    assert s.status()["zoom"]["workspace"] == 25
+    s.move(center(tile(s, 25)))
+    s.move(edge_point(work, "right"))
+    s.ctl("keyword", "workspace", "26,persistent:false")
+    wait_for(lambda: (monitor, 26) not in tiles(s))
+    time.sleep(0.4)
+    assert s.status()["zoom"]["workspace"] == 25
+    s.ctl("keyword", "workspace", f"26,monitor:{monitor},persistent:true,layout:dwindle")
+    wait_for(lambda: (monitor, 26) in tiles(s))
+    s.check("zoom release and disappearing neighbors cancel dwell and stationary re-presses do not arm it")
+
+    s.move(center(tile(s, 25)))
+    s.move(edge_point(work, "right"))
+    s.ctl("keyword", "monitor", f"{monitor},addreserved,36,14,12,18")
+    time.sleep(0.4)
+    assert s.status()["zoom"]["workspace"] == 25
+    s.ctl("keyword", "monitor", f"{monitor},addreserved,0,0,0,0")
+    wait_for(lambda: same_geometry({(monitor, 25): enlarged}, {(monitor, 25): tile(s, 25)}))
+    s.check("changed usable monitor bounds invalidate a pending zoom edge")
+
+    s.ctl("keyword", "plugin:hyprspace:overview:padding", "0")
+    wait_for(lambda: any(h["direction"] == "down" for h in zoom_edges(s, monitor)))
+    s.run("grim", "-s", "1", "-o", monitor, str(s.root / "zoom-edge-labels-no-padding.png"))
+    s.ctl("keyword", "plugin:hyprspace:overview:padding", "56")
+    s.key(Z, 0)
+    released(s, wait_for)
+    s.close()
+
+    s.ctl("keyword", "animations:enabled", "true")
+    try:
+        opened(s, wait_for)
+        select(25)
+        s.key(Z, 1)
+        s.move(edge_point(work, "right"))
+        wait_for(lambda: len(zoom_edges(s, monitor)) == 4)
+        assert s.status()["zoom"]["workspace"] == 25
+        wait_for(lambda: s.status()["zoom"]["workspace"] == 26)
+        wait_for(lambda: zoom_edges(s, monitor))
+        time.sleep(0.4)
+        assert s.status()["zoom"]["workspace"] == 26
+        s.move(center(tile(s, 26)))
+        s.run("grim", "-s", "1", "-o", monitor, str(s.root / "zoom-edge-browsed.png"))
+        s.move(edge_point(work, "right"))
+        s.close()
+        s.key(Z, 0)
+        time.sleep(0.4)
+        assert not s.status()["views"]
+        s.check("intentional edge entry waits for animation, browses once while stationary, and closing cancels dwell")
+    finally:
+        s.key(Z, 0)
+        s.ctl("keyword", "animations:enabled", "false")
+        s.close()
+
+
 def lifecycle(s, wait_for):
     defaults = ("zoom_key", "padding", "workspace_labels", "include_special")
     saved = {
@@ -204,6 +411,8 @@ def lifecycle(s, wait_for):
         s.check("zoom captures are per keyboard and device removal clears a held zoom")
 
         s.key(Z, 1)
+        s.move(center(tile(s, 11)))
+        s.move(edge_point(work, "right"))
         entry = s.root / "zoom-foreground"
         layer = s.spawn(["python3", str(s.artifact("layer.py")), str(entry)])
         wait_for(lambda: s.layer("hs-foreground"))
@@ -222,6 +431,7 @@ def lifecycle(s, wait_for):
         s.check("foreground keyboard handoff cancels zoom and restoration requires a fresh press")
         s.close()
 
+        edge_browsing(s, wait_for)
         reload_and_removal(s, wait_for)
         gestures(s, wait_for)
         transitions(s, wait_for)
@@ -299,6 +509,9 @@ def gestures(s, wait_for):
         s.key(SUPER, 1)
         s.button(1, button)
         assert s.status()["dragging"]
+        s.move(edge_point(work, "right"))
+        time.sleep(0.4)
+        assert s.status()["zoom"]["workspace"] == 11 and not zoom_edges(s, s.names[0])
         s.key(Z, 0)
         released(s, wait_for)
         assert s.status()["dragging"] and s.geometry() == original
@@ -439,6 +652,42 @@ def scrolling(s, wait_for):
     s.check("scrolling-layout previews continue to pan while workspace zoom is held")
     s.close()
 
+    from regressions import arrow
+    try:
+        s.ctl("keyword", "plugin:hyprspace:overview:padding", "0")
+        s.ctl("keyword", "plugin:hyprspace:overview:workspace_labels", "false")
+        for direction in ("right", "down"):
+            s.ctl("keyword", "scrolling:direction", direction)
+            s.setup("scrolling", 0, 0)
+            s.ctl("dispatch", "focuswindow", "address:" + s.windows()["hs-A"]["address"])
+            opened(s, wait_for)
+            s.key(Z, 1)
+            wait_for(lambda: zoom_edges(s, s.names[0]))
+            box = tile(s, 11)
+            point = arrow(box, direction == "right", True)
+            s.move(point)
+            time.sleep(0.4)
+            assert s.status()["zoom"]["workspace"] == 11
+            hints = zoom_edges(s, s.names[0])
+            hint = next(h for h in hints if h["direction"] == direction)
+            assert not (hint["x"] <= point[0] < hint["x"] + hint["w"] and hint["y"] <= point[1] < hint["y"] + hint["h"])
+            before = s.geometry()
+            s.button(1)
+            s.button(0)
+            wait_for(lambda: s.geometry() != before)
+            assert s.status()["live"] and s.status()["zoom"]["workspace"] == 11
+            s.run("grim", "-s", "1", "-o", s.names[0], str(s.root / f"zoom-edge-scrolling-{direction}.png"))
+            s.key(Z, 0)
+            released(s, wait_for)
+            s.close()
+        s.check("zero-padding horizontal and vertical scrolling arrows retain hover and click ownership beside zoom hints")
+    finally:
+        s.key(Z, 0)
+        s.close()
+        s.ctl("keyword", "plugin:hyprspace:overview:padding", "56")
+        s.ctl("keyword", "plugin:hyprspace:overview:workspace_labels", "true")
+        s.ctl("keyword", "scrolling:direction", "right")
+
 
 def transformed(s, wait_for):
     s.setup("dwindle", 1, 1)
@@ -473,6 +722,15 @@ def transformed(s, wait_for):
         s.key(TAB, 0)
         assert s.status()["zoom"]["workspace"] == 31 and s.status()["zoom"]["monitor"] == s.names[1]
         assert abs(tile(s, 31)["w"] - enlarged["w"]) < 0.1
+        hints = zoom_edges(s, s.names[1])
+        assert hints
+        destination = hints[0]["workspace"]
+        s.move(center(tile(s, 31)))
+        s.move(edge_point(work, hints[0]["direction"]))
+        wait_for(lambda: s.status()["zoom"]["workspace"] == destination)
+        time.sleep(0.4)
+        assert s.status()["zoom"]["workspace"] == destination
+        assert abs(tile(s, destination)["w"] - enlarged["w"]) < 0.1
         s.key(Z, 0)
         released(s, wait_for)
         assert same_geometry(baseline, tiles(s))

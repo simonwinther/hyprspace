@@ -1,6 +1,9 @@
 #pragma once
 
+#include "Geometry.hpp"
+
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -8,6 +11,70 @@
 #include <unordered_set>
 
 namespace hyprspace {
+
+    // Only user motion arms a dwell. A completed visit stays consumed until
+    // the pointer leaves; an unfinished visit can recover on later motion.
+    class CZoomEdgeHover {
+      public:
+        using Clock = std::chrono::steady_clock;
+
+        bool motion(std::optional<EDirection> edge, bool eligible, Clock::time_point now, bool ready = true) {
+            if (edge != m_edge)
+                sync(edge);
+            if (!eligible) {
+                cancel();
+                return false;
+            }
+            if (!edge || m_pending || m_consumed)
+                return false;
+            m_pending = edge;
+            if (ready)
+                m_started = now;
+            return true;
+        }
+
+        std::optional<EDirection> advance(std::optional<EDirection> edge, bool ready, Clock::time_point now) {
+            if (edge != m_pending) {
+                cancel();
+                return std::nullopt;
+            }
+            if (!m_pending)
+                return std::nullopt;
+            if (!ready) {
+                m_started.reset();
+                return std::nullopt;
+            }
+            if (!m_started)
+                m_started = now;
+            if (now - *m_started < std::chrono::milliseconds(250))
+                return std::nullopt;
+            const auto result = m_pending;
+            m_consumed = true;
+            cancel();
+            return result;
+        }
+
+        void sync(std::optional<EDirection> edge) {
+            if (edge != m_edge)
+                m_consumed = false;
+            m_edge = edge;
+            cancel();
+        }
+
+        void cancel() {
+            m_pending.reset();
+            m_started.reset();
+        }
+
+        std::optional<EDirection> pending() const {
+            return m_pending;
+        }
+
+      private:
+        std::optional<EDirection>        m_edge, m_pending;
+        std::optional<Clock::time_point> m_started;
+        bool                            m_consumed = false;
+    };
 
     // Independent keyboard holds share one zoom. Cancellation drops their
     // tokens without reusing them, so a late release cannot end a newer hold.

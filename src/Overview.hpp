@@ -71,19 +71,29 @@ namespace hyprspace {
         void onScroll(const SScrollInput& event);
 
         // --- render lifecycle ---
-        void                           prepareFrame(); // capture live window contents
-        std::vector<UP<IPassElement>>  buildPass();    // ordinary elements appended to Hyprland's pass
-        void                           damage();
-        std::optional<SOverviewTarget> targetAt(const Vector2D& globalPos) const;
-        std::optional<SOverviewTarget> selectedTarget() const;
-        void                           selectTarget(const SOverviewTarget& target);
-        std::vector<SOverviewTarget>   inspectTargets() const;
-        bool                           zoomTo(const SWorkspaceIdentity& workspace);
-        void                           releaseZoom();
-        bool                           zoomTransitioning() const;
-        void                           freezeZoom();
-        SBoxF                          workspaceCell(const SWorkspaceIdentity& workspace) const;
-        SP<Render::ITexture>           textureFor(PHLWINDOW window) const {
+        void                              prepareFrame(); // capture live window contents
+        std::vector<UP<IPassElement>>     buildPass();    // ordinary elements appended to Hyprland's pass
+        void                              damage();
+        std::optional<SOverviewTarget>    targetAt(const Vector2D& globalPos) const;
+        std::optional<SOverviewTarget>    selectedTarget() const;
+        void                              selectTarget(const SOverviewTarget& target);
+        std::vector<SOverviewTarget>      inspectTargets() const;
+        bool                              zoomTo(const SWorkspaceIdentity& workspace);
+        void                              releaseZoom();
+        bool                              zoomTransitioning() const;
+        bool                              zoomNavigationReady() const;
+        std::optional<EDirection>         zoomEdgeAt(const Vector2D& globalPos) const;
+        std::optional<SWorkspaceIdentity> zoomNeighbor(const SWorkspaceIdentity& workspace, EDirection direction) const;
+        struct SZoomEdgeHint {
+            EDirection         direction;
+            SWorkspaceIdentity workspace;
+            SBoxF              box;
+            bool               pending = false;
+        };
+        std::vector<SZoomEdgeHint> zoomEdgeHints() const;
+        void                       freezeZoom();
+        SBoxF                      workspaceCell(const SWorkspaceIdentity& workspace) const;
+        SP<Render::ITexture>       textureFor(PHLWINDOW window) const {
             return m_capture.textureFor(window);
         }
 
@@ -115,6 +125,7 @@ namespace hyprspace {
             std::vector<SWindowSlot>          windows;
             std::vector<size_t>               drawOrder;
             std::optional<SWindowLayoutState> windowLayout;
+            std::optional<Vector2D>           labelSize;
             size_t                            previewColumns = 0;
             bool                              spread         = false;
             bool                              isActive       = false;

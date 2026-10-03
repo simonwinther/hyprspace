@@ -129,8 +129,10 @@ pointer. Setting `switcher:current_workspace_only = false` includes windows
 across all workspaces and monitors.
 
 On a small screen, hold **Z** to smoothly enlarge one workspace. While holding
-it, use arrows or Tab/Shift+Tab to browse that monitor's workspaces. Releasing
-Z smoothly restores the grid. Change `overview:zoom_key` to another XKB key
+it, use arrows or Tab/Shift+Tab to browse that monitor's workspaces, or hover
+briefly at an edge to slide to its neighbor. Edge hints show the available
+directions, including above and below. Releasing Z smoothly restores the grid.
+Change `overview:zoom_key` to another XKB key
 name, or leave it empty to disable this control.
 
 In a scrolling workspace, use the wheel or two-finger scrolling to pan its preview.

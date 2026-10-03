@@ -1492,6 +1492,7 @@ int main(int argc, char** argv) {
     testOverviewWindowLayout();
     testFullscreenPreviewGeometry();
     testZoomInput();
+    testZoomEdgeHover();
     testZoomGeometry();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

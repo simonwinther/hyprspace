@@ -92,6 +92,7 @@ namespace hyprspace {
         own = own && overlaysAllowed();
         if (own == m_cursorOwned)
             return;
+        cancelZoomEdge();
         m_cursorOwned = own;
         if (own)
             g_pSeatManager->setPointerFocus(nullptr, {});
@@ -106,13 +107,39 @@ namespace hyprspace {
         return std::nullopt;
     }
 
-    void COverviewSession::pointer(const Vector2D& pos) {
+    void COverviewSession::observePointer(const Vector2D& pos) {
+        if (hooks::mappingPointer() || drag.active())
+            return;
+        // Foreground motion updates coordinates and observes edge exits, but
+        // cannot select previews or start a dwell while another UI owns input.
+        m_pointer       = pos;
+        const auto view = zoomView();
+        m_zoomEdgeHover.sync(view ? view->zoomEdgeAt(pos) : std::nullopt);
+        m_zoomEdgeIntent.reset();
+    }
+
+    void COverviewSession::pointer(const Vector2D& pos, bool userMotion) {
         // Native commands may synthesize motion while their coordinates are
         // mapped to the desktop. Those are not overview pointer coordinates.
         if (hooks::mappingPointer())
             return;
-        const bool moved  = pos != m_pointer;
-        m_pointer         = pos;
+        const bool moved = pos != m_pointer;
+        m_pointer        = pos;
+        const auto view  = zoomView();
+        const auto edge  = view ? view->zoomEdgeAt(pos) : std::nullopt;
+        if (userMotion && moved) {
+            if (m_zoomEdgeHover.motion(edge, view && zoomEdgeEnabled(*view), CZoomEdgeHover::Clock::now(), view && view->zoomNavigationReady())) {
+                if (auto destination = view->zoomNeighbor(m_zoomTarget->workspace, *edge))
+                    m_zoomEdgeIntent = SZoomEdgeIntent{m_zoomTarget->workspace, *destination, m_zoomTarget->monitor};
+                else
+                    cancelZoomEdge();
+            }
+            if (!m_zoomEdgeHover.pending())
+                m_zoomEdgeIntent.reset();
+        } else if (!userMotion) {
+            m_zoomEdgeHover.sync(edge);
+            m_zoomEdgeIntent.reset();
+        }
         const auto target = hit(pos);
         selection.pointer(target, config::followMouse() && !zoomLocked());
         // Real pointer motion can inspect another window in the enlarged
@@ -147,6 +174,11 @@ namespace hyprspace {
     }
 
     void COverviewSession::keyboard(COverview& view) {
+        cancelZoomEdge();
+        retargetSelection(view);
+    }
+
+    void COverviewSession::retargetSelection(COverview& view) {
         if (drag.active()) {
             syncSelection();
             return;
@@ -180,6 +212,8 @@ namespace hyprspace {
         if (!target || !view->zoomTo(target->workspace))
             return std::nullopt;
         m_zoomTarget = *target;
+        m_zoomEdgeHover.sync(view->zoomEdgeAt(m_pointer));
+        m_zoomEdgeIntent.reset();
         selection.keyboard(*target);
         damage();
         return m_zoomHolds.press();
@@ -187,6 +221,7 @@ namespace hyprspace {
 
     void COverviewSession::zoomRelease(uint64_t token) {
         if (m_zoomHolds.release(token) && !zoomHeld()) {
+            cancelZoomEdge();
             for (const auto& view : views)
                 view->releaseZoom();
             damage();
@@ -194,6 +229,7 @@ namespace hyprspace {
     }
 
     void COverviewSession::cancelZoom() {
+        cancelZoomEdge();
         m_zoomHolds.cancel();
         for (const auto& view : views)
             view->releaseZoom();
@@ -209,6 +245,57 @@ namespace hyprspace {
 
     std::optional<SOverviewTarget> COverviewSession::zoomTarget() const {
         return m_zoomTarget;
+    }
+
+    COverview* COverviewSession::zoomView() const {
+        if (m_zoomTarget)
+            for (const auto& view : views)
+                if (!view->closing() && view->monitor() == m_zoomTarget->monitor)
+                    return view.get();
+        return nullptr;
+    }
+
+    bool COverviewSession::zoomEdgeEnabled(const COverview& view) const {
+        return overlaysAllowed() && live() && m_cursorOwned && config::followMouse() && zoomHeld() && !drag.active() && m_zoomTarget &&
+               view.monitor() == m_zoomTarget->monitor && !view.closing();
+    }
+
+    bool COverviewSession::zoomEdgeReady(const COverview& view) const {
+        return zoomEdgeEnabled(view) && view.zoomNavigationReady();
+    }
+
+    std::optional<EDirection> COverviewSession::zoomEdgePending() const {
+        return m_zoomEdgeHover.pending();
+    }
+
+    void COverviewSession::cancelZoomEdge() {
+        m_zoomEdgeHover.cancel();
+        m_zoomEdgeIntent.reset();
+    }
+
+    void COverviewSession::advanceZoomEdge(PHLMONITOR renderedMonitor) {
+        if (!m_zoomEdgeIntent)
+            return;
+        auto* view = zoomView();
+        if (!view || !zoomEdgeEnabled(*view)) {
+            cancelZoomEdge();
+            return;
+        }
+        // Other outputs may render before this view has refreshed its grid.
+        if (view->monitor() != renderedMonitor)
+            return;
+        const auto edge        = view->zoomEdgeAt(m_pointer);
+        const auto destination = edge ? view->zoomNeighbor(m_zoomTarget->workspace, *edge) : std::nullopt;
+        if (m_zoomEdgeIntent->monitor != m_zoomTarget->monitor || m_zoomEdgeIntent->source != m_zoomTarget->workspace || !destination ||
+            *destination != m_zoomEdgeIntent->destination) {
+            cancelZoomEdge();
+            return;
+        }
+        if (m_zoomEdgeHover.advance(edge, view->zoomNavigationReady(), CZoomEdgeHover::Clock::now())) {
+            view->selectTarget({.workspace = *destination, .monitor = m_zoomTarget->monitor});
+            m_zoomEdgeIntent.reset();
+            retargetSelection(*view);
+        }
     }
 
     void COverviewSession::updateZoom() {
@@ -234,7 +321,7 @@ namespace hyprspace {
                     view->selectTarget(*target);
     }
 
-    void COverviewSession::refreshPointerTarget() {
+    void COverviewSession::refreshPointerTarget(PHLMONITOR renderedMonitor) {
         updateZoom();
         if (!live() || !m_cursorOwned)
             return;
@@ -243,6 +330,7 @@ namespace hyprspace {
             if (!view->closing())
                 view->onMouseMove(m_pointer);
         syncSelection();
+        advanceZoomEdge(renderedMonitor);
     }
 
     COverview* COverviewSession::keyboardView() const {
@@ -340,6 +428,7 @@ namespace hyprspace {
             const auto target = hit(m_pointer);
             if (!target || !target->window || drag.active())
                 return true;
+            cancelZoomEdge();
             drag.mode          = button == 0x110 ? SOverviewDrag::MOVE : SOverviewDrag::RESIZE;
             drag.window        = target->window;
             drag.source        = *target;

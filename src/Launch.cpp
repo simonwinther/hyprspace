@@ -317,9 +317,35 @@ namespace hyprspace::launch {
                                              {"w", box.w},
                                              {"h", box.h}});
                         }
-                        const auto& counts = view->layoutCounters();
+                        const auto&    counts = view->layoutCounters();
+                        nlohmann::json edges  = nlohmann::json::array();
+                        for (const auto& hint : view->zoomEdgeHints()) {
+                            const char* direction = "";
+                            switch (hint.direction) {
+                            case EDirection::LEFT:
+                                direction = "left";
+                                break;
+                            case EDirection::RIGHT:
+                                direction = "right";
+                                break;
+                            case EDirection::UP:
+                                direction = "up";
+                                break;
+                            case EDirection::DOWN:
+                                direction = "down";
+                                break;
+                            }
+                            edges.push_back({{"direction", direction},
+                                             {"workspace", hint.workspace.id},
+                                             {"pending", hint.pending},
+                                             {"x", mon->m_position.x + hint.box.x},
+                                             {"y", mon->m_position.y + hint.box.y},
+                                             {"w", hint.box.w},
+                                             {"h", hint.box.h}});
+                        }
                         result["views"].push_back({{"monitor", mon->m_name},
                                                    {"tiles", tiles},
+                                                   {"zoom_edges", edges},
                                                    {"layout",
                                                     {{"frames", counts.frames},
                                                      {"window_updates", counts.windowUpdates},
