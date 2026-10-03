@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/simonwinther/hyprspace/compare/v1.1.0...v1.2.0) (2026-10-03)
+
+
+### Features
+
+* **overview:** browse zoomed workspaces on hover ([ea914e4](https://github.com/simonwinther/hyprspace/commit/ea914e4827298a8c8501af36a0365a0989957943))
+
 ## [1.1.0](https://github.com/simonwinther/hyprspace/compare/v1.0.2...v1.1.0) (2026-10-03)
 
 
