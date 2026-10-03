@@ -123,11 +123,11 @@ namespace hyprspace {
         // mapped to the desktop. Those are not overview pointer coordinates.
         if (hooks::mappingPointer())
             return;
-        const bool moved = pos != m_pointer;
-        m_pointer        = pos;
-        const auto view  = zoomView();
-        const auto edge  = view ? view->zoomEdgeAt(pos) : std::nullopt;
-        if (userMotion && moved) {
+        const bool userMoved = userMotion && pos != m_pointer;
+        m_pointer            = pos;
+        const auto view      = zoomView();
+        const auto edge      = view ? view->zoomEdgeAt(pos) : std::nullopt;
+        if (userMoved) {
             if (m_zoomEdgeHover.motion(edge, view && zoomEdgeEnabled(*view), CZoomEdgeHover::Clock::now(), view && view->zoomNavigationReady())) {
                 if (auto destination = view->zoomNeighbor(m_zoomTarget->workspace, *edge))
                     m_zoomEdgeIntent = SZoomEdgeIntent{m_zoomTarget->workspace, *destination, m_zoomTarget->monitor};
@@ -141,10 +141,16 @@ namespace hyprspace {
             m_zoomEdgeIntent.reset();
         }
         const auto target = hit(pos);
-        selection.pointer(target, config::followMouse() && !zoomLocked());
+        const bool follow = config::followMouse() && !zoomHeld();
+        if (userMoved)
+            selection.pointer(target, follow);
+        else
+            selection.refresh(target, follow);
         // Real pointer motion can inspect another window in the enlarged
-        // workspace, but camera motion must never select a different workspace.
-        if (moved && config::followMouse() && m_zoomTarget && target && target->workspace == m_zoomTarget->workspace && target->monitor == m_zoomTarget->monitor)
+        // workspace while held. Once released, motion resumes pointer following
+        // immediately, including while the camera is still returning.
+        if (userMoved && config::followMouse() && zoomHeld() && m_zoomTarget && target && target->workspace == m_zoomTarget->workspace &&
+            target->monitor == m_zoomTarget->monitor)
             selection.keyboard(*target);
         for (const auto& view : views)
             if (!view->closing())
@@ -325,7 +331,7 @@ namespace hyprspace {
         updateZoom();
         if (!live() || !m_cursorOwned)
             return;
-        selection.refresh(hit(m_pointer), config::followMouse() && !zoomLocked());
+        selection.refresh(hit(m_pointer), config::followMouse() && !zoomHeld());
         for (const auto& view : views)
             if (!view->closing())
                 view->onMouseMove(m_pointer);

@@ -119,8 +119,9 @@ hovers; moving within the edge can start a fresh dwell after input returns.
 Scrolling arrows remain separate from workspace navigation, and scrolling layouts
 still accept panning.
 Wheel selection of other workspaces pauses during zoom. Release Z to return
-immediately through the reverse animation; pointer
-selection resumes on the next movement after the grid has returned.
+through the reverse animation. Pointer movement immediately resumes selection,
+including during zoom-out, so pressing Z again enlarges the workspace currently
+under the pointer. Releasing Z without moving retains the selected workspace.
 
 Zoom affects previews and keeps the overview open. Clicking a window or pressing
 Enter still opens the selection, and Escape still dismisses the overview. An

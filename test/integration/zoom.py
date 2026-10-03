@@ -580,6 +580,105 @@ def transitions(s, wait_for):
         wait_for(lambda: tile(s, 11)["w"] < intermediate - 5)
         released(s, wait_for)
         assert same_geometry(baseline, tiles(s))
+
+        # Use the currently visible neighbor during the return, rather than
+        # assuming the final grid coordinates already match what is drawn.
+        s.key(102, 1)
+        s.key(102, 0)
+        s.move(center(tile(s, 11)))
+        work = area(next(m for m in s.data("monitors") if m["name"] == s.names[0]))
+        s.key(Z, 1)
+        wait_for(lambda: zoom_edges(s, s.names[0]))
+        s.key(Z, 0)
+
+        def visible_neighbor_point():
+            box = tile(s, 21)
+            left, top = max(box["x"], work["x"]), max(box["y"], work["y"])
+            right = min(box["x"] + box["w"], work["x"] + work["w"])
+            bottom = min(box["y"] + box["h"], work["y"] + work["h"])
+            if right - left > 32 and bottom - top > 32:
+                return (left + right) / 2, (top + bottom) / 2
+            return None
+
+        s.move(wait_for(visible_neighbor_point))
+        state = s.status()
+        assert state["zoom"]["returning"], state["zoom"]
+        assert state["target"]["workspace"] == 21, state["target"]
+        s.key(Z, 1)
+        assert s.status()["zoom"]["workspace"] == 21
+        s.key(Z, 0)
+        released(s, wait_for)
+        s.check("release, move to a visible neighbor and repress Z selects it before zoom-out finishes")
+
+        # A single movement can finish while the old enlarged preview still
+        # occupies the intended grid location. Follow the returning geometry
+        # without requiring another motion event once the grid is restored.
+        s.key(102, 1)
+        s.key(102, 0)
+        s.move(center(tile(s, 11)))
+        s.key(Z, 1)
+        wait_for(lambda: zoom_edges(s, s.names[0]))
+        s.key(Z, 0)
+        s.move(center(baseline[(s.names[0], 21)]))
+        assert s.status()["zoom"]["returning"]
+        pointer = s.data("cursorpos")
+        released(s, wait_for)
+        assert s.status()["target"]["workspace"] == 21
+        assert s.data("cursorpos") == pointer
+        s.key(Z, 1)
+        assert s.status()["zoom"]["workspace"] == 21
+        wait_for(lambda: zoom_edges(s, s.names[0]))
+        s.move(center(baseline[(s.names[0], 22)]))
+        s.key(Z, 0)
+        released(s, wait_for)
+        assert s.status()["target"]["workspace"] == 21
+        s.check("post-release motion follows returning tiles without a wiggle; stationary release retains selection")
+
+        s.key(Z, 1)
+        wait_for(lambda: zoom_edges(s, s.names[0]))
+        s.move(center(baseline[(s.names[0], 22)]))
+        pointer = s.data("cursorpos")
+        namespace = "waybar-zoom-return"
+        panel = s.spawn(["python3", str(s.artifact("layer.py")), str(s.root / "zoom-return-panel"), namespace, "bottom"])
+        try:
+            wait_for(lambda: s.layer(namespace) and not s.status()["cursor_owned"])
+            assert s.status()["zoom"]["held"]
+            s.key(Z, 0)
+            released(s, wait_for)
+            panel.terminate()
+            panel.wait(timeout=5)
+            wait_for(lambda: not s.layer(namespace) and s.status()["cursor_owned"])
+            wait_for(lambda: same_geometry(baseline, tiles(s)))
+            assert s.data("cursorpos") == pointer
+            assert s.status()["target"]["workspace"] == 21
+            s.check("stationary panel restoration after zoom-out does not resume pointer selection")
+        finally:
+            if panel.poll() is None:
+                panel.terminate()
+                panel.wait(timeout=5)
+
+        s.ctl("keyword", "plugin:hyprspace:follow_mouse", "false")
+        try:
+            s.key(102, 1)
+            s.key(102, 0)
+            s.move(center(tile(s, 11)))
+            s.key(Z, 1)
+            wait_for(lambda: tile(s, 11)["w"] > baseline[(s.names[0], 11)]["w"] * 2)
+            time.sleep(1.4)
+            s.key(Z, 0)
+            s.move(wait_for(visible_neighbor_point))
+            assert s.status()["zoom"]["returning"]
+            assert s.status()["target"]["workspace"] == 11
+            s.key(Z, 1)
+            assert s.status()["zoom"]["workspace"] == 11
+            s.key(Z, 0)
+            released(s, wait_for)
+            s.check("disabled follow_mouse retains keyboard selection during rapid zoom release and repress")
+        finally:
+            s.ctl("keyword", "plugin:hyprspace:follow_mouse", "true")
+
+        s.key(102, 1)
+        s.key(102, 0)
         for button in (272, 273):
             s.key(Z, 1)
             time.sleep(1.4)
@@ -722,8 +821,7 @@ def transformed(s, wait_for):
         s.key(TAB, 0)
         assert s.status()["zoom"]["workspace"] == 31 and s.status()["zoom"]["monitor"] == s.names[1]
         assert abs(tile(s, 31)["w"] - enlarged["w"]) < 0.1
-        hints = zoom_edges(s, s.names[1])
-        assert hints
+        hints = wait_for(lambda: zoom_edges(s, s.names[1]))
         destination = hints[0]["workspace"]
         s.move(center(tile(s, 31)))
         s.move(edge_point(work, hints[0]["direction"]))

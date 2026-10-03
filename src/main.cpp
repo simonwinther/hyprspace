@@ -641,7 +641,7 @@ namespace {
         session().ownCursor(!foreground);
         if (foreground) {
             session().observePointer(pos);
-            session().selection.pointer(std::nullopt);
+            session().selection.pointer(std::nullopt, false);
             return;
         }
         info.cancelled = true;
@@ -730,7 +730,7 @@ namespace {
                 if (own)
                     session().pointer(g_pInputManager->getMouseCoordsInternal());
                 else
-                    session().selection.pointer(std::nullopt);
+                    session().selection.pointer(std::nullopt, false);
             }
         }
         if (session().drag.active() && (!session().drag.window || !session().drag.window->m_isMapped))
