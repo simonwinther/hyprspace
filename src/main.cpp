@@ -1053,6 +1053,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             session().views.push_back(std::make_unique<COverview>(mon));
     });
     g_listeners.configReloaded  = bus.config.reloaded.listen([] {
+        hooks::reconcileDispatchers();
         session().cancelZoom();
         if (g_panButtonTracked)
             g_mouseButtons.orphan(0x111);

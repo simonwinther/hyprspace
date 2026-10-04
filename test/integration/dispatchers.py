@@ -1,6 +1,9 @@
 """Dispatcher ownership across real shared-library unloads."""
 
+import json
 from pathlib import Path
+
+from run import wait_for
 
 
 def lifecycle(s):
@@ -13,6 +16,11 @@ def lifecycle(s):
 
     def unload(path):
         s.ctl("plugin", "unload", str(path))
+
+    def reload():
+        s.ctl("keyword", "animations:enabled", "true")
+        s.ctl("reload")
+        wait_for(lambda: json.loads(s.ctl("-j", "getoption", "animations:enabled"))["int"] == 0)
 
     def reply(name, expected):
         result = s.run("hyprctl", "dispatch", name)
@@ -29,6 +37,8 @@ def lifecycle(s):
     unload(s.plugin)
     load(fixture)
     load(s.plugin)
+    reload()
+    reload()
     reply("hyprspace-test:ping", "fixture:original")
     reply("hyprspace-test:legacy", "ok")
     for name in ("raw", "closure"):
@@ -44,6 +54,7 @@ def lifecycle(s):
     load(s.plugin)
     load(fixture)
     s.ctl("dispatch", "hyprspace-test:replace", "replacement")
+    reload()
     reply("submap", "fixture:replacement")
     unload(s.plugin)
     unmapped(s.plugin)
@@ -60,6 +71,7 @@ def lifecycle(s):
     load(fixture)
     for value in ("first", "second"):
         s.ctl("dispatch", "hyprspace-test:replace", value)
+        reload()
         reply("submap", "fixture:" + value)
     unload(fixture)
     unmapped(fixture)
@@ -71,6 +83,7 @@ def lifecycle(s):
     load(fixture)
     s.ctl("dispatch", "hyprspace-test:replace", "early")
     load(s.plugin)
+    reload()
     reply("submap", "fixture:early")
     unload(fixture)
     unmapped(fixture)

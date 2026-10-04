@@ -1656,6 +1656,7 @@ def main():
             "activation",
             "lock",
             "dispatchers",
+            "lua",
             "selection",
             "layout",
             "resources",
@@ -1704,15 +1705,34 @@ def main():
         "visible desktop windows" if args.visible else "background virtual monitors",
         flush=True,
     )
+    suite_factory = Suite
+    if args.only == "lua":
+        if args.runtime or args.visible or args.plugin:
+            parser.error("--only lua requires a fresh private source-build session")
+        import lua
+
+        suite_factory = lua.suite_type(Suite, wait_for)
     for attempt in range(3):
         try:
-            suite = Suite(args.runtime, visible=args.visible, plugin=args.plugin, group=args.only, companions=args.companions, build_dir=args.build)
+            suite = suite_factory(args.runtime, visible=args.visible, plugin=args.plugin, group=args.only, companions=args.companions, build_dir=args.build)
             break
         except OutputUnavailable as error:
             if attempt == 2:
                 raise
             print("Retrying unavailable nested output backend:", error, flush=True)
     try:
+        if args.only in ("all", "lua"):
+            import lua
+
+            if args.only == "all":
+                # Lua reload replaces its callback table; keep it disposable.
+                isolated = lua.suite_type(Suite, wait_for)(snapshot=suite.snapshot, group="lua")
+                try:
+                    lua.lifecycle(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                lua.lifecycle(suite, wait_for)
         if args.only in ("all", "dispatchers"):
             import dispatchers
 

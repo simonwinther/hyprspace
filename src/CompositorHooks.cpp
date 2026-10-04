@@ -802,6 +802,73 @@ namespace hyprspace::hooks {
         return true;
     }
 
+    void reconcileDispatchers() {
+        if (!keyHook)
+            return;
+        auto& currentDispatchers = g_pKeybindManager->m_dispatchers;
+        // Lua reload replaces its dispatcher along with the interpreter state.
+        // Only a matching wrapper may retain its saved native callback.
+        std::erase_if(dispatchers, [&](const auto& entry) {
+            const auto current = currentDispatchers.find(entry.first);
+            if (current == currentDispatchers.end())
+                return true;
+            const auto wrapper = current->second.template target<SDispatcherWrapper>();
+            return !wrapper || wrapper->registration != entry.second.id;
+        });
+        for (auto& [name, dispatcher] : currentDispatchers) {
+            if (dispatchers.contains(name) || name.starts_with("hyprspace:") || name == "movecursor" || !compositorDispatcher(name, dispatcher))
+                continue;
+            const auto registration = ++nextRegistration;
+            auto callback = [name, original = dispatcher](std::string args) {
+                if (dispatchDepth)
+                    return original(std::move(args));
+                const bool owned = keyboardOwned();
+                if (!owned) {
+                    if (!launchEnabled || !launchEnabled())
+                        return original(std::move(args));
+                    if (name == "exec" || name == "execr") {
+                        SDispatchResult result;
+                        launch::duringCommand(session().selection.command(), [&] { result = original(std::move(args)); });
+                        return result;
+                    }
+                }
+                const auto      point = session().selection.command();
+                PHLWINDOW       before;
+                PHLWORKSPACE    beforeWorkspace;
+                SDispatchResult result;
+                ++dispatchDepth;
+                try {
+                    CKeepLayerKeyboard keepLayer(!owned);
+                    launch::duringCommand(point, [&] {
+                        const auto execute = [&] {
+                            session().establishTarget();
+                            before          = Desktop::focusState()->window();
+                            const auto mon  = Desktop::focusState()->monitor();
+                            beforeWorkspace = mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr;
+                            result          = original(std::move(args));
+                        };
+                        if (point)
+                            atDesktopPoint(session().desktopPoint(*point), execute);
+                        else
+                            execute();
+                    });
+                } catch (...) {
+                    --dispatchDepth;
+                    throw;
+                }
+                --dispatchDepth;
+                const auto mon            = Desktop::focusState()->monitor();
+                const auto afterWorkspace = mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr;
+                if (Desktop::focusState()->window() != before || beforeWorkspace != afterWorkspace)
+                    session().followKeyboardFocus();
+                return result;
+            };
+            Dispatcher replacement = SDispatcherWrapper{std::move(callback), registration};
+            dispatchers.emplace(name, SDispatcherRegistration{dispatcher, registration});
+            dispatcher.swap(replacement);
+        }
+    }
+
     void install(std::function<bool()> owner, std::function<bool()> launching, std::function<bool(PHLMONITOR)> panels) {
         ownsKeyboard  = std::move(owner);
         launchEnabled = std::move(launching);
@@ -816,57 +883,7 @@ namespace hyprspace::hooks {
             axisHook      = hook("onMouseWheel", "CInputManager::onMouseWheel(", reinterpret_cast<void*>(pointerAxis));
             imeModsHook   = hook("sendMods", "CInputMethodKeyboardGrabV2::sendMods(", reinterpret_cast<void*>(imeModifiers));
             mouseBindHook = hook("ensureMouseBindState", "CKeybindManager::ensureMouseBindState(", reinterpret_cast<void*>(ensureMouseBindState));
-            for (auto& [name, dispatcher] : g_pKeybindManager->m_dispatchers) {
-                if (name.starts_with("hyprspace:") || name == "movecursor" || !compositorDispatcher(name, dispatcher))
-                    continue;
-                const auto registration = ++nextRegistration;
-                dispatchers.emplace(name, SDispatcherRegistration{dispatcher, registration});
-                auto callback = [name, original = dispatcher](std::string args) {
-                    if (dispatchDepth)
-                        return original(std::move(args));
-                    const bool owned = keyboardOwned();
-                    if (!owned) {
-                        if (!launchEnabled || !launchEnabled())
-                            return original(std::move(args));
-                        if (name == "exec" || name == "execr") {
-                            SDispatchResult result;
-                            launch::duringCommand(session().selection.command(), [&] { result = original(std::move(args)); });
-                            return result;
-                        }
-                    }
-                    const auto      point = session().selection.command();
-                    PHLWINDOW       before;
-                    PHLWORKSPACE    beforeWorkspace;
-                    SDispatchResult result;
-                    ++dispatchDepth;
-                    try {
-                        CKeepLayerKeyboard keepLayer(!owned);
-                        launch::duringCommand(point, [&] {
-                            const auto execute = [&] {
-                                session().establishTarget();
-                                before          = Desktop::focusState()->window();
-                                const auto mon  = Desktop::focusState()->monitor();
-                                beforeWorkspace = mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr;
-                                result          = original(std::move(args));
-                            };
-                            if (point)
-                                atDesktopPoint(session().desktopPoint(*point), execute);
-                            else
-                                execute();
-                        });
-                    } catch (...) {
-                        --dispatchDepth;
-                        throw;
-                    }
-                    --dispatchDepth;
-                    const auto mon            = Desktop::focusState()->monitor();
-                    const auto afterWorkspace = mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr;
-                    if (Desktop::focusState()->window() != before || beforeWorkspace != afterWorkspace)
-                        session().followKeyboardFocus();
-                    return result;
-                };
-                dispatcher = SDispatcherWrapper{std::move(callback), registration};
-            }
+            reconcileDispatchers();
         } catch (...) {
             uninstall();
             throw;

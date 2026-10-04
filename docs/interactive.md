@@ -195,6 +195,10 @@ fixture. They are not installed into the desktop session.
 runs viewport controls across all directions and outputs. `--only switcher`
 checks visible Alt+Tab panels over fullscreen and maximized windows, including
 scaled outputs, cancellation and animated closing. These run in the full suite.
+`--only lua` checks native Lua workspace and tool bindings after startup,
+repeated reloads, invalid-configuration recovery and plugin unloading. It uses its
+own private Lua compositor, including in the full suite, and asserts that native
+focus differs from the hovered overview target before each routed command.
 The repeat test measures a synchronous native resize, so completion
 of an already launched child process cannot be mistaken for a stuck repeat timer.
 Drag fixtures explicitly hold their virtual keyboard modifier until mouse release;
