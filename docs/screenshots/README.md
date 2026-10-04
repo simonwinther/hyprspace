@@ -12,6 +12,11 @@ The images have no added labels or composited interface elements.
 | [fullscreen.png](fullscreen.png) | Fullscreen Neovim in Ghostty alongside Files on one workspace |
 | [switcher.png](switcher.png) | App icons and the selected window title |
 | [scrolling-controls.png](scrolling-controls.png) | Scrolling columns with edge arrows and the Page Up/Page Down hint |
+| [zoom-overview.png](zoom-overview.png) | Four workspaces before inspection |
+| [zoom-inspection.png](zoom-inspection.png) | Pointer-anchored wheel zoom with the grab cursor |
+| [zoom-pan.png](zoom-pan.png) | Right-button pan with the grabbing cursor |
+| [zoom-pan.gif](zoom-pan.gif) | Animated 640 x 360 preview of zooming, panning and returning |
+| [zoom-pan.mp4](zoom-pan.mp4) | Full-resolution 1920 x 1080 video of the same sequence |
 
 Files displays a temporary folder containing copies of the project files.
 Neovim displays the switcher layout, bindings, regression test and Makefile.
@@ -19,6 +24,19 @@ Neovim displays the switcher layout, bindings, regression test and Makefile.
 The scrolling image was captured on 2026-09-06 during the isolated Hyprland
 0.56.2 integration suite. It keeps the original 960 x 600 pixels and shows
 disposable GTK test windows without personal content.
+
+The zoom media was captured on 2026-10-04 in a private background Hyprland
+0.56.2 session at scale 1. It shows copied project source in Neovim/Ghostty,
+a temporary project folder in Files, and a disposable controls document. The
+three PNGs preserve the original 1920 x 1080 pixels. The video was recorded at
+30 fps with the cursor included; the GIF is a smaller 10 fps preview. Neither
+has added labels or composited interface elements.
+
+The sequence holds Z, scrolls inward around the pointer, pans in both directions
+with the right button held, scrolls back to the fitted minimum, then releases Z
+to return to the grid. The capture checked both hand cursor states, the exact
+minimum and unchanged native window geometry. It used revision `6af06c7` and
+plugin SHA-256 `dab94626b8dfc4e6a9efdeeb99b7416f75f388bb8eab269eb6e8d90ab808bb40`.
 
 ## Capture replacements
 
