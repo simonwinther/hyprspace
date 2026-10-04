@@ -11,7 +11,7 @@ separate compatibility testing.
 
 Use **hyprpm** on Arch and other Linux setups with the supported Hyprland build,
 or the **tagged flake** on Nix. [Published releases](https://github.com/simonwinther/hyprspace/releases)
-are the stable-version list. The commands below select `v1.3.0`. An unversioned
+are the stable-version list. The commands below select `v1.3.1`. An unversioned
 repository install tracks development.
 
 ### Arch Linux and hyprpm
@@ -22,7 +22,7 @@ and select the release explicitly:
 ```bash
 sudo pacman -S --needed hyprland base-devel git cmake cpio cairo pango gdk-pixbuf2 librsvg libei nlohmann-json jq python
 hyprpm update
-hyprpm add https://github.com/simonwinther/hyprspace.git v1.3.0
+hyprpm add https://github.com/simonwinther/hyprspace.git v1.3.1
 hyprpm enable hyprspace
 hyprpm reload
 ```
@@ -66,7 +66,7 @@ Add these inputs to your system flake:
 
 ```nix
 inputs.hyprland.url = "github:hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f";
-inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.3.0";
+inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.3.1";
 inputs.hyprspace.inputs.hyprland.follows = "hyprland";
 ```
 
