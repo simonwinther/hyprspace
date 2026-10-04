@@ -539,6 +539,12 @@ bindm = SUPER,mouse:273,resizewindow
         self.pointer.stdin.flush()
         assert reply(self.pointer) == "ok"
 
+    def motion(self, dx: float, dy: float, pointer=None):
+        device = pointer or self.pointer
+        device.stdin.write(f"motion {dx} {dy}\n")
+        device.stdin.flush()
+        assert reply(device) == "ok"
+
     def scroll(self, delta=15, discrete=1, axis=0, source=0):
         self.pointer.stdin.write(f"axis {axis} {delta} {discrete} {source}\n")
         self.pointer.stdin.flush()

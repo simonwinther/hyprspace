@@ -41,20 +41,29 @@ namespace hyprspace {
         CTargetSelection<SOverviewTarget>       selection;
         SOverviewDrag                           drag;
 
-        bool                           live() const;
-        void                           begin();
-        void                           stopInput();
-        void                           restoreVisibility();
-        void                           reconcileVisibility();
-        bool                           covers(PHLMONITOR monitor) const;
-        void                           hideWindow(PHLWINDOW window);
-        void                           pointer(const Vector2D& pos, bool userMotion = false);
-        void                           observePointer(const Vector2D& pos);
-        void                           refreshPointerTarget(PHLMONITOR renderedMonitor);
-        void                           keyboard(COverview& view);
-        std::optional<uint64_t>        zoomPress();
-        void                           zoomRelease(uint64_t token);
-        void                           cancelZoom();
+        bool                    live() const;
+        void                    begin();
+        void                    stopInput();
+        void                    restoreVisibility();
+        void                    reconcileVisibility();
+        bool                    covers(PHLMONITOR monitor) const;
+        void                    hideWindow(PHLWINDOW window);
+        void                    pointer(const Vector2D& pos, bool userMotion = false);
+        void                    observePointer(const Vector2D& pos);
+        void                    refreshPointerTarget(PHLMONITOR renderedMonitor);
+        void                    keyboard(COverview& view);
+        std::optional<uint64_t> zoomPress();
+        void                    zoomRelease(uint64_t token);
+        void                    cancelZoom();
+        bool                    zoomScroll(const SScrollInput& event, const Vector2D& pos);
+        void                    cancelPan();
+        bool                    panHeld() const {
+            return m_pan.has_value();
+        }
+        bool panning() const {
+            return m_pan && m_pan->started;
+        }
+        bool                           panAvailable() const;
         bool                           zoomHeld() const;
         bool                           zoomLocked() const;
         std::optional<SOverviewTarget> zoomTarget() const;
@@ -84,6 +93,13 @@ namespace hyprspace {
         bool       zoomEdgeEnabled(const COverview& view) const;
         COverview* zoomView() const;
         void       advanceZoomEdge(PHLMONITOR renderedMonitor);
+        void       updatePan();
+        void       updateCursor();
+        struct SInspectionPan {
+            SWorkspaceIdentity workspace;
+            PHLMONITORREF      monitor;
+            bool               started = false;
+        };
         struct SZoomEdgeIntent {
             SWorkspaceIdentity source, destination;
             PHLMONITORREF      monitor;
@@ -92,6 +108,7 @@ namespace hyprspace {
         std::optional<SZoomEdgeIntent>  m_zoomEdgeIntent;
         CZoomHoldState                  m_zoomHolds;
         std::optional<SOverviewTarget>  m_zoomTarget;
+        std::optional<SInspectionPan>   m_pan;
         CVisibilityLedger<PHLWINDOWREF> m_visibility;
         SP<Render::ITexture>            m_dragTexture;
         bool                            m_cursorOwned = false;

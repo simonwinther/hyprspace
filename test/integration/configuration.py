@@ -4,7 +4,7 @@ import json
 
 
 def contracts(s, wait_for):
-    defaults = {"overview:band_gap": 28, "overview:all_workspaces": 1,
+    defaults = {"overview:band_gap": 28, "overview:all_workspaces": 1, "overview:wheel_zoom": 1,
                 "overview:all_monitors": 1, "switcher:current_workspace_only": 1}
     for name, expected in defaults.items():
         value = json.loads(s.ctl("-j", "getoption", "plugin:hyprspace:" + name))

@@ -46,11 +46,42 @@ namespace hyprspace {
         }
     };
 
-    inline SOverviewCamera overviewCameraAt(const SOverviewCamera& camera, double progress) {
-        const double p = std::isfinite(progress) ? std::clamp(progress, 0.0, 1.0) : 0.0;
-        if (!std::isfinite(camera.scale) || camera.scale <= 0 || !std::isfinite(camera.x) || !std::isfinite(camera.y))
+    inline SOverviewCamera interpolateOverviewCamera(const SOverviewCamera& from, const SOverviewCamera& to, double progress) {
+        const double p     = std::isfinite(progress) ? std::clamp(progress, 0.0, 1.0) : 0.0;
+        const auto   valid = [](const SOverviewCamera& camera) {
+            return std::isfinite(camera.scale) && camera.scale > 0 && std::isfinite(camera.x) && std::isfinite(camera.y);
+        };
+        if (!valid(from) || !valid(to))
             return {};
-        return {std::lerp(1.0, camera.scale, p), camera.x * p, camera.y * p};
+        if (p == 0)
+            return from;
+        if (p == 1)
+            return to;
+        return {std::lerp(from.scale, to.scale, p), std::lerp(from.x, to.x, p), std::lerp(from.y, to.y, p)};
+    }
+
+    // Apply the inspection lens after the baseline workspace-fit camera.
+    inline SOverviewCamera composeOverviewCamera(const SOverviewCamera& base, const SOverviewCamera& lens) {
+        const auto valid = [](const SOverviewCamera& camera) {
+            return std::isfinite(camera.scale) && camera.scale > 0 && std::isfinite(camera.x) && std::isfinite(camera.y);
+        };
+        if (!valid(base) || !valid(lens))
+            return {};
+        const SOverviewCamera result{base.scale * lens.scale, base.x * lens.scale + lens.x, base.y * lens.scale + lens.y};
+        return valid(result) ? result : SOverviewCamera{};
+    }
+
+    inline std::optional<SOverviewCamera> relativeOverviewCamera(const SOverviewCamera& camera, const SOverviewCamera& base) {
+        const auto valid = [](const SOverviewCamera& value) { return std::isfinite(value.scale) && value.scale > 0 && std::isfinite(value.x) && std::isfinite(value.y); };
+        if (!valid(camera) || !valid(base))
+            return std::nullopt;
+        const double          scale = camera.scale / base.scale;
+        const SOverviewCamera lens{scale, camera.x - base.x * scale, camera.y - base.y * scale};
+        return valid(lens) ? std::optional{lens} : std::nullopt;
+    }
+
+    inline SOverviewCamera overviewCameraAt(const SOverviewCamera& camera, double progress) {
+        return interpolateOverviewCamera({}, camera, progress);
     }
 
     // A carried resize preview retains its pickup mapping for input, while its

@@ -49,7 +49,7 @@ namespace hyprspace {
             if (now - *m_started < std::chrono::milliseconds(250))
                 return std::nullopt;
             const auto result = m_pending;
-            m_consumed = true;
+            m_consumed        = true;
             cancel();
             return result;
         }
@@ -73,7 +73,7 @@ namespace hyprspace {
       private:
         std::optional<EDirection>        m_edge, m_pending;
         std::optional<Clock::time_point> m_started;
-        bool                            m_consumed = false;
+        bool                             m_consumed = false;
     };
 
     // Independent keyboard holds share one zoom. Cancellation drops their
@@ -111,6 +111,150 @@ namespace hyprspace {
         uint32_t timeMs     = 0;
         bool     wheel      = true;
         bool     horizontal = false;
+        bool     wheelTilt  = false;
+    };
+
+    // The lens acts on baseline-camera output coordinates. Its two affine
+    // endpoints share one progress value, preserving anchors during animation.
+    class CInspectionZoom {
+      public:
+        SOverviewCamera current(double progress) const {
+            return interpolateOverviewCamera(m_from, m_goal, progress);
+        }
+
+        const SOverviewCamera& goal() const {
+            return m_goal;
+        }
+
+        bool goalFits(const SBoxF& footprint) const {
+            return fits(m_goal, footprint);
+        }
+
+        bool canPan(const SBoxF& footprint, double progress) const {
+            const auto displayed = current(progress);
+            return std::isfinite(progress) && displayed.scale > 1 && fits(displayed, footprint);
+        }
+
+        bool beginPan(const SBoxF& footprint, double progress) {
+            if (!canPan(footprint, progress))
+                return false;
+            freeze(progress);
+            return true;
+        }
+
+        bool pan(const SBoxF& footprint, double dx, double dy) {
+            if (!std::isfinite(dx) || !std::isfinite(dy) || !canPan(footprint, 1))
+                return false;
+            auto next = m_goal;
+            next.x    = std::clamp(next.x + dx, (footprint.x + footprint.w) * (1 - next.scale), footprint.x * (1 - next.scale));
+            next.y    = std::clamp(next.y + dy, (footprint.y + footprint.h) * (1 - next.scale), footprint.y * (1 - next.scale));
+            if (next == m_goal)
+                return false;
+            m_from = m_goal = next;
+            m_direction     = 0;
+            return true;
+        }
+
+      private:
+        static bool fits(const SOverviewCamera& camera, const SBoxF& footprint) {
+            if (!std::isfinite(camera.scale) || camera.scale < 1 || camera.scale > 4 || !std::isfinite(camera.x) || !std::isfinite(camera.y) ||
+                !std::isfinite(footprint.x) || !std::isfinite(footprint.y) || !std::isfinite(footprint.w) || !std::isfinite(footprint.h) || footprint.w <= 0 ||
+                footprint.h <= 0)
+                return false;
+            if (camera.scale == 1)
+                return camera == SOverviewCamera{};
+            const double minimumX = (footprint.x + footprint.w) * (1 - camera.scale), maximumX = footprint.x * (1 - camera.scale);
+            const double minimumY = (footprint.y + footprint.h) * (1 - camera.scale), maximumY = footprint.y * (1 - camera.scale);
+            if (!std::isfinite(minimumX) || !std::isfinite(maximumX) || !std::isfinite(minimumY) || !std::isfinite(maximumY))
+                return false;
+            // Freezing an interpolated lens can introduce a few rounding ULPs
+            // at a bound. Preserve a valid inspection while rejecting a fit pan.
+            const double tolerance =
+                32 * std::numeric_limits<double>::epsilon() *
+                std::max({1.0, std::abs(minimumX), std::abs(maximumX), std::abs(minimumY), std::abs(maximumY), std::abs(camera.x), std::abs(camera.y)});
+            return camera.x >= minimumX - tolerance && camera.x <= maximumX + tolerance && camera.y >= minimumY - tolerance && camera.y <= maximumY + tolerance;
+        }
+
+      public:
+        bool beginFitTransition(const SOverviewCamera& displayed, const SOverviewCamera& fit) {
+            const auto lens = relativeOverviewCamera(displayed, fit);
+            if (!lens)
+                return false;
+            m_from      = *lens;
+            m_goal      = {};
+            m_direction = 0;
+            return true;
+        }
+
+        bool scroll(const SScrollInput& event, double scrollFactor, const SBoxF& footprint, double pointerX, double pointerY, double progress,
+                    std::optional<SBoxF> displayedFootprint = std::nullopt) {
+            if (!event.wheel || event.horizontal || event.wheelTilt || !std::isfinite(event.delta) || !std::isfinite(scrollFactor) || scrollFactor == 0 ||
+                !std::isfinite(pointerX) || !std::isfinite(pointerY) || !std::isfinite(progress) || !std::isfinite(footprint.x) || !std::isfinite(footprint.y) ||
+                !std::isfinite(footprint.w) || !std::isfinite(footprint.h) || footprint.w <= 0 || footprint.h <= 0)
+                return false;
+            const double right = footprint.x + footprint.w, bottom = footprint.y + footprint.h;
+            if (!std::isfinite(right) || !std::isfinite(bottom))
+                return false;
+            const double detents = event.value120 != 0 ? event.value120 / 120.0 : event.delta / 15.0;
+            if (detents == 0)
+                return false;
+
+            // Compare magnitudes before multiplying: a finite device factor
+            // can still overflow when applied to an unusually large event.
+            constexpr double MAX_DETENTS = 32;
+            const double     amount = std::abs(detents), factor = std::abs(scrollFactor);
+            const double     effective = factor >= MAX_DETENTS / amount ? MAX_DETENTS : amount * factor;
+            if (effective == 0)
+                return false;
+            const int  direction = std::signbit(detents) != std::signbit(scrollFactor) ? -1 : 1;
+            const auto displayed = current(progress);
+            // A fit handoff can start below 1 or above 4. Its first tick uses
+            // the new hold's requested fit; reversals use bounded display scale.
+            const double source = m_direction == 0 || direction == m_direction ? m_goal.scale : std::clamp(displayed.scale, 1.0, 4.0);
+            double       scale  = std::clamp(source * std::exp(-direction * effective * std::log(1.15)), 1.0, 4.0);
+            if (scale <= 1.0 + 1e-9)
+                scale = 1;
+            else if (scale >= 4.0 - 1e-9)
+                scale = 4;
+            if (scale == m_goal.scale)
+                return false; // Limits neither retain input nor replace an anchor.
+
+            SOverviewCamera next;
+            if (scale != 1) {
+                const auto box = displayedFootprint.value_or(displayed.apply(footprint));
+                if (!std::isfinite(box.x) || !std::isfinite(box.y) || !std::isfinite(box.w) || !std::isfinite(box.h) || box.w <= 0 || box.h <= 0)
+                    return false;
+                // During opening, the selected cell also morphs. Preserve its
+                // normalized pointer position in the final fitted footprint.
+                const double anchorX  = footprint.x + (pointerX - box.x) / box.w * footprint.w;
+                const double anchorY  = footprint.y + (pointerY - box.y) / box.h * footprint.h;
+                const double minimumX = right * (1 - scale), maximumX = footprint.x * (1 - scale);
+                const double minimumY = bottom * (1 - scale), maximumY = footprint.y * (1 - scale);
+                const double x = pointerX - anchorX * scale, y = pointerY - anchorY * scale;
+                if (!std::isfinite(anchorX) || !std::isfinite(anchorY) || !std::isfinite(minimumX) || !std::isfinite(maximumX) || !std::isfinite(minimumY) ||
+                    !std::isfinite(maximumY) || !std::isfinite(x) || !std::isfinite(y))
+                    return false;
+                next = {scale, std::clamp(x, minimumX, maximumX), std::clamp(y, minimumY, maximumY)};
+            }
+            m_from      = displayed;
+            m_goal      = next;
+            m_direction = direction;
+            return true;
+        }
+
+        void reset() {
+            m_from = m_goal = {};
+            m_direction     = 0;
+        }
+
+        void freeze(double progress) {
+            m_from = m_goal = current(progress);
+            m_direction     = 0;
+        }
+
+      private:
+        SOverviewCamera m_from, m_goal;
+        int             m_direction = 0;
     };
 
     class CScrollAccumulator {
@@ -160,9 +304,27 @@ namespace hyprspace {
     // or yielded to another UI between the two events.
     class CButtonCapture {
       public:
+        bool captured(uint32_t button) const {
+            return m_buttons.contains(button);
+        }
+
+        void orphan(uint32_t button) {
+            if (captured(button))
+                m_orphaned.insert(button);
+        }
+
+        void preparePress(uint32_t button) {
+            if (m_orphaned.erase(button) > 0)
+                m_buttons.erase(button);
+        }
+
         bool consume(uint32_t button, bool pressed, bool ownsInput) {
-            if (!pressed)
+            if (!pressed) {
+                m_orphaned.erase(button);
                 return m_buttons.erase(button) > 0;
+            }
+
+            preparePress(button);
 
             if (!ownsInput)
                 return m_buttons.contains(button);
@@ -173,10 +335,12 @@ namespace hyprspace {
 
         void clear() {
             m_buttons.clear();
+            m_orphaned.clear();
         }
 
       private:
         std::unordered_set<uint32_t> m_buttons;
+        std::unordered_set<uint32_t> m_orphaned;
     };
 
 } // namespace hyprspace

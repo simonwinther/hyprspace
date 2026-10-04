@@ -37,6 +37,17 @@ handoff or unload, respecting lock and grab restrictions.
 Wheel and two-finger input over a scrolling workspace move the native tape within
 its bounds. Wheel fractions remain proportional; finger deltas map into logical
 preview distance. Scroll factors come from the device that emitted the event.
+While the zoom key is held, vertical wheel rotation instead magnifies the fitted
+workspace around the pointer, bounded to 1–4 times its normal fit. Wheel input
+also acts during opening and the initial zoom transition. Touchpad,
+horizontal-wheel and wheel-tilt panning retain their existing behavior;
+`overview:wheel_zoom = false` restores vertical-wheel panning during held zoom.
+While Z is held, right-button dragging pans magnified preview content within
+its fitted bounds. Open and closed hand cursors distinguish available panning
+from an active grab. Releasing the button retains the view; releasing Z restores
+the grid. The grab owns mouse actions until release or cancellation, and leaves
+native window movement and the scrolling tape untouched. Super+right-button
+resize remains available outside the grab.
 Edge arrows reveal the closest hidden column using native fit/center behavior.
 Page Up/Page Down select the previous/next column in screen order, keeping that
 window selected until the pointer moves. Enter focuses it and closes. Workspace

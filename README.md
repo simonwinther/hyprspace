@@ -114,7 +114,9 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | Super + A | Open or close the workspace overview |
 | Click a preview | Focus that window |
 | Arrows or Tab, then Enter | Select and open a workspace |
-| Hold Z | Enlarge the selected workspace; release to return to the grid |
+| Hold Z | Fit the selected workspace; release to return to the grid |
+| Wheel while holding Z | Zoom around the pointer; scroll back to the fitted view |
+| Right drag while holding Z and magnified | Pan the view with grab/grabbing cursor feedback |
 | 1 through 9, or 0 | Open workspace 1 through 10 |
 | Super + left drag | Rearrange a window or move it across workspaces and outputs |
 | Super + right drag | Resize a window in its preview |
@@ -132,8 +134,18 @@ On a small screen, hold **Z** to smoothly enlarge one workspace. While holding
 it, use arrows or Tab/Shift+Tab to browse that monitor's workspaces, or hover
 briefly at an edge to slide to its neighbor. Edge hints show the available
 directions, including above and below. Releasing Z smoothly restores the grid.
-Change `overview:zoom_key` to another XKB key
-name, or leave it empty to disable this control.
+While holding Z, scroll up to inspect the area under the pointer, then right-click
+and drag to move the magnified view. The hand cursor closes while you drag. Scroll
+down to return to the fitted workspace; zoom stops there and at four times that
+size. Release Z at any point to return to the grid. A monitor with one workspace
+already shows the fitted view, so Z alone keeps that framing.
+
+![Pointer-anchored wheel zoom and right-button panning while holding Z](docs/screenshots/zoom-pan.gif)
+
+[Watch the full-resolution video](docs/screenshots/zoom-pan.mp4).
+
+Change `overview:zoom_key` to another XKB key name, or leave it empty to disable
+this control.
 
 In a scrolling workspace, use the wheel or two-finger scrolling to pan its preview.
 Edge arrows reveal hidden columns. Page Up/Page Down select columns and Enter

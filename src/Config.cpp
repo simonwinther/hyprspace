@@ -34,6 +34,7 @@ namespace hyprspace::config {
             SP<Config::Values::CColorValue>  overviewTitleBgColor;
             SP<Config::Values::CStringValue> overviewFont;
             SP<Config::Values::CStringValue> overviewZoomKey;
+            SP<Config::Values::CBoolValue>   overviewWheelZoom;
             SP<Config::Values::CColorValue>  overviewFullscreenBorder;
 
             SP<Config::Values::CIntValue>    switcherIconSize;
@@ -96,6 +97,8 @@ namespace hyprspace::config {
         g_values.overviewFont            = reg<CStringValue>("plugin:hyprspace:overview:font", "pango font description used in the overview", "Sans 12");
         g_values.overviewZoomKey = reg<CStringValue>("plugin:hyprspace:overview:zoom_key", "unmodified XKB key held to enlarge the selected workspace; empty disables",
                                                      "z", SStringValueOptions{.validator = hooks::validateZoomKey});
+        g_values.overviewWheelZoom =
+            reg<CBoolValue>("plugin:hyprspace:overview:wheel_zoom", "zoom the held workspace around the pointer with the vertical mouse wheel", true);
         g_values.overviewFullscreenBorder =
             reg<CColorValue>("plugin:hyprspace:overview:fullscreen_border", "outline and badge marking the window that is fullscreen", 0xff89b4fa);
 
@@ -183,6 +186,9 @@ namespace hyprspace::config {
         if (name.empty() || !hooks::validateZoomKey(name))
             return XKB_KEY_NoSymbol;
         return xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+    }
+    bool overviewWheelZoom() {
+        return g_values.overviewWheelZoom ? g_values.overviewWheelZoom->value() : true;
     }
     CHyprColor overviewFullscreenBorder() {
         return colorOf(g_values.overviewFullscreenBorder, 0xff89b4fa);
