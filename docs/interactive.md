@@ -246,8 +246,8 @@ screenshot selector with Escape. Its desktop entry and fixture windows are
 removed afterward. Run launcher mode separately from the private application
 checks.
 
-This work is not released. Before release, all automated suites must pass on the
-final binary and companion builds. Separately record a physical three-monitor
+Before publishing a release, all automated suites must pass on the final binary
+and companion builds. Separately record a physical three-monitor
 pass with hardware and software cursors, the installed Waybar/notification and
 screenshot-selector setup, and existing Firefox/Discord processes. Nested
 protocol fixtures establish correlation behavior but do not replace those
