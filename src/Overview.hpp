@@ -82,6 +82,16 @@ namespace hyprspace {
         void                              releaseZoom();
         bool                              zoomTransitioning() const;
         bool                              zoomNavigationReady() const;
+        bool                              inspectScroll(const SScrollInput& event, const Vector2D& globalPos);
+        bool                              inspectionReady() const;
+        bool                              inspectionActive() const;
+        bool                              inspectionTransitioning() const;
+        bool                              inspectionPanHit(const Vector2D& globalPos) const;
+        bool                              inspectionPanAvailable(const Vector2D& globalPos) const;
+        bool                              beginInspectionPan(const Vector2D& globalPos);
+        void                              panInspection(const Vector2D& delta);
+        double                            inspectionFactor() const;
+        double                            inspectionGoal() const;
         std::optional<EDirection>         zoomEdgeAt(const Vector2D& globalPos) const;
         std::optional<SWorkspaceIdentity> zoomNeighbor(const SWorkspaceIdentity& workspace, EDirection direction) const;
         struct SZoomEdgeHint {
@@ -158,6 +168,8 @@ namespace hyprspace {
         SBoxF           interpolate(const SEntry& e) const;
         SBoxF           displayedCell(const SEntry& e) const;
         SOverviewCamera camera() const;
+        SOverviewCamera rawZoomCamera() const;
+        void            foldInspection();
         float           overviewProgress() const;
 
         // Where a window at monitor-local logical `r` lands inside cell `cell`.
@@ -214,7 +226,15 @@ namespace hyprspace {
         PHLANIMVAR<float>    m_progress; // opening: 0 = desktop, 1 = overview; closing: remaining fraction
         PHLANIMVAR<float>    m_zoomScale;
         PHLANIMVAR<Vector2D> m_zoomOffset;
-        float                m_closeStartProgress = 1.F;
+        PHLANIMVAR<float>    m_inspectionProgress;
+        CInspectionZoom      m_inspection;
+        struct SZoomFit {
+            SWorkspaceIdentity workspace;
+            SOverviewCamera    camera;
+            SBoxF              cell, usable;
+        };
+        std::optional<SZoomFit> m_zoomFit;
+        float                   m_closeStartProgress = 1.F;
     };
 
 } // namespace hyprspace

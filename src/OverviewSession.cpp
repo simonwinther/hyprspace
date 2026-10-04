@@ -92,11 +92,14 @@ namespace hyprspace {
         own = own && overlaysAllowed();
         if (own == m_cursorOwned)
             return;
+        if (!own)
+            cancelPan();
         cancelZoomEdge();
         m_cursorOwned = own;
         if (own)
             g_pSeatManager->setPointerFocus(nullptr, {});
         hooks::ownCursor(own);
+        updateCursor();
     }
 
     std::optional<SOverviewTarget> COverviewSession::hit(const Vector2D& pos) const {
@@ -123,10 +126,21 @@ namespace hyprspace {
         // mapped to the desktop. Those are not overview pointer coordinates.
         if (hooks::mappingPointer())
             return;
+        const auto delta     = pos - m_pointer;
         const bool userMoved = userMotion && pos != m_pointer;
         m_pointer            = pos;
-        const auto view      = zoomView();
-        const auto edge      = view ? view->zoomEdgeAt(pos) : std::nullopt;
+        if (m_pan) {
+            updatePan();
+            if (m_pan) {
+                if (userMoved && m_pan->started)
+                    if (auto* view = zoomView())
+                        view->panInspection(delta);
+                updateCursor();
+                return;
+            }
+        }
+        const auto view = zoomView();
+        const auto edge = view ? view->zoomEdgeAt(pos) : std::nullopt;
         if (userMoved) {
             if (m_zoomEdgeHover.motion(edge, view && zoomEdgeEnabled(*view), CZoomEdgeHover::Clock::now(), view && view->zoomNavigationReady())) {
                 if (auto destination = view->zoomNeighbor(m_zoomTarget->workspace, *edge))
@@ -177,9 +191,11 @@ namespace hyprspace {
             }
         }
         damage();
+        updateCursor();
     }
 
     void COverviewSession::keyboard(COverview& view) {
+        cancelPan();
         cancelZoomEdge();
         retargetSelection(view);
     }
@@ -227,18 +243,74 @@ namespace hyprspace {
 
     void COverviewSession::zoomRelease(uint64_t token) {
         if (m_zoomHolds.release(token) && !zoomHeld()) {
+            cancelPan();
             cancelZoomEdge();
             for (const auto& view : views)
                 view->releaseZoom();
             damage();
+            updateCursor();
         }
     }
 
     void COverviewSession::cancelZoom() {
+        cancelPan();
         cancelZoomEdge();
         m_zoomHolds.cancel();
         for (const auto& view : views)
             view->releaseZoom();
+        updateCursor();
+    }
+
+    bool COverviewSession::zoomScroll(const SScrollInput& event, const Vector2D& pos) {
+        if (m_pan) {
+            updateZoom();
+            if (m_pan)
+                return true;
+        }
+        if (!zoomHeld() || !config::overviewWheelZoom() || !event.wheel || event.wheelTilt || event.horizontal)
+            return false;
+        // Ownership was checked by the mouse-axis listener. A held wheel event
+        // remains consumed at bounds, during a drag, or over another output.
+        cancelZoomEdge();
+        if (drag.active() || hooks::mappingPointer() || !m_cursorOwned)
+            return true;
+        updateZoom();
+        pointer(pos);
+        if (auto* view = zoomView(); view && zoomHeld())
+            view->inspectScroll(event, pos);
+        updateCursor();
+        return true;
+    }
+
+    bool COverviewSession::panAvailable() const {
+        const auto* view = zoomView();
+        return live() && m_cursorOwned && zoomHeld() && !drag.active() && view && view->inspectionPanAvailable(m_pointer);
+    }
+
+    void COverviewSession::updateCursor() {
+        if (m_cursorOwned)
+            hooks::setCursor(panning() ? "grabbing" : panAvailable() && g_pInputManager->getModsFromAllKBs() == 0 ? "grab" : "default");
+    }
+
+    void COverviewSession::cancelPan() {
+        if (!m_pan)
+            return;
+        m_pan.reset();
+        cancelZoomEdge();
+        updateCursor();
+    }
+
+    void COverviewSession::updatePan() {
+        if (!m_pan)
+            return;
+        auto* view = zoomView();
+        if (!live() || !m_cursorOwned || !zoomHeld() || drag.active() || !config::overviewWheelZoom() || !m_zoomTarget || m_pan->workspace != m_zoomTarget->workspace ||
+            m_pan->monitor != m_zoomTarget->monitor || !view) {
+            cancelPan();
+            return;
+        }
+        if (!m_pan->started && view->beginInspectionPan(m_pointer))
+            m_pan->started = true;
     }
 
     bool COverviewSession::zoomHeld() const {
@@ -262,8 +334,8 @@ namespace hyprspace {
     }
 
     bool COverviewSession::zoomEdgeEnabled(const COverview& view) const {
-        return overlaysAllowed() && live() && m_cursorOwned && config::followMouse() && zoomHeld() && !drag.active() && m_zoomTarget &&
-               view.monitor() == m_zoomTarget->monitor && !view.closing();
+        return overlaysAllowed() && live() && m_cursorOwned && config::followMouse() && zoomHeld() && !drag.active() && !m_pan && m_zoomTarget &&
+               view.monitor() == m_zoomTarget->monitor && !view.closing() && !view.inspectionActive() && !view.inspectionTransitioning();
     }
 
     bool COverviewSession::zoomEdgeReady(const COverview& view) const {
@@ -331,12 +403,18 @@ namespace hyprspace {
         updateZoom();
         if (!live() || !m_cursorOwned)
             return;
+        updatePan();
+        if (m_pan) {
+            updateCursor();
+            return;
+        }
         selection.refresh(hit(m_pointer), config::followMouse() && !zoomHeld());
         for (const auto& view : views)
             if (!view->closing())
                 view->onMouseMove(m_pointer);
         syncSelection();
         advanceZoomEdge(renderedMonitor);
+        updateCursor();
     }
 
     COverview* COverviewSession::keyboardView() const {
@@ -430,6 +508,17 @@ namespace hyprspace {
     }
 
     bool COverviewSession::button(uint32_t button, bool pressed, uint32_t mods) {
+        if (m_pan)
+            return true;
+        if (pressed && button == 0x111 && mods == 0 && zoomHeld() && config::overviewWheelZoom()) {
+            if (auto* view = zoomView(); m_cursorOwned && !drag.active() && view && view->inspectionPanHit(m_pointer)) {
+                m_pan = SInspectionPan{m_zoomTarget->workspace, m_zoomTarget->monitor};
+                cancelZoomEdge();
+                updatePan();
+                updateCursor();
+            }
+            return true;
+        }
         if (pressed && (mods & HL_MODIFIER_META) && (button == 0x110 || button == 0x111)) {
             const auto target = hit(m_pointer);
             if (!target || !target->window || drag.active())

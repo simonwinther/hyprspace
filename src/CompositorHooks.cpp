@@ -21,6 +21,7 @@
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/pointer/PointerController.hpp>
+#include <hyprland/src/pointer/PointerManager.hpp>
 #include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/protocols/InputMethodV2.hpp>
@@ -33,6 +34,7 @@
 #include <any>
 #include <dlfcn.h>
 #include <stdexcept>
+#include <type_traits>
 
 namespace hyprspace::hooks {
     namespace {
@@ -108,6 +110,10 @@ namespace hyprspace::hooks {
             friend auto member(SCursorOverrides);
         };
         template struct CAccess<SCursorOverrides, &Pointer::Cursor::CShapeOverrideController::m_overrides>;
+        struct SPointerListeners {
+            friend auto member(SPointerListeners);
+        };
+        template struct CAccess<SPointerListeners, &Pointer::CPointerManager::m_pointerListeners>;
         struct SIgnoreKeyboard {
             friend auto member(SIgnoreKeyboard);
         };
@@ -129,6 +135,7 @@ namespace hyprspace::hooks {
         };
         template struct CAccess<SResizeSize, &Layout::Supplementary::CDragStateController::m_beginDragSizeXY>;
         std::optional<std::array<std::string, 2>> savedCursor;
+        std::string                               installedCursor;
         SP<CEventLoopTimer>                       resizeTimer;
         WP<Layout::ITarget>                       resizeTarget;
         Vector2D                                  resizePickup;
@@ -430,13 +437,52 @@ namespace hyprspace::hooks {
             savedCursor = {overrides[CURSOR_OVERRIDE_UNKNOWN], overrides[CURSOR_OVERRIDE_WINDOW_EDGE]};
             overrideController->unsetOverride(CURSOR_OVERRIDE_WINDOW_EDGE);
             overrideController->setOverride("default", CURSOR_OVERRIDE_UNKNOWN);
+            installedCursor = "default";
         } else if (!own && savedCursor) {
-            if (overrides[CURSOR_OVERRIDE_UNKNOWN] == "default")
+            if (overrides[CURSOR_OVERRIDE_UNKNOWN] == installedCursor)
                 overrideController->setOverride((*savedCursor)[0], CURSOR_OVERRIDE_UNKNOWN);
             if (overrides[CURSOR_OVERRIDE_WINDOW_EDGE].empty())
                 overrideController->setOverride((*savedCursor)[1], CURSOR_OVERRIDE_WINDOW_EDGE);
             savedCursor.reset();
+            installedCursor.clear();
         }
+    }
+
+    void setCursor(const std::string& name) {
+        using namespace Pointer::Cursor;
+        if (!savedCursor || installedCursor == name)
+            return;
+        auto& overrides = overrideController.get()->*member(SCursorOverrides{});
+        if (overrides[CURSOR_OVERRIDE_UNKNOWN] != installedCursor)
+            return;
+        overrideController->setOverride(name, CURSOR_OVERRIDE_UNKNOWN);
+        installedCursor = name;
+    }
+
+    std::string cursorName() {
+        using namespace Pointer::Cursor;
+        return (overrideController.get()->*member(SCursorOverrides{}))[CURSOR_OVERRIDE_UNKNOWN];
+    }
+
+    std::function<bool()> pointerConnectionGuard() {
+        const auto& listeners = Pointer::mgr().get()->*member(SPointerListeners{});
+        using Listener        = std::remove_cvref_t<decltype(*listeners.front())>;
+        std::vector<WP<Listener>> connections;
+        connections.reserve(listeners.size());
+        for (const auto& listener : listeners)
+            if (listener && listener->pointer && listener->pointer->m_connected)
+                connections.emplace_back(listener);
+
+        // Native detach destroys the listener, even when the same device is
+        // reattached before another event. Weak identities retain no device
+        // and are sampled once per grip, without allocating during rendering.
+        return [connections = std::move(connections)] {
+            return !connections.empty() && std::ranges::all_of(connections, [](const auto& weak) {
+                const auto listener = weak.lock();
+                const auto pointer  = listener ? listener->pointer.lock() : nullptr;
+                return pointer && pointer->m_connected;
+            });
+        };
     }
 
     bool keyboardOwned() {

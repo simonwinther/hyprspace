@@ -117,15 +117,43 @@ Entering an edge during an opening or camera animation starts the dwell once
 the animation settles. Drags and foreground input handoff cancel unfinished
 hovers; moving within the edge can start a fresh dwell after input returns.
 Scrolling arrows remain separate from workspace navigation, and scrolling layouts
-still accept panning.
-Wheel selection of other workspaces pauses during zoom. Release Z to return
+still accept touchpad, horizontal-wheel and wheel-tilt panning.
+
+While Z is held, the vertical mouse wheel zooms around the pointer in every
+layout. Wheel input takes effect during the initial fit or opening animation,
+retargeting the displayed camera smoothly. Wheel up enlarges and wheel down
+reduces magnification, honoring the device's scroll direction and factor. Extra
+zoom is bounded between the normal Z-held fit and four times that fit; scrolling
+outward restores its exact framing. High-resolution wheels retain fractional
+detents. Inspection stays on the held
+workspace's output, and wheel input over another output is consumed without
+changing that workspace.
+Hold the right mouse button while Z is held to grab and pan a magnified
+workspace. The picture follows the mouse, bounded to keep its normal fitted
+footprint covered. The open-hand cursor indicates that panning is available;
+the closed hand indicates an active grab. Pickup preserves the displayed camera,
+including during wheel animation. A grab begun before the initial fit is ready
+waits for a movable camera. At the normal fit, there is nothing to pan. Release
+the right button to retain the view, or release Z to return to the grid. Wheel
+input and other mouse actions pause during the grab. Super+right-button resize
+remains available when starting outside a grab; ordinary right-click dismissal
+remains available outside held zoom.
+Edge-hover browsing pauses during extra zoom and its return to the fitted view;
+real pointer motion can start a fresh dwell afterward. Keyboard workspace
+browsing clears extra zoom and fits the new workspace. Changes to the usable
+monitor area or workspace tile also clear extra zoom and refit. Set
+`overview:wheel_zoom` to `false` to retain the previous wheel behavior.
+
+Wheel selection of other workspaces pauses during zoom. Release Z at any
+magnification to return directly to the overview grid
 through the reverse animation. Pointer movement immediately resumes selection,
 including during zoom-out, so pressing Z again enlarges the workspace currently
 under the pointer. Releasing Z without moving retains the selected workspace.
 
 Zoom affects previews and keeps the overview open. Clicking a window or pressing
 Enter still opens the selection, and Escape still dismisses the overview. An
-output already showing a single workspace keeps its existing geometry. New zoom
+output already showing a single workspace keeps its existing Z-fit geometry but
+still accepts extra wheel zoom. New zoom
 presses and workspace browsing pause during a drag; releasing Z during a drag
 still restores the grid, with resize gestures retaining their pickup scale.
 Foreground keyboard handoff cancels held zoom and requires a new press afterward.
@@ -279,6 +307,7 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:padding` | int | `56` | Outer padding |
 | `overview:gap` | int | `28` | Gap between workspace tiles |
 | `overview:zoom_key` | string | `z` | Unmodified hold-to-zoom key; empty disables it. Use an XKB key name that does not conflict with overview navigation or system keys |
+| `overview:wheel_zoom` | bool | `true` | Vertical mouse-wheel inspection while the zoom key is held; bounds are 1–4 times the normal held fit. Disable to retain previous wheel behavior |
 | `overview:band_gap` | int | `28` | Deprecated compatibility key; ignored. `overview:gap` controls both axes |
 | `overview:all_workspaces` | bool | `true` | Deprecated compatibility key; ignored. Populated, active and persistent workspaces are always included |
 | `overview:rounding` | int | `14` | Tile corner radius |
@@ -385,6 +414,16 @@ metadata. The resource integration fixture exercises title/width churn, retained
 frame references, failed GL allocation and repeated overlay close/reopen.
 Each overview view also includes `zoom_edges`: available directions, destination
 workspace IDs, hint bounds in global logical pixels, and pending dwell state.
+The `zoom` object includes `extra_factor`, `extra_goal`, `inspection_ready`,
+`inspection_transitioning`, and `camera_settled` for wheel magnification and its
+input/animation state. Input readiness is immediate; `camera_settled` waits for
+opening, fit and inspection animations. Extra factors stay within 1–4 while the
+initial fit is still moving. Release clears the inspection transform before the
+base camera returns to the grid, so extra factors read 1 during that return.
+The zoom object also reports `pan_held`, `panning`, and `pan_available` for an
+armed grab, active camera movement, and an eligible displayed lens. The top-level
+`overview_cursor` reports the current cursor override, including `grab` and
+`grabbing`; foreground ownership or an external override can replace it.
 
 ### Animations
 
@@ -527,7 +566,9 @@ cover all four directions, wheel and finger input, bounds, arrows, keyboard
 selection, inactive workspaces, foreground typing and animated pointer targeting.
 Hold-to-zoom checks cover ten-workspace fitting, keyboard and edge-hover browsing,
 pointer pinning, dwell cancellation, key release and device ownership, foreground handoff, drag mapping,
-scrolling and closing during transitions. Run them alone with
+scrolling, bounded pointer-anchored wheel inspection, high-resolution input,
+right-button panning, cursor restoration, mouse reconnects, resource stability
+and closing during transitions. Run them alone with
 `make integration-test INTEGRATION_ARGS='--only zoom'`.
 
 [Verification instructions and release gates](interactive.md#verification)

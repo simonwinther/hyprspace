@@ -112,6 +112,57 @@ static void testZoomGeometry() {
     CHECK(overviewCameraAt({NAN, 0, 0}, 1) == SOverviewCamera{});
     CHECK(reprojectOverviewBox(preview, {}, cell) == preview);
 
+    section("inspection camera: composition uses monitor-local baseline output coordinates");
+    const SOverviewCamera baseline{2.35, -173, 46}, lens{1.8, -340, -220};
+    for (const SBoxF box : {cell, preview, SBoxF{-900, -480, 300, 180}}) {
+        const auto expected = lens.apply(baseline.apply(box));
+        const auto composed = composeOverviewCamera(baseline, lens).apply(box);
+        CHECK_NEAR(composed.x, expected.x, 1e-8);
+        CHECK_NEAR(composed.y, expected.y, 1e-8);
+        CHECK_NEAR(composed.w, expected.w, 1e-8);
+        CHECK_NEAR(composed.h, expected.h, 1e-8);
+    }
+    CHECK(composeOverviewCamera(baseline, {}) == baseline);
+    CHECK(composeOverviewCamera({}, lens) == lens);
+    CHECK(composeOverviewCamera({NAN, 0, 0}, lens) == SOverviewCamera{});
+    CHECK(composeOverviewCamera(baseline, {0, 0, 0}) == SOverviewCamera{});
+    CHECK(composeOverviewCamera({std::numeric_limits<double>::max(), 0, 0}, lens) == SOverviewCamera{});
+
+    section("inspection camera: rebasing preserves the raw camera before overview progress");
+    for (const SOverviewCamera camera : {SOverviewCamera{0.4, 25, -30}, baseline, SOverviewCamera{18, -1300, 400}}) {
+        const auto relative = relativeOverviewCamera(camera, baseline);
+        CHECK(relative.has_value());
+        const auto restored = composeOverviewCamera(baseline, *relative);
+        CHECK_NEAR(restored.scale, camera.scale, 1e-12);
+        CHECK_NEAR(restored.x, camera.x, 1e-9);
+        CHECK_NEAR(restored.y, camera.y, 1e-9);
+        for (double progress : {0.0, 0.2, 0.7, 1.0}) {
+            const auto before = overviewCameraAt(camera, progress).apply(cell);
+            const auto after  = overviewCameraAt(restored, progress).apply(cell);
+            CHECK_NEAR(after.x, before.x, 1e-9);
+            CHECK_NEAR(after.y, before.y, 1e-9);
+            CHECK_NEAR(after.w, before.w, 1e-9);
+            CHECK_NEAR(after.h, before.h, 1e-9);
+        }
+    }
+    CHECK(!relativeOverviewCamera({NAN, 0, 0}, baseline));
+    CHECK(!relativeOverviewCamera(baseline, {0, 0, 0}));
+    CHECK(!relativeOverviewCamera({std::numeric_limits<double>::max(), 0, 0}, {0.1, 0, 0}));
+
+    section("inspection camera: shared progress preserves anchors and exact endpoints under overshoot");
+    const SOverviewCamera from{1.25, -125, -75}, to{3, -1000, -600};
+    // Both transforms fix the point (500, 300).
+    for (double progress : {-1.0, 0.0, 0.1, 0.5, 0.9, 1.0, 2.0}) {
+        const auto displayed = interpolateOverviewCamera(from, to, progress);
+        CHECK_NEAR(displayed.apply({500, 300, 0, 0}).x, 500, 1e-8);
+        CHECK_NEAR(displayed.apply({500, 300, 0, 0}).y, 300, 1e-8);
+        CHECK(displayed.scale >= from.scale && displayed.scale <= to.scale);
+    }
+    CHECK(interpolateOverviewCamera(from, to, -1) == from);
+    CHECK(interpolateOverviewCamera(from, to, 2) == to);
+    CHECK(interpolateOverviewCamera(from, to, NAN) == from);
+    CHECK(interpolateOverviewCamera(from, {INFINITY, 0, 0}, 1) == SOverviewCamera{});
+
     section("zoom edges: logical work-area strips exclude corners and other monitors");
     CHECK(overviewZoomEdgeAt(usable, 1, 400) == EDirection::LEFT);
     CHECK(overviewZoomEdgeAt(usable, 1365, 400) == EDirection::RIGHT);

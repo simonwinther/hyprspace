@@ -69,9 +69,11 @@ namespace hyprspace {
         Animation::mgr()->createAnimation(0.F, m_progress, Config::animationTree()->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
         Animation::mgr()->createAnimation(1.F, m_zoomScale, Config::animationTree()->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
         Animation::mgr()->createAnimation(Vector2D{}, m_zoomOffset, Config::animationTree()->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
+        Animation::mgr()->createAnimation(1.F, m_inspectionProgress, Config::animationTree()->getAnimationPropertyConfig("windowsMove"), AVARDAMAGE_NONE);
         m_progress->setUpdateCallback([this](auto) { damage(); });
         m_zoomScale->setUpdateCallback([this](auto) { damage(); });
         m_zoomOffset->setUpdateCallback([this](auto) { damage(); });
+        m_inspectionProgress->setUpdateCallback([this](auto) { damage(); });
         m_progress->setValueAndWarp(0.F);
         *m_progress = 1.F;
 
@@ -358,9 +360,13 @@ namespace hyprspace {
         return m_closing ? m_closeStartProgress * remaining : remaining;
     }
 
-    SOverviewCamera COverview::camera() const {
+    SOverviewCamera COverview::rawZoomCamera() const {
         const auto& offset = m_zoomOffset->value();
-        return overviewCameraAt({m_zoomScale->value(), offset.x, offset.y}, overviewProgress());
+        return composeOverviewCamera({m_zoomScale->value(), offset.x, offset.y}, m_inspection.current(m_inspectionProgress->value()));
+    }
+
+    SOverviewCamera COverview::camera() const {
+        return overviewCameraAt(rawZoomCamera(), overviewProgress());
     }
 
     SBoxF COverview::displayedCell(const SEntry& e) const {
@@ -380,7 +386,18 @@ namespace hyprspace {
         const auto entry = std::ranges::find_if(m_entries, [&](const auto& e) { return workspace == SWorkspaceIdentity{e.workspaceId, e.workspaceName}; });
         if (entry == m_entries.end() || entry->target.w <= 0 || entry->target.h <= 0)
             return false;
-        const auto fitted = overviewZoomCamera(entry->target, m_usable, config::overviewPadding(), config::overviewShowLabels() ? 34.0 : 0.0);
+        auto fitted = overviewZoomCamera(entry->target, m_usable, config::overviewPadding(), config::overviewShowLabels() ? 34.0 : 0.0);
+        // The baseline's scalar animation stores a float; use its exact goal
+        // for inspection bounds and identity restoration as well.
+        fitted.scale = static_cast<float>(fitted.scale);
+        const bool changed =
+            !m_zoomFit || m_zoomFit->workspace != workspace || m_zoomFit->camera != fitted || m_zoomFit->cell != entry->target || m_zoomFit->usable != m_usable;
+        if (changed || !config::overviewWheelZoom() || !m_inspection.goalFits(fitted.apply(entry->target))) {
+            session().cancelPan();
+            foldInspection();
+        }
+        if (changed)
+            m_zoomFit = SZoomFit{workspace, fitted, entry->target, m_usable};
         const auto scale  = static_cast<float>(fitted.scale);
         const auto offset = Vector2D{fitted.x, fitted.y};
         // Called during live geometry refresh as well as keyboard navigation.
@@ -395,6 +412,8 @@ namespace hyprspace {
     void COverview::releaseZoom() {
         if (m_closing)
             return;
+        foldInspection();
+        m_zoomFit.reset();
         if (m_zoomScale->goal() != 1.F)
             *m_zoomScale = 1.F;
         if (m_zoomOffset->goal() != Vector2D{})
@@ -402,11 +421,111 @@ namespace hyprspace {
     }
 
     bool COverview::zoomTransitioning() const {
-        return !m_closing && (m_zoomScale->isBeingAnimated() || m_zoomOffset->isBeingAnimated());
+        return !m_closing && (m_zoomScale->isBeingAnimated() || m_zoomOffset->isBeingAnimated() || inspectionTransitioning());
     }
 
     bool COverview::zoomNavigationReady() const {
         return !m_closing && !m_progress->isBeingAnimated() && m_progress->value() >= 0.99F && !zoomTransitioning();
+    }
+
+    bool COverview::inspectionReady() const {
+        return !m_closing && m_zoomFit && config::overviewWheelZoom() && !session().drag.active();
+    }
+
+    bool COverview::inspectionActive() const {
+        return m_inspection.goal() != SOverviewCamera{} || m_inspection.current(m_inspectionProgress->value()) != SOverviewCamera{};
+    }
+
+    bool COverview::inspectionTransitioning() const {
+        return !m_closing && m_inspectionProgress->isBeingAnimated();
+    }
+
+    double COverview::inspectionFactor() const {
+        return std::clamp(m_inspection.current(m_inspectionProgress->value()).scale, 1.0, 4.0);
+    }
+
+    double COverview::inspectionGoal() const {
+        return std::clamp(m_inspection.goal().scale, 1.0, 4.0);
+    }
+
+    bool COverview::inspectionPanHit(const Vector2D& globalPos) const {
+        if (!inspectionReady())
+            return false;
+        const auto mon = monitor();
+        if (!mon || !SBoxF{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y}.contains(globalPos.x, globalPos.y))
+            return false;
+        const auto local = globalPos - mon->m_position;
+        return m_usable.contains(local.x, local.y) && workspaceCell(m_zoomFit->workspace).contains(local.x, local.y);
+    }
+
+    bool COverview::inspectionPanAvailable(const Vector2D& globalPos) const {
+        // Opening morphs and unfinished base fits still own their camera.
+        // A wheel lens can be grabbed before its animation has settled.
+        return inspectionPanHit(globalPos) && !m_progress->isBeingAnimated() && !m_zoomScale->isBeingAnimated() && !m_zoomOffset->isBeingAnimated() &&
+               m_inspection.canPan(m_zoomFit->camera.apply(m_zoomFit->cell), m_inspectionProgress->value());
+    }
+
+    bool COverview::beginInspectionPan(const Vector2D& globalPos) {
+        if (!inspectionPanAvailable(globalPos) || !m_inspection.beginPan(m_zoomFit->camera.apply(m_zoomFit->cell), m_inspectionProgress->value()))
+            return false;
+        m_inspectionProgress->setValueAndWarp(1.F);
+        damage();
+        return true;
+    }
+
+    void COverview::panInspection(const Vector2D& delta) {
+        if (inspectionReady() && m_inspection.pan(m_zoomFit->camera.apply(m_zoomFit->cell), delta.x, delta.y))
+            damage();
+    }
+
+    bool COverview::inspectScroll(const SScrollInput& event, const Vector2D& globalPos) {
+        if (!inspectionReady())
+            return false;
+        const auto mon = monitor();
+        if (!mon || !SBoxF{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y}.contains(globalPos.x, globalPos.y))
+            return false;
+        const auto local     = globalPos - mon->m_position;
+        const auto footprint = m_zoomFit->camera.apply(m_zoomFit->cell);
+        const auto displayed = workspaceCell(m_zoomFit->workspace);
+        if (!m_usable.contains(local.x, local.y) || !displayed.contains(local.x, local.y))
+            return false;
+        m_scroll.reset();
+        auto       prospective = m_inspection;
+        double     progress    = m_inspectionProgress->value();
+        const bool fitting     = m_zoomScale->isBeingAnimated() || m_zoomOffset->isBeingAnimated();
+        if (fitting) {
+            if (!prospective.beginFitTransition(rawZoomCamera(), m_zoomFit->camera))
+                return false;
+            progress = 0;
+        }
+        if (!prospective.scroll(event, hooks::scrollFactor(), footprint, local.x, local.y, progress, displayed))
+            return false;
+        if (fitting) {
+            // Rebase before overview progress, preserving every displayed cell
+            // at takeover. The lens now owns the fit and extra zoom together.
+            m_zoomScale->setValueAndWarp(static_cast<float>(m_zoomFit->camera.scale));
+            m_zoomOffset->setValueAndWarp({m_zoomFit->camera.x, m_zoomFit->camera.y});
+        }
+        m_inspection = prospective;
+        m_inspectionProgress->setValueAndWarp(0.F);
+        *m_inspectionProgress = 1.F;
+        damage();
+        return true;
+    }
+
+    void COverview::foldInspection() {
+        if (inspectionActive()) {
+            // Snapshot both layers before clearing either one. The composition
+            // is folded before overview progress to preserve continuity.
+            const auto camera = rawZoomCamera();
+            m_zoomScale->setValueAndWarp(static_cast<float>(camera.scale));
+            m_zoomOffset->setValueAndWarp({camera.x, camera.y});
+        }
+        // A curve can pass above 1 and then return below it. Even when the
+        // clamped lens currently looks like identity, discard its old start.
+        m_inspection.reset();
+        if (m_inspectionProgress->isBeingAnimated() || m_inspectionProgress->value() != 1.F || m_inspectionProgress->goal() != 1.F)
+            m_inspectionProgress->setValueAndWarp(1.F);
     }
 
     std::optional<EDirection> COverview::zoomEdgeAt(const Vector2D& globalPos) const {
@@ -465,6 +584,8 @@ namespace hyprspace {
             return;
         m_zoomScale->setValueAndWarp(m_zoomScale->value());
         m_zoomOffset->setValueAndWarp(m_zoomOffset->value());
+        m_inspection.freeze(m_inspectionProgress->value());
+        m_inspectionProgress->setValueAndWarp(1.F);
     }
 
     SBoxF COverview::windowBoxInCell(const SBoxF& r, const SBoxF& cell) const {

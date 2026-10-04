@@ -35,6 +35,7 @@ namespace hyprspace::config {
     CHyprColor   overviewTitleBgColor();
     std::string  overviewFont();
     xkb_keysym_t overviewZoomKey();
+    bool         overviewWheelZoom();
 
     // Outline and badge marking the window that is fullscreen.
     CHyprColor overviewFullscreenBorder();

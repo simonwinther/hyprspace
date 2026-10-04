@@ -264,15 +264,28 @@ namespace hyprspace::launch {
                 return consume(line.substr(8));
             if (line == "status") {
                 nlohmann::json result{{"live", session().live()}, {"dragging", session().drag.active()}, {"views", nlohmann::json::array()}};
-                result["modifiers"]      = g_pInputManager->getModsFromAllKBs();
-                result["keyboard_owned"] = hooks::keyboardOwned();
-                result["cursor_owned"]   = session().cursorOwned();
-                const auto zoomTarget    = session().zoomTarget();
-                const auto zoomMonitor   = zoomTarget ? zoomTarget->monitor.lock() : nullptr;
-                result["zoom"]           = {{"held", session().zoomHeld()},
-                                            {"workspace", zoomTarget ? zoomTarget->workspace.id : 0},
-                                            {"monitor", zoomMonitor ? zoomMonitor->m_name : ""},
-                                            {"returning", session().zoomLocked() && !session().zoomHeld()}};
+                result["modifiers"]          = g_pInputManager->getModsFromAllKBs();
+                result["keyboard_owned"]     = hooks::keyboardOwned();
+                result["cursor_owned"]       = session().cursorOwned();
+                result["overview_cursor"]    = hooks::cursorName();
+                const auto       zoomTarget  = session().zoomTarget();
+                const auto       zoomMonitor = zoomTarget ? zoomTarget->monitor.lock() : nullptr;
+                const COverview* zoomView    = nullptr;
+                for (const auto& view : session().views)
+                    if (!view->closing() && view->monitor() == zoomMonitor)
+                        zoomView = view.get();
+                result["zoom"]                  = {{"held", session().zoomHeld()},
+                                                   {"workspace", zoomTarget ? zoomTarget->workspace.id : 0},
+                                                   {"monitor", zoomMonitor ? zoomMonitor->m_name : ""},
+                                                   {"returning", session().zoomLocked() && !session().zoomHeld()},
+                                                   {"extra_factor", zoomView ? zoomView->inspectionFactor() : 1.0},
+                                                   {"extra_goal", zoomView ? zoomView->inspectionGoal() : 1.0},
+                                                   {"inspection_ready", zoomView && session().zoomHeld() && zoomView->inspectionReady()},
+                                                   {"camera_settled", zoomView && session().zoomHeld() && zoomView->zoomNavigationReady()},
+                                                   {"inspection_transitioning", zoomView && zoomView->inspectionTransitioning()}};
+                result["zoom"]["pan_held"]      = session().panHeld();
+                result["zoom"]["panning"]       = session().panning();
+                result["zoom"]["pan_available"] = session().panAvailable();
                 if (session().drag.active()) {
                     const auto& drag    = session().drag;
                     const auto  boxJSON = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };

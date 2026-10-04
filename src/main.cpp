@@ -56,6 +56,7 @@ extern "C" {
 
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -98,6 +99,24 @@ namespace {
     // Alt+Tab alternated between working and dead after every overview use.
     std::unordered_set<uint32_t> g_swallowedPresses;
     CButtonCapture               g_mouseButtons;
+    bool                         g_panButtonTracked = false;
+    std::function<bool()>        g_panConnectionsValid;
+
+    void reconcilePanButton() {
+        constexpr uint32_t RMB = 0x111;
+        if (!g_panButtonTracked)
+            return;
+        if (!g_mouseButtons.captured(RMB)) {
+            g_panConnectionsValid = {};
+            g_panButtonTracked    = false;
+            return;
+        }
+        if (g_panConnectionsValid && !g_panConnectionsValid()) {
+            session().cancelPan();
+            g_mouseButtons.orphan(RMB);
+            g_panConnectionsValid = {};
+        }
+    }
 
     struct SListeners {
         CHyprSignalListener key;
@@ -633,6 +652,7 @@ namespace {
     }
 
     void onMouseMove(Vector2D pos, Event::SCallbackInfo& info) {
+        reconcilePanButton();
         if (!ownsInput()) {
             session().ownCursor(false);
             return;
@@ -655,6 +675,7 @@ namespace {
     // falls through to whatever sits underneath, so scrolling over the switcher
     // silently scrolls the page behind it.
     void onMouseAxis(IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
+        reconcilePanButton();
         if (yieldingInput() || foregroundPointer() || !ownsInput())
             return;
 
@@ -666,25 +687,58 @@ namespace {
             .timeMs     = event.timeMs,
             .wheel      = event.source == WL_POINTER_AXIS_SOURCE_WHEEL || event.source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT,
             .horizontal = event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL,
+            .wheelTilt  = event.source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT,
         };
 
         if (switcherLive()) {
             if (!SCROLL.horizontal)
                 g_switcher->onScroll(SCROLL);
+        } else if (session().zoomScroll(SCROLL, g_pInputManager->getMouseCoordsInternal())) {
+            return;
         } else if (auto* o = pointerOverview()) {
             o->onScroll(SCROLL);
         }
     }
 
     void onMouseButton(IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
-        const bool PRESSED    = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
-        const bool OWNS_INPUT = !yieldingInput() && (session().drag.active() || !foregroundPointer()) && ownsInput();
+        constexpr uint32_t RMB = 0x111;
+        reconcilePanButton();
+        const bool PRESSED      = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
+        const bool pointerOwned = !yieldingInput() && (session().drag.active() || !foregroundPointer()) && ownsInput();
+        // A new outside press hands the aggregate button back to the seat,
+        // even if detach/reattach hid the old release between input callbacks.
+        if (PRESSED && event.button == RMB && g_panButtonTracked && !pointerOwned) {
+            session().cancelPan();
+            g_mouseButtons.orphan(RMB);
+            g_panConnectionsValid = {};
+            g_panButtonTracked    = false;
+        }
+        if (PRESSED)
+            g_mouseButtons.preparePress(event.button);
+        const bool captured = g_mouseButtons.captured(event.button);
+        const bool panPress = PRESSED && event.button == RMB && currentMods() == 0 && !switcherLive() && session().zoomHeld() && config::overviewWheelZoom();
+        // Native bookkeeping follows this cancellable callback. Do not take
+        // over a new grip while a native button gesture still owns its release.
+        const bool OWNS_INPUT = pointerOwned && !(panPress && !captured && g_pInputManager->hasHeldButtons());
+
+        if (!PRESSED && event.button == RMB)
+            session().cancelPan();
 
         if (!g_mouseButtons.consume(event.button, PRESSED, OWNS_INPUT))
             return;
 
         info.cancelled = true;
+        if (panPress && !captured && OWNS_INPUT) {
+            g_panButtonTracked    = true;
+            g_panConnectionsValid = hooks::pointerConnectionGuard();
+        }
+        reconcilePanButton();
         if (!OWNS_INPUT)
+            return;
+        if (panPress && !g_panConnectionsValid)
+            return;
+        // An intact press lease cannot become another grip after cancellation.
+        if (PRESSED && event.button == RMB && captured)
             return;
 
         if (switcherLive()) {
@@ -720,6 +774,7 @@ namespace {
     }
 
     void onRenderPre(PHLMONITOR monitor) {
+        reconcilePanButton();
         if (!overlaysAllowed())
             return;
         hooks::syncKeyboardFocus();
@@ -999,6 +1054,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     });
     g_listeners.configReloaded  = bus.config.reloaded.listen([] {
         session().cancelZoom();
+        if (g_panButtonTracked)
+            g_mouseButtons.orphan(0x111);
+        reconcilePanButton();
         textures().invalidate();
         if (g_switcher)
             g_switcher->reconfigure();
@@ -1054,6 +1112,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_overviewSession.reset();
     g_swallowedPresses.clear();
     g_mouseButtons.clear();
+    g_panConnectionsValid = {};
+    g_panButtonTracked    = false;
     if (g_externalUi.timeout)
         g_pEventLoopManager->removeTimer(g_externalUi.timeout);
     g_externalUi.layerCloseCheck.reset();

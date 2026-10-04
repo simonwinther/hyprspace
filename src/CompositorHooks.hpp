@@ -11,6 +11,9 @@ namespace hyprspace::hooks {
     void                             install(std::function<bool()> ownsKeyboard, std::function<bool()> launchEnabled, std::function<bool(PHLMONITOR)> promotePanels);
     void                             uninstall();
     void                             ownCursor(bool own);
+    void                             setCursor(const std::string& name);
+    std::string                      cursorName();
+    std::function<bool()>            pointerConnectionGuard();
     void                             renderPanels(PHLMONITOR monitor);
     bool                             keyboardOwned();
     std::expected<void, std::string> validateZoomKey(const std::string& name);
