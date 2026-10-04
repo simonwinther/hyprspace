@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/simonwinther/hyprspace/compare/v1.3.0...v1.3.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **overview:** restore Lua command routing ([24c1c1a](https://github.com/simonwinther/hyprspace/commit/24c1c1a55c0eb45cce68c488b73862ea1af63480))
+
 ## [1.3.0](https://github.com/simonwinther/hyprspace/compare/v1.2.1...v1.3.0) (2026-10-04)
 
 
