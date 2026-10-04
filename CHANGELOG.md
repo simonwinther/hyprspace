@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.1](https://github.com/simonwinther/hyprspace/compare/v1.3.0...v1.3.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **overview:** route Lua workspace shortcuts and new app launches to the hovered overview target after startup and configuration reloads ([24c1c1a](https://github.com/simonwinther/hyprspace/commit/24c1c1a55c0eb45cce68c488b73862ea1af63480)).
+
+Compatibility remains pinned to Hyprland 0.56.2, commit
+`efb50993780079460b0cbed1363e2166a2de1d9f`, on x86_64 Linux. Targeted private
+checks passed for Lua routing and reload/unload behavior, dispatcher ownership,
+foreground input, keyboard bindings and patched Walker/Elephant activation.
+
 ## [1.3.0](https://github.com/simonwinther/hyprspace/compare/v1.2.1...v1.3.0) (2026-10-04)
 
 
