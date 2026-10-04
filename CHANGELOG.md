@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/simonwinther/hyprspace/compare/v1.2.1...v1.3.0) (2026-10-04)
+
+
+### Features
+
+* **overview:** add wheel zoom and drag pan ([6af06c7](https://github.com/simonwinther/hyprspace/commit/6af06c7608f34a883b30fcaaaedf324fbca91874))
+* **overview:** add wheel zoom and drag pan ([#9](https://github.com/simonwinther/hyprspace/issues/9)) ([efc3b5d](https://github.com/simonwinther/hyprspace/commit/efc3b5dc6e394fb5e85e10c06af92c4d8d0fffb8))
+
 ## [1.2.1](https://github.com/simonwinther/hyprspace/compare/v1.2.0...v1.2.1) (2026-10-03)
 
 
