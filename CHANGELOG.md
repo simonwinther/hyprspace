@@ -5,8 +5,19 @@
 
 ### Features
 
-* **overview:** add wheel zoom and drag pan ([6af06c7](https://github.com/simonwinther/hyprspace/commit/6af06c7608f34a883b30fcaaaedf324fbca91874))
-* **overview:** add wheel zoom and drag pan ([#9](https://github.com/simonwinther/hyprspace/issues/9)) ([efc3b5d](https://github.com/simonwinther/hyprspace/commit/efc3b5dc6e394fb5e85e10c06af92c4d8d0fffb8))
+* **overview:** inspect workspaces with pointer-anchored wheel zoom and bounded right-button panning while holding Z ([#9](https://github.com/simonwinther/hyprspace/pull/9)).
+
+The hand cursor closes while dragging. Scroll back to the fitted workspace or
+release Z to return to the grid. Wheel input works immediately during opening
+and fit animations. A monitor with one workspace keeps its existing fit.
+
+Compatibility remains pinned to Hyprland 0.56.2, commit
+`efb50993780079460b0cbed1363e2166a2de1d9f`, on x86_64 Linux. Feature checks passed
+with GCC/Clang host tests, sanitizers, the pinned Arch build and Nix package/ABI
+checks, plus private zoom, foreground, resize, lock and audit suites. See the
+release review for final validation and installation evidence.
+
+[Zoom and pan demo](docs/screenshots/zoom-pan.mp4).
 
 ## [1.2.1](https://github.com/simonwinther/hyprspace/compare/v1.2.0...v1.2.1) (2026-10-03)
 
