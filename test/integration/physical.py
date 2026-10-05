@@ -16,6 +16,67 @@ from protocol import reply
 from artifacts import Snapshot
 
 
+def option_value(value):
+    return value["int"] if "int" in value else int(value["bool"])
+
+
+def lua_value(value):
+    if isinstance(value, dict):
+        return "{" + ", ".join("[" + json.dumps(key) + "] = " + lua_value(item) for key, item in value.items()) + "}"
+    if isinstance(value, bool):
+        return str(value).lower()
+    return json.dumps(value)
+
+
+def lua_request(args):
+    """Translate only the harness's known commands to the pinned Lua API."""
+    if args[0] == "keyword":
+        key, value = args[1:]
+        if key == "workspace":
+            workspace, *fields = value.split(",")
+            rule = {"workspace": workspace}
+            for field in fields:
+                name, setting = field.split(":", 1)
+                if name == "layoutopt":
+                    option, setting = setting.split(":", 1)
+                    rule.setdefault("layout_opts", {})[option] = setting
+                else:
+                    rule[name] = setting == "true" if name == "persistent" else setting
+            return "eval", "hl.workspace_rule(" + lua_value(rule) + ")"
+        if key in ("animations:enabled", "input:resolve_binds_by_sym"):
+            setting = value in ("true", "1")
+        else:
+            setting = int(value)
+        config = setting
+        for part in reversed(key.split(":")):
+            config = {part: config}
+        return "eval", "hl.config(" + lua_value(config) + ")"
+    if args[0] != "dispatch":
+        return args
+    name = args[1]
+    argument = args[2] if len(args) > 2 else ""
+    if name.startswith("hl."):
+        return args
+    if name.startswith("hyprspace:"):
+        function = name.split(":", 1)[1]
+        return "eval", f"hl.plugin.hyprspace.{function}({json.dumps(argument) if argument else ''})"
+    if name in ("focusmonitor", "focuswindow", "workspace"):
+        key = {"focusmonitor": "monitor", "focuswindow": "window", "workspace": "workspace"}[name]
+        return "dispatch", "hl.dsp.focus(" + lua_value({key: argument}) + ")"
+    if name == "movetoworkspacesilent":
+        workspace, window = argument.split(",", 1)
+        return "dispatch", "hl.dsp.window.move(" + lua_value({"workspace": workspace, "window": window, "follow": False}) + ")"
+    if name in ("setfloating", "settiled"):
+        return "dispatch", "hl.dsp.window.float(" + lua_value({"window": argument, "action": "on" if name == "setfloating" else "off"}) + ")"
+    if name in ("resizewindowpixel", "movewindowpixel"):
+        geometry, window = argument.split(",", 1)
+        exact, x, y = geometry.split()
+        assert exact == "exact"
+        action = "resize" if name == "resizewindowpixel" else "move"
+        return "dispatch", f"hl.dsp.window.{action}(" + lua_value({"window": window, "x": float(x), "y": float(y)}) + ")"
+    raise ValueError(f"physical harness needs a Lua translation for {name}")
+
+
 class Physical(Suite):
     def __init__(self):
         self.root = Path(tempfile.mkdtemp(prefix="hs-physical."))
@@ -39,9 +100,8 @@ class Physical(Suite):
             self.env.pop(key, None)
         self.original_monitors = self.data("monitors")
         self.compositor_identity = self.data("version")
-        assert (
-            len(self.original_monitors) == 3
-        ), "physical suite requires three enabled outputs"
+        self.lua = Suite.ctl(self, "eval", "return true") == "ok"
+        assert 1 <= len(self.original_monitors) <= 3, "physical suite supports one to three enabled outputs"
         assert all(not m["name"].startswith("WAYLAND-") for m in self.original_monitors)
         assert not self.windows(), "another integration fixture is already running"
         self.original_windows = {
@@ -50,7 +110,7 @@ class Physical(Suite):
         self.original_focus = self.data("activewindow").get("address")
         self.original_cursor = self.data("cursorpos")
         self.original_options = {
-            name: json.loads(self.ctl("-j", "getoption", name))["int"]
+            name: option_value(json.loads(self.ctl("-j", "getoption", name)))
             for name in (
                 "animations:enabled",
                 "cursor:no_hardware_cursors",
@@ -77,6 +137,16 @@ class Physical(Suite):
         assert reply(self.pointer) == "ready"
         self.ctl("keyword", "animations:enabled", "false")
 
+    def ctl(self, *args):
+        return Suite.ctl(self, *(lua_request(args) if getattr(self, "lua", False) else args))
+
+    def move(self, point):
+        if not self.lua:
+            return Suite.move(self, point)
+        self.ctl("dispatch", "hl.dsp.cursor.move(" + lua_value({"x": round(point[0]), "y": round(point[1])}) + ")")
+        self.button(0, 0)
+        time.sleep(0.04)
+
     def request(self, message):
         import socket
 
@@ -100,15 +170,20 @@ class Physical(Suite):
                 process.wait(timeout=5)
         self.processes = self.processes[:1]
         wait_for(lambda: not self.windows())
-        for i, name in enumerate(self.names):
+        # Three private workspace slots keep empty-workspace and launcher
+        # coverage available even when several slots share one physical output.
+        for i in range(3):
+            name = self.names[i % len(self.names)]
             self.ctl(
-                "keyword", "workspace", f"{self.base+i},monitor:{name},layout:{layout}"
+                "keyword", "workspace", f"{self.base+i},monitor:{name},persistent:true,layout:{layout}"
             )
             self.ctl("dispatch", "focusmonitor", name)
             self.ctl("dispatch", "workspace", str(self.base + i))
-        self.ctl("dispatch", "focusmonitor", self.names[destination])
+        destination_name = self.names[destination % len(self.names)]
+        self.ctl("dispatch", "focusmonitor", destination_name)
+        self.ctl("dispatch", "workspace", str(self.base + destination))
         monitor = next(
-            m for m in self.data("monitors") if m["name"] == self.names[destination]
+            m for m in self.data("monitors") if m["name"] == destination_name
         )
         point = (
             monitor["x"] + monitor["reserved"][0] + 30,
@@ -141,7 +216,7 @@ class Physical(Suite):
 
     def matrix(self):
         for layout in ("dwindle", "scrolling", "master"):
-            for source, destination in itertools.product(range(3), repeat=2):
+            for source, destination in itertools.product(range(len(self.names)), repeat=2):
                 self.setup(layout, source, destination)
                 initial = self.geometry()
                 pickup = self.point(self.windows()["hs-A"])
@@ -212,7 +287,8 @@ class Physical(Suite):
         time.sleep(0.2)
         for software in (0, 1):
             self.ctl("keyword", "cursor:no_hardware_cursors", str(software))
-            for title in ("hs-A", "hs-B", "hs-C"):
+            samples = {self.windows()[title]["monitor"]: title for title in ("hs-A", "hs-B", "hs-C")}
+            for title in samples.values():
                 window = self.windows()[title]
                 monitor = next(
                     m for m in self.data("monitors") if m["id"] == window["monitor"]
@@ -251,6 +327,28 @@ class Physical(Suite):
                 monitor["name"],
                 str(self.root / f'overview-{monitor["name"]}.png'),
             )
+
+    def hover_close(self):
+        for cycle in range(3):
+            self.setup("dwindle", 0, 1)
+            source = self.windows()["hs-A"]["address"]
+            target = self.windows()["hs-B"]["address"]
+            self.ctl("dispatch", "hyprspace:overview", "on")
+            time.sleep(.2)
+            self.ctl("reload")
+            # wtype installs its own virtual keymap; match its symbols against
+            # the configured shortcut instead of physical-keyboard keycodes.
+            self.ctl("keyword", "input:resolve_binds_by_sym", "true")
+            wait_for(lambda: self.status()["live"])
+            self.move(self.preview_point("hs-B", .5, .5))
+            wait_for(lambda: self.status()["target"]["window"] == target)
+            self.run("wtype", "-M", "logo", "-k", "w", "-m", "logo")
+            wait_for(lambda: "hs-B" not in self.windows())
+            assert self.windows()["hs-A"]["address"] == source
+            assert self.status()["live"] and self.ctl("configerrors") == ""
+            assert all(address in {window["address"] for window in self.data("clients")}
+                       for address in self.original_windows)
+        self.check("physical Super+W closes the hovered disposable window across three configuration reloads")
 
     def scrolling(self):
         from regressions import arrow, center, tile
@@ -429,7 +527,8 @@ class Physical(Suite):
 
             assert not selectors(), "another screenshot overlay is running"
             try:
-                self.run("wtype", "-k", "Print")
+                self.key(99, 1)  # KEY_SYSRQ: physical Print key
+                self.key(99, 0)
                 # Layer creation precedes mapping and keyboard focus. Wait for
                 # every selector's map animation goal before sending Escape.
                 wait_for(
@@ -446,7 +545,10 @@ class Physical(Suite):
                 # slurp 1.5 sets running=true after its startup roundtrips;
                 # an Escape during them can be overwritten by initialization.
                 time.sleep(0.15)
-                self.run("wtype", "-k", "Escape")
+                # Keep the same full virtual keymap through the exclusive
+                # selector grab instead of replacing it with wtype's keymap.
+                self.key(1, 1)
+                self.key(1, 0)
                 wait_for(lambda: not selectors())
             finally:
                 remaining = selectors()
@@ -542,6 +644,7 @@ def main():
             suite.resizes()
             suite.scrolling()
             suite.cursors()
+            suite.hover_close()
     except Exception:
         (suite.root / "failure.json").write_text(
             json.dumps(

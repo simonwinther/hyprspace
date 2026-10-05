@@ -65,6 +65,34 @@ and restarting the services restores the packaged applications. Complete the
 The build script does not install applications, restart services or change shared
 process environments.
 
+The reversible personal rollout helper verifies every binary and requires all
+providers installed in `/usr/lib/elephant` to be rebuilt with the pinned daemon.
+Stage the result without changing launchers or services:
+
+```sh
+python3 scripts/install-companions.py
+```
+
+After the private companion integration suite passes, activate that verified
+release with `python3 scripts/install-companions.py --activate`. This creates
+personal Walker/Elephant wrappers, preserves the existing personal
+`omarchy-launch-walker` script and its arguments (including custom menu routes),
+and adds an Elephant user-service drop-in while retaining its existing arguments.
+It restarts the running services with their recorded session and XDG directory
+settings. Packaged executables, application configurations and Omarchy-managed
+source files remain available.
+
+The command prints a rollback manifest under
+`~/.local/share/hyprspace/companions/rollbacks/`. Restore the exact previous
+files and service commands with:
+
+```sh
+python3 scripts/install-companions.py --rollback /path/to/manifest.json
+```
+
+Rollback checks for later changes to the generated overrides before restoring
+backups. Versioned releases and rollback records are retained for inspection.
+
 The helper preserves the original shell command and argv. For `uwsm-app --`,
 `uwsm app --` and app2unit executable launches, its per-child PATH shims insert
 the helper after the service boundary, retaining launcher options. Desktop-entry

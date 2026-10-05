@@ -18,7 +18,7 @@ import uuid
 
 
 BINARIES = ("hyprspace.so", "test-overview.so", "test-dispatchers.so", "test-headless",
-            "test-pointer", "test-ime", "test-activation", "test-lock", "hyprspace-launch")
+            "test-pointer", "test-capture-client", "test-ime", "test-activation", "test-lock", "hyprspace-launch")
 FIXTURES = ("test-overview.so", "test-dispatchers.so")
 MARKER = b"hyprspace-test-plugin-sha256:"
 

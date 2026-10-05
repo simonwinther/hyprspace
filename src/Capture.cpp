@@ -1,6 +1,9 @@
 #include "Capture.hpp"
 
 #include "Access.hpp"
+#include "CaptureGeometry.hpp"
+#include "CompositorHooks.hpp"
+#include "Diagnostics.hpp"
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
@@ -10,6 +13,8 @@
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/pass/ClearPassElement.hpp>
 #include <hyprland/src/render/gl/GLFramebuffer.hpp>
+#include <hyprland/src/plugins/PluginAPI.hpp>
+#include <hyprutils/utils/ScopeGuard.hpp>
 
 #include <algorithm>
 #include <drm_fourcc.h>
@@ -18,6 +23,27 @@ namespace hyprspace {
 
     namespace {
         SCaptureResources resources;
+        CFunctionHook*    scissorHook           = nullptr;
+        int               textureDimensionLimit = 0;
+
+        struct SScaledCapture {
+            Render::IFramebuffer* framebuffer;
+            SCaptureGeometry      geometry;
+        };
+        std::optional<SScaledCapture> scaledCapture;
+
+        void captureScissor(Render::GL::CHyprOpenGLImpl* self, const CBox& source, bool transform) {
+            using Fn            = void (*)(Render::GL::CHyprOpenGLImpl*, const CBox&, bool);
+            const auto original = reinterpret_cast<Fn>(scissorHook->m_original);
+            if (!scaledCapture || g_pHyprRenderer->m_renderData.currentFB.get() != scaledCapture->framebuffer) {
+                original(self, source, transform);
+                return;
+            }
+            // Export captures are upright. Native damage/visible regions and
+            // UVs retain source coordinates until this final clipping boundary.
+            const auto pixel = capturePixelClip(scaledCapture->geometry, {source.x, source.y, source.w, source.h});
+            original(self, CBox{pixel.x, pixel.y, pixel.w, pixel.h}, false);
+        }
 
         // Hyprland 0.56.2 asserts inside CGLFramebuffer::internalAlloc on an
         // incomplete framebuffer. Keep its type/bind/release implementation,
@@ -105,6 +131,20 @@ namespace hyprspace {
         };
     } // namespace
 
+    void installCaptureHooks() {
+        if (scissorHook)
+            return;
+        scissorHook = hooks::attach("scissor", "Render::GL::CHyprOpenGLImpl::scissor(Hyprutils::Math::CBox const&, bool)", reinterpret_cast<void*>(captureScissor));
+    }
+
+    void uninstallCaptureHooks() {
+        scaledCapture.reset();
+        if (scissorHook)
+            HyprlandAPI::removeFunctionHook(PHANDLE, scissorHook);
+        scissorHook           = nullptr;
+        textureDimensionLimit = 0;
+    }
+
     const SCaptureResources& captureResources() {
         pruneCaptures();
         return resources;
@@ -127,7 +167,12 @@ namespace hyprspace {
         if (!window || !monitor || !window->m_isMapped)
             return;
 
-        const auto LOGICAL = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+        const auto                    measuredStart = diagnostics::enabled ? std::optional{diagnostics::Clock::now()} : std::nullopt;
+        Hyprutils::Utils::CScopeGuard measured{[&] {
+            if (measuredStart)
+                diagnostics::capture(diagnostics::milliseconds(diagnostics::Clock::now() - *measuredStart), 0);
+        }};
+        const auto                    LOGICAL = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
         if (LOGICAL.x < 1.0 || LOGICAL.y < 1.0)
             return;
 
@@ -148,16 +193,19 @@ namespace hyprspace {
             else
                 ++resources.omitted;
         };
-        // Check floating-point dimensions before converting to int. Captures
-        // above the per-window budget use the previous frame or tile backing.
-        const bool bounded =
-            std::isfinite(PIXELS.x) && std::isfinite(PIXELS.y) && PIXELS.x >= 1 && PIXELS.y >= 1 && PIXELS.x * PIXELS.y <= SCaptureResources::MAX_CAPTURE_BYTES / 4;
-        if (now < entry.retryAfter || !bounded) {
+        if (!textureDimensionLimit) {
+            Render::GL::g_pHyprOpenGL->makeEGLCurrent();
+            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &textureDimensionLimit);
+        }
+        const auto geometry = boundedCaptureGeometry(PIXELS.x, PIXELS.y, SCaptureResources::MAX_CAPTURE_BYTES, textureDimensionLimit);
+        if (now < entry.retryAfter || !geometry || (geometry->downsampled() && !scissorHook)) {
             fallback();
             return;
         }
-        const int w = static_cast<int>(PIXELS.x), h = static_cast<int>(PIXELS.y);
-        auto      fb = entry.fb;
+        const int w = geometry->pixelW, h = geometry->pixelH;
+        if (diagnostics::enabled)
+            diagnostics::pixels += static_cast<size_t>(w) * h;
+        auto fb = entry.fb;
         if (!fb || fb->m_size != Vector2D{w, h}) {
             ++resources.attempts;
             try {
@@ -176,7 +224,9 @@ namespace hyprspace {
         }
         fb->setImageDescription(monitor->workBufferImageDescription());
 
-        CRegion fakeDamage{0, 0, w, h};
+        // Keep damage in native surface pixels. Otherwise native surface damage
+        // intersection would clip away subsurfaces before projection scales them.
+        CRegion fakeDamage{0, 0, geometry->sourceW, geometry->sourceH};
 
         if (!g_pHyprRenderer->beginFullFakeRender(monitor, fakeDamage, fb)) {
             entry.retryAfter = now + std::chrono::seconds(1);
@@ -204,6 +254,21 @@ namespace hyprspace {
         g_pHyprRenderer->m_renderData.transformDamage = false;
         g_pHyprRenderer->setProjectionType(Render::RPT_EXPORT);
         g_pHyprRenderer->setViewport(0, 0, w, h);
+        const auto previousCapture  = scaledCapture;
+        const bool previousSimplify = g_pHyprRenderer->m_renderData.noSimplify;
+        const bool previousFeedback = g_pHyprRenderer->m_bBlockSurfaceFeedback;
+        const auto captureGuard     = Hyprutils::Utils::CScopeGuard([previousCapture, previousSimplify, previousFeedback] {
+            scaledCapture                            = previousCapture;
+            g_pHyprRenderer->m_renderData.noSimplify = previousSimplify;
+            g_pHyprRenderer->m_bBlockSurfaceFeedback = previousFeedback;
+        });
+        if (geometry->downsampled()) {
+            g_pHyprRenderer->m_renderData.targetProjection.scale(Vector2D{geometry->scaleX(), geometry->scaleY()});
+            // Native pass simplification uses original boxes and monitor bounds;
+            // it must not cull a source surface that fits after downsampling.
+            g_pHyprRenderer->m_renderData.noSimplify = true;
+            scaledCapture                            = SScaledCapture{fb.get(), *geometry};
+        }
 
         // This capture drives frame callbacks for every window it draws.
         //
@@ -230,8 +295,10 @@ namespace hyprspace {
         entry.fb                                 = std::move(fb);
         entry.size                               = LOGICAL;
         entry.valid                              = true;
+        if (geometry->downsampled())
+            ++resources.downsampled;
 
-        // Nothing above is restored, and nothing may be: the render is over.
+        // Do not restore projection or viewport after endRender: the render is over.
         //
         // setProjectionType() recomputes a matrix from render data that endRender
         // has already finished with, and calling it here aborts the compositor

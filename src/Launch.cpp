@@ -1,4 +1,7 @@
 #include "Launch.hpp"
+#include "Config.hpp"
+#include "Diagnostics.hpp"
+#include "LaunchGeometry.hpp"
 #include "OverlayPolicy.hpp"
 #include "Texture.hpp"
 
@@ -58,6 +61,8 @@ namespace hyprspace::launch {
         using Activation = std::function<void(CXdgActivationV1*, const char*, wl_resource*)>;
         struct SContext {
             SOverviewTarget           target;
+            PHLWORKSPACEREF           workspace;
+            bool                      hasWorkspace = false;
             std::vector<PHLWINDOWREF> existing;
         };
         struct SLaunch {
@@ -107,6 +112,12 @@ namespace hyprspace::launch {
             if (!session().live() || !overlaysAllowed() || !target)
                 return {};
             SContext context{.target = *target};
+            if (const auto ws = State::workspaceState()->query().id(target->workspace.id).run()) {
+                if (!valid(ws) || ws->m_name != target->workspace.name)
+                    return {};
+                context.workspace    = ws;
+                context.hasWorkspace = true;
+            }
             for (const auto& w : Desktop::windowState()->windows())
                 if (w->m_isMapped)
                     context.existing.emplace_back(w);
@@ -114,12 +125,24 @@ namespace hyprspace::launch {
             return captures.capture(token, std::move(context), Clock::now()) ? token : "";
         }
 
+        PHLWORKSPACE destination(SContext& context) {
+            auto ws = context.hasWorkspace ? context.workspace.lock() : session().workspace(context.target);
+            // An existing workspace is an object identity, not a reusable ID.
+            // A captured empty placeholder may materialize once at consumption.
+            if (!valid(ws) || State::workspaceState()->query().id(ws->m_id).run() != ws || !ws->m_monitor || !ws->m_monitor->m_enabled)
+                return nullptr;
+            context.workspace        = ws;
+            context.hasWorkspace     = true;
+            context.target.workspace = {ws->m_id, ws->m_name};
+            return ws;
+        }
+
         std::string consume(const std::string& token) {
             prune();
             if (launches.size() >= CLaunchContexts<SContext>::LIMIT || !overlaysAllowed())
                 return {};
             auto context = captures.consume(token, Clock::now());
-            if (!context || !session().workspace(context->target))
+            if (!context || !destination(*context))
                 return {};
             const auto activation = g_pTokenManager->registerNewToken({}, std::chrono::minutes(2));
             // This compositor-authorized launch token uses the same one-shot
@@ -141,7 +164,7 @@ namespace hyprspace::launch {
             const auto& rules = w->m_ruleApplicator->static_;
             if (!rules.workspace.empty() || !rules.monitor.empty())
                 return;
-            const auto ws = session().workspace(context.target);
+            const auto ws = destination(context);
             if (!ws)
                 return;
             const auto target = w->layoutTarget();
@@ -156,8 +179,14 @@ namespace hyprspace::launch {
                     ws->m_space->algorithm()->moveTarget(target, point);
                 }
                 if (target->floating() && !rules.position && !rules.center.value_or(false)) {
-                    const auto size = target->position().size();
-                    g_layoutManager->setTargetGeom({point - size / 2, size}, target);
+                    const auto size    = target->position().size();
+                    const auto work    = ws->m_monitor->logicalBoxMinusReserved();
+                    const auto extents = w->getFullWindowReservedArea();
+                    const auto border  = static_cast<double>(w->getRealBorderSize());
+                    if (const auto box = boundedLaunchPlacement({point.x - size.x / 2, point.y - size.y / 2, size.x, size.y}, {work.x, work.y, work.w, work.h},
+                                                                {std::max(extents.topLeft.x, border), std::max(extents.topLeft.y, border)},
+                                                                {std::max(extents.bottomRight.x, border), std::max(extents.bottomRight.y, border)}))
+                        g_layoutManager->setTargetGeom({box->x, box->y, box->w, box->h}, target);
                 }
                 target->warpPositionSize();
             });
@@ -286,13 +315,13 @@ namespace hyprspace::launch {
                 result["zoom"]["pan_held"]      = session().panHeld();
                 result["zoom"]["panning"]       = session().panning();
                 result["zoom"]["pan_available"] = session().panAvailable();
+                result["cursor_shape"]          = hooks::cursorShape();
+                result["pending_resize"]        = session().pendingResize.has_value();
                 if (session().drag.active()) {
                     const auto& drag    = session().drag;
                     const auto  boxJSON = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
-                    result["drag"]      = {{"resize", drag.mode == SOverviewDrag::RESIZE},
-                                           {"workspace", drag.source.workspace.id},
-                                           {"box", boxJSON(drag.box)},
-                                           {"clip", boxJSON(drag.source.previewClip)}};
+                    result["drag"]      = {{"resize", drag.mode == SOverviewDrag::RESIZE}, {"moved", drag.moved},      {"threshold", drag.threshold},
+                                           {"workspace", drag.source.workspace.id},        {"box", boxJSON(drag.box)}, {"clip", boxJSON(drag.source.previewClip)}};
                     for (const auto& view : session().views)
                         if (view->monitor() == drag.source.monitor)
                             for (const auto& target : view->inspectTargets())
@@ -369,29 +398,32 @@ namespace hyprspace::launch {
                 }
                 const auto& captures = captureResources();
                 const auto& tex      = CTextureCache::resources();
-                result["resources"]  = {{"captures",
-                                         {{"bytes", captures.bytes},
-                                          {"peak_bytes", captures.peakBytes},
-                                          {"limit_bytes", SCaptureResources::MAX_BYTES},
-                                          {"per_capture_bytes", SCaptureResources::MAX_CAPTURE_BYTES},
-                                          {"limit_entries", SCaptureResources::MAX_CAPTURES},
-                                          {"attempts", captures.attempts},
-                                          {"failures", captures.failures},
-                                          {"fallbacks", captures.fallbacks},
-                                          {"previous", captures.previous},
-                                          {"omitted", captures.omitted}}},
-                                        {"textures",
-                                         {{"entries", textures().size()},
-                                          {"peak_entries", tex.peakEntries},
-                                          {"limit_entries", CTextureCache::SResources::MAX_ENTRIES},
-                                          {"bytes", tex.bytes},
-                                          {"peak_bytes", tex.peakBytes},
-                                          {"limit_bytes", CTextureCache::SResources::MAX_BYTES},
-                                          {"hits", tex.hits},
-                                          {"misses", tex.misses},
-                                          {"evictions", tex.evictions},
-                                          {"failures", tex.failures}}}};
-                result["windows"]    = nlohmann::json::array();
+                diagnostics::enable(config::diagnosticsEnabled());
+                result["diagnostics"] = diagnostics::snapshot();
+                result["resources"]   = {{"captures",
+                                          {{"bytes", captures.bytes},
+                                           {"peak_bytes", captures.peakBytes},
+                                           {"limit_bytes", SCaptureResources::MAX_BYTES},
+                                           {"per_capture_bytes", SCaptureResources::MAX_CAPTURE_BYTES},
+                                           {"limit_entries", SCaptureResources::MAX_CAPTURES},
+                                           {"attempts", captures.attempts},
+                                           {"downsampled", captures.downsampled},
+                                           {"failures", captures.failures},
+                                           {"fallbacks", captures.fallbacks},
+                                           {"previous", captures.previous},
+                                           {"omitted", captures.omitted}}},
+                                         {"textures",
+                                          {{"entries", textures().size()},
+                                           {"peak_entries", tex.peakEntries},
+                                           {"limit_entries", CTextureCache::SResources::MAX_ENTRIES},
+                                           {"bytes", tex.bytes},
+                                           {"peak_bytes", tex.peakBytes},
+                                           {"limit_bytes", CTextureCache::SResources::MAX_BYTES},
+                                           {"hits", tex.hits},
+                                           {"misses", tex.misses},
+                                           {"evictions", tex.evictions},
+                                           {"failures", tex.failures}}}};
+                result["windows"]     = nlohmann::json::array();
                 for (const auto& w : Desktop::windowState()->windows())
                     if (w->m_isMapped)
                         result["windows"].push_back(

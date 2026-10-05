@@ -128,6 +128,8 @@ test: assets
 	$(MAKE) -C test run
 	bash test/test_build.sh
 	python3 test/test_launch_helper.py
+	python3 test/test_companion_install.py
+	python3 test/test_physical_commands.py
 	python3 test/test_integration_runner.py
 	python3 test/test_integration_artifacts.py
 
@@ -137,7 +139,7 @@ $(BUILD_DIR)/test-headless: test/integration/headless.c scripts/atomic-output.sh
 	wayland-scanner server-header "$(PROTOCOL_DIR)/stable/xdg-shell/xdg-shell.xml" "$(BUILD_DIR)/xdg-shell-protocol.h"
 	bash scripts/atomic-output.sh "$@" $(CC) -Wall -Wextra -I"$(BUILD_DIR)" test/integration/headless.c $$($(HEADLESS_PC) --cflags --libs wlroots-0.20 wayland-server pixman-1) -Wl,-rpath-link,"$$($(HEADLESS_PC) --variable=libdir wlroots-0.20)" -Wl,--disable-new-dtags -Wl,-rpath,'$$ORIGIN/lib' -o
 
-$(BUILD_DIR)/test-overview.so: test/integration/overview.cpp test/integration/generation.hpp test/integration/resources.hpp $(TARGET) scripts/atomic-output.sh Makefile
+$(BUILD_DIR)/test-overview.so: test/integration/overview.cpp test/integration/generation.hpp test/integration/resources.hpp test/integration/capture_fixture.hpp $(TARGET) scripts/atomic-output.sh Makefile
 	bash scripts/atomic-output.sh "$@" $(CXX) $(CPPFLAGS) $(CXXFLAGS) -DHYPRSPACE_TEST_PLUGIN_SHA256=\"$$(sha256sum "$(TARGET)" | cut -d' ' -f1)\" $(LDFLAGS) "$<" -L"$(BUILD_DIR)" -l:hyprspace.so -Wl,-rpath,'$$ORIGIN' -o
 
 $(BUILD_DIR)/test-dispatchers.so: test/integration/dispatchers.cpp test/integration/generation.hpp $(TARGET) scripts/atomic-output.sh Makefile
@@ -161,6 +163,7 @@ integration-fixtures: assets $(BUILD_DIR)/test-headless $(BUILD_DIR)/test-overvi
 	wayland-scanner client-header "$(PROTOCOL_DIR)/staging/ext-session-lock/ext-session-lock-v1.xml" "$(BUILD_DIR)/session-lock.h"
 	wayland-scanner private-code "$(PROTOCOL_DIR)/staging/ext-session-lock/ext-session-lock-v1.xml" "$(BUILD_DIR)/session-lock.c"
 	bash scripts/atomic-output.sh "$(BUILD_DIR)/test-activation" $(CC) -I"$(BUILD_DIR)" test/integration/activation.c "$(BUILD_DIR)/xdg-shell.c" "$(BUILD_DIR)/xdg-activation.c" "$(BUILD_DIR)/session-lock.c" -lwayland-client -o
+	bash scripts/atomic-output.sh "$(BUILD_DIR)/test-capture-client" $(CC) -Wall -Wextra -I"$(BUILD_DIR)" test/integration/capture_client.c "$(BUILD_DIR)/xdg-shell.c" -lwayland-client -o
 	bash scripts/atomic-output.sh "$(BUILD_DIR)/test-lock" $(CC) -I"$(BUILD_DIR)" test/integration/lock.c "$(BUILD_DIR)/session-lock.c" -lwayland-client -o
 	python3 test/integration/artifacts.py --build "$(BUILD_DIR)" --library-path "$$($(HEADLESS_PC) --variable=libdir wlroots-0.20)"
 
@@ -179,7 +182,7 @@ dist: release-check
 clean:
 	rm -f -- "$(BUILD_DIR)/test-dispatchers.so" "$(BUILD_DIR)/integration.json"
 	rm -f -- $(OBJS) $(DEPS) "$(TARGET)" "$(BUILD_CONFIG)"
-	rm -f -- "$(BUILD_DIR)/hyprspace-launch" "$(BUILD_DIR)/test-pointer" "$(BUILD_DIR)/test-activation" "$(BUILD_DIR)/test-lock" "$(BUILD_DIR)/test-ime" "$(BUILD_DIR)/test-headless" "$(BUILD_DIR)/test-overview.so" "$(BUILD_DIR)/xdg-shell-protocol.h"
+	rm -f -- "$(BUILD_DIR)/hyprspace-launch" "$(BUILD_DIR)/test-pointer" "$(BUILD_DIR)/test-capture-client" "$(BUILD_DIR)/test-activation" "$(BUILD_DIR)/test-lock" "$(BUILD_DIR)/test-ime" "$(BUILD_DIR)/test-headless" "$(BUILD_DIR)/test-overview.so" "$(BUILD_DIR)/xdg-shell-protocol.h"
 	@for name in uwsm-app uwsm app2unit; do rm -f -- "$(BUILD_DIR)/launch-bin/$$name"; done
 	@for name in virtual-pointer virtual-keyboard input-method xdg-shell xdg-activation session-lock; do rm -f -- "$(BUILD_DIR)/$$name.h" "$(BUILD_DIR)/$$name.c"; done
 	@rmdir -- "$(BUILD_DIR)/launch-bin" 2>/dev/null || true

@@ -137,7 +137,7 @@ For an existing process, the plugin wraps native XDG activation callbacks and
 retains native validation, associating the token with the exact requested
 surface. Requests before mapping are retained weakly until that surface maps.
 Only a correlated new window receives placement. Explicit workspace or monitor
-rules win. Reused existing windows always follow native activation.
+rules win. Reused existing windows always follow native activation. A captured existing workspace follows renames and monitor transfers; destroying it invalidates the capture even if another workspace reuses its ID and name. Correlated floating windows center on the captured point within the usable decorated bounds. Oversized windows retain their size and accessible leading edges. Tiled windows use native insertion at that point.
 
 Applications and service wrappers that discard correlation retain native
 placement. The plugin never matches the next arbitrary window, app ID or an
@@ -191,6 +191,11 @@ Optional locally unpacked wlroots dependencies can live under
 fixture. They are not installed into the desktop session.
 
 `--quick` reduces the layout matrix; `--only` selects a suite during debugging.
+`--only transitions` checks numeric selection across outputs, the growing
+destination's rendered stacking and desktop handoff, empty and fresh bound
+workspaces, single-output overview scope and empty special workspace ownership.
+`--only robustness` checks bounded/frozen launch placement, exact drag thresholds, panel ownership and large captures. `--only performance` measures 3/12/36-window workloads and 100 cleanup cycles, writing `performance.json`; input timing ends at compositor `RENDER_POST` and excludes GPU completion and display presentation.
+
 `--only audit` runs the input/visibility/launch regressions, and `--only scrolling`
 runs viewport controls across all directions and outputs. `--only switcher`
 checks visible Alt+Tab panels over fullscreen and maximized windows, including
@@ -230,9 +235,9 @@ records the tested display host, coverage and cancellation checks.
 
 The opt-in physical suite is `test/integration/physical.py --run` (run with Python
 inside a private `dbus-run-session`). It requires the matching plugin already
-loaded on three physical outputs. It compares all 27 layout/output pairs using
+loaded on one to three physical outputs. It uses the active Lua or legacy configuration API and compares every layout/output pair on the available outputs using
 temporary workspaces, checks both cursor modes on every output, saves screenshots,
-exercises wheel, touchpad, arrow and keyboard viewport controls,
+exercises wheel, touchpad, arrow and keyboard viewport controls, checks hovered Super+W after repeated configuration reloads,
 and restores active workspaces, focus and cursor settings. It re-reads the user's
 configuration to remove temporary workspace rules; run it when transient runtime
 configuration can be reloaded. This mode takes over the live desktop and cannot

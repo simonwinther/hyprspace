@@ -1,12 +1,19 @@
 #include "generation.hpp"
 #include "resources.hpp"
+#include "capture_fixture.hpp"
 
 // Test-only state transitions executed inside the private compositor.
 #include "../../src/Overview.hpp"
+#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/state/WorkspaceState.hpp>
+#include <hyprland/src/output/Monitor.hpp>
+#include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
+#include "../../src/CompositorHooks.hpp"
+#include <nlohmann/json.hpp>
 
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
-#include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 
 #include <chrono>
 #include <cmath>
@@ -18,6 +25,27 @@
 using namespace hyprspace;
 
 namespace {
+    PHLMONITORREF clockMonitor;
+    float         originalRefresh = 0;
+    void          resetClock() {
+        if (const auto monitor = clockMonitor.lock())
+            monitor->m_refreshRate = originalRefresh;
+        clockMonitor.reset();
+    }
+    SDispatchResult resizeClock(std::string args) {
+        resetClock();
+        if (args == "reset")
+            return {};
+        if (args != "hold")
+            return {.success = false, .error = "expected hold or reset"};
+        const auto monitor = g_pHyprRenderer->m_mostHzMonitor.lock();
+        if (!monitor)
+            return {.success = false, .error = "no renderer clock monitor"};
+        clockMonitor           = monitor;
+        originalRefresh        = monitor->m_refreshRate;
+        monitor->m_refreshRate = 5;
+        return {};
+    }
     // Explicit instantiation permits access without changing the class layout
     // or exposing test dispatchers in the installed plugin.
     auto& entries(COverview& view);
@@ -52,6 +80,46 @@ namespace {
     };
     template struct CCursorShapeAccess<&Pointer::Cursor::CShapeOverrideController::m_overrideShape>;
 
+    SDispatchResult cursorProbe(std::string) {
+        using namespace Pointer::Cursor;
+        if (session().live())
+            return {.success = false, .error = "error: cursor probe requires a closed overview"};
+        auto&                         overrides = cursorOverrides(*overrideController);
+        const auto                    previous  = overrides;
+        Hyprutils::Utils::CScopeGuard restore{[previous] {
+            hooks::ownCursor(false);
+            for (size_t group = 0; group < previous.size(); ++group)
+                overrideController->setOverride(previous[group], static_cast<eCursorShapeOverrideGroup>(group));
+        }};
+        try {
+            overrideController->setOverride("crosshair", CURSOR_OVERRIDE_UNKNOWN);
+            overrideController->setOverride("n-resize", CURSOR_OVERRIDE_WINDOW_EDGE);
+            hooks::ownCursor(true);
+            hooks::setCursor("grabbing");
+            requireResource(overrides[CURSOR_OVERRIDE_UNKNOWN] == "grabbing" && overrides[CURSOR_OVERRIDE_WINDOW_EDGE].empty(), "cursor pickup failed");
+            hooks::ownCursor(true);
+            hooks::setCursor("se-resize");
+            requireResource(overrides[CURSOR_OVERRIDE_UNKNOWN] == "se-resize", "cursor shape change failed");
+            hooks::ownCursor(false);
+            requireResource(overrides[CURSOR_OVERRIDE_UNKNOWN] == "crosshair" && overrides[CURSOR_OVERRIDE_WINDOW_EDGE] == "n-resize", "cursor restoration failed");
+
+            hooks::ownCursor(true);
+            hooks::setCursor("default");
+            overrideController->setOverride("grabbing", CURSOR_OVERRIDE_UNKNOWN);
+            overrideController->setOverride("crosshair", CURSOR_OVERRIDE_WINDOW_EDGE);
+            hooks::ownCursor(true);
+            hooks::setCursor("grabbing");
+            hooks::ownCursor(true);
+            hooks::setCursor("default");
+            hooks::ownCursor(false);
+            requireResource(overrides[CURSOR_OVERRIDE_UNKNOWN] == "grabbing" && overrides[CURSOR_OVERRIDE_WINDOW_EDGE] == "crosshair",
+                            "newer external cursor was overwritten");
+            return {};
+        } catch (const std::exception& error) {
+            return {.success = false, .error = std::string("error: ") + error.what()};
+        }
+    }
+
     SDispatchResult warpInspection(std::string arguments) {
         std::istringstream input(arguments);
         float              progress = 0;
@@ -62,6 +130,31 @@ namespace {
         for (const auto& view : session().views)
             inspectionProgress(*view)->setValueAndWarp(progress);
         return {.success = true};
+    }
+
+    auto& transitionProgress(COverview& view);
+    template <auto Member> struct CProgressAccess {
+        friend auto& transitionProgress(COverview& view) {
+            return view.*Member;
+        }
+    };
+    template struct CProgressAccess<&COverview::m_progress>;
+
+    SDispatchResult transitionFrame(std::string args) {
+        float remaining = 0;
+        try {
+            remaining = std::stof(args);
+        } catch (...) {
+            return {.success = false, .error = "expected remaining close progress"};
+        }
+        if (!std::isfinite(remaining) || remaining < 0 || remaining > 1 || session().views.empty() ||
+            std::ranges::any_of(session().views, [](const auto& view) { return !view->closing(); }))
+            return {.success = false, .error = "expected closing overviews and progress between zero and one"};
+        for (const auto& view : session().views) {
+            transitionProgress(*view)->setValueAndWarp(remaining);
+            view->damage();
+        }
+        return {};
     }
 
     using LayoutMethod = void (COverview::*)();
@@ -125,6 +218,43 @@ namespace {
                 if (left.workspace != right.workspace || left.window.lock() != right.window.lock() || !(std::abs(a.x - b.x) <= 0.0001) ||
                     !(std::abs(a.y - b.y) <= 0.0001) || !(std::abs(a.w - b.w) <= 0.0001) || !(std::abs(a.h - b.h) <= 0.0001))
                     return {.success = false, .error = "wheel changed displayed preview geometry synchronously"};
+            }
+        }
+        return {.success = true};
+    }
+
+    SDispatchResult zoomReleaseContinuity(std::string arguments) {
+        uint32_t           keycode = 0;
+        std::istringstream input(arguments);
+        if (!(input >> keycode) || !(input >> std::ws).eof() || !session().live() || !session().zoomHeld())
+            return {.success = false, .error = "test requires held overview zoom and one keycode"};
+        const auto keyboard =
+            std::ranges::find_if(g_pInputManager->m_keyboards, [](const auto& device) { return device && device->m_enabled && device->m_allowed && device->m_active; });
+        if (keyboard == g_pInputManager->m_keyboards.end())
+            return {.success = false, .error = "test requires an active private keyboard"};
+        std::vector<std::vector<SOverviewTarget>> before;
+        for (const auto& view : session().views)
+            before.push_back(view->inspectTargets());
+
+        // Deliver the captured release through the native keyboard input hook.
+        // Sampling in one callback excludes normal animation advancement between
+        // separate status requests, while still exercising the real zoom token.
+        const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        g_pInputManager->onKeyboardKey({.timeMs = static_cast<uint32_t>(milliseconds), .keycode = keycode, .state = WL_KEYBOARD_KEY_STATE_RELEASED}, *keyboard);
+        if (session().zoomHeld() || session().views.size() != before.size())
+            return {.success = false, .error = "native release did not end the captured zoom hold"};
+        for (size_t i = 0; i < before.size(); ++i) {
+            const auto after = session().views[i]->inspectTargets();
+            if (after.size() != before[i].size())
+                return {.success = false, .error = "zoom release changed the preview count"};
+            for (size_t j = 0; j < after.size(); ++j) {
+                const auto& left  = before[i][j];
+                const auto& right = after[j];
+                const auto& a     = left.preview;
+                const auto& b     = right.preview;
+                if (left.workspace != right.workspace || left.window.lock() != right.window.lock() || std::abs(a.x - b.x) > 0.001 || std::abs(a.y - b.y) > 0.001 ||
+                    std::abs(a.w - b.w) > 0.001 || std::abs(a.h - b.h) > 0.001)
+                    return {.success = false, .error = "native zoom release changed displayed geometry synchronously"};
             }
         }
         return {.success = true};
@@ -221,6 +351,52 @@ namespace {
         return {.success = false, .error = result.dump()};
     }
 
+    auto& workspaceRefs(State::CWorkspaceStateTracker& tracker);
+    template <auto Member> struct CWorkspaceAccess {
+        friend auto& workspaceRefs(State::CWorkspaceStateTracker& tracker) {
+            return tracker.*Member;
+        }
+    };
+    template struct CWorkspaceAccess<&State::CWorkspaceStateTracker::m_workspaces>;
+
+    SDispatchResult replaceWorkspace(std::string args) {
+        const auto workspace = State::workspaceState()->query().id(std::stoll(args)).run();
+        const auto monitor   = workspace ? workspace->m_monitor.lock() : nullptr;
+        if (!workspace || !monitor || workspace->getWindowCount() || monitor->m_activeWorkspace == workspace || monitor->m_activeSpecialWorkspace == workspace)
+            return {.success = false, .error = "replacement requires an empty inactive workspace"};
+        const auto id   = workspace->m_id;
+        const auto name = workspace->m_name;
+        workspace->setPersistent(false);
+        workspace->markInert();
+        std::erase(workspaceRefs(*State::workspaceState()), PHLWORKSPACEREF{workspace});
+        auto replacement = State::workspaceState()->create(id, monitor->m_id, name);
+        replacement->setPersistent(true);
+        return {};
+    }
+
+    SDispatchResult transitionClose(std::string) {
+        if (!session().live())
+            return {.success = false, .error = "transition probe requires an open overview"};
+        const auto snapshot = [] {
+            nlohmann::json result = nlohmann::json::array();
+            for (const auto& view : session().views)
+                for (const auto& target : view->inspectTargets())
+                    if (!target.window)
+                        result.push_back(
+                            {{"workspace", target.workspace.id}, {"x", target.preview.x}, {"y", target.preview.y}, {"w", target.preview.w}, {"h", target.preview.h}});
+            return result;
+        };
+        const auto before   = snapshot();
+        auto*      selected = session().keyboardView();
+        if (selected)
+            selected->close(true);
+        for (const auto& view : session().views)
+            if (view.get() != selected)
+                view->close(false);
+        session().stopInput();
+        return {.success = false, .error = nlohmann::json{{"before", before}, {"after", snapshot()}}.dump()};
+    }
+
     SDispatchResult emptyRefresh(std::string) {
         if (!session().live())
             return {.success = false, .error = "test requires an open overview"};
@@ -261,9 +437,18 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:axis-continuity", axisContinuity);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:inspection-progress", warpInspection);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:pan-continuity", panContinuity);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:zoom-release-continuity", zoomReleaseContinuity);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:cursor-overrides", cursorOverrideProbe);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:pointer-state", pointerState);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:capture", captureProbe);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:replace-workspace", replaceWorkspace);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:transition-close", transitionClose);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:transition-frame", transitionFrame);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:resize-clock", resizeClock);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:cursor", cursorProbe);
     return {"hyprspace-overview-test", "Private overview regression fixture", "hyprspace", "1"};
 }
 
-APICALL EXPORT void PLUGIN_EXIT() {}
+APICALL EXPORT void PLUGIN_EXIT() {
+    resetClock();
+}

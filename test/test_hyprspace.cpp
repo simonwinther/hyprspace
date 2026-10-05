@@ -55,6 +55,8 @@ static void section(const char* name) {
 
 #include "test_zoom_input.hpp"
 #include "test_zoom_geometry.hpp"
+#include "test_launch_geometry.hpp"
+#include "test_capture_geometry.hpp"
 
 // ---------------------------------------------------------------- layout ----
 
@@ -1458,6 +1460,8 @@ int main(int argc, char** argv) {
         std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
         return g_failures == 0 ? 0 : 1;
     }
+    testLaunchGeometry();
+    testCaptureGeometry();
     testResizeBounds();
     testInteraction();
     std::printf("hyprspace test suite\n\n");

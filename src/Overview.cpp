@@ -663,10 +663,14 @@ namespace hyprspace {
         if (commitSelection) {
             // Re-anchor before committing, while the selection is still intact,
             // so the closing zoom runs into the workspace being switched to.
-            // Nothing to re-anchor means nothing switched, and the layout's own
-            // anchor — the workspace on screen — is still the right one.
-            const int  ANCHOR    = committedEntry();
-            const bool SWITCHING = m_gotoWorkspace > 0;
+            // A missing local tile fades into an empty destination. A request
+            // on an uncovered output leaves this output's original anchor intact.
+            const int  ANCHOR            = committedEntry();
+            const auto REQUESTED         = m_gotoWorkspace > 0 ? State::workspaceState()->query().id(m_gotoWorkspace).run() : nullptr;
+            const auto REQUESTED_MONITOR = REQUESTED
+                                               ? REQUESTED->m_monitor.lock()
+                                               : (m_gotoWorkspace > 0 ? Config::workspaceRuleMgr()->getBoundMonitorForWS(std::to_string(m_gotoWorkspace)) : nullptr);
+            const bool SWITCHING         = m_gotoWorkspace > 0 && (!REQUESTED_MONITOR || REQUESTED_MONITOR == m_monitor);
 
             if (ANCHOR >= 0 || SWITCHING)
                 anchorAnimation(ANCHOR);
@@ -731,16 +735,17 @@ namespace hyprspace {
         // A number key naming a workspace with no tile of its own still goes
         // there — it is just empty, and Hyprland creates it as needed.
         if (m_gotoWorkspace > 0) {
-            // One that already exists may live on another output, and moving it
-            // is Hyprland's call to make, exactly as Super+N would. One that
-            // does not exist yet belongs to the monitor whose overview asked
-            // for it rather than to whichever one holds focus.
+            // Resolve the workspace itself so native focus cannot reinterpret
+            // this exact choice through workspace_back_and_forth. Existing
+            // workspaces keep their owning output; a fresh empty workspace
+            // belongs to the output whose overview asked for it, respecting
+            // native workspace monitor bindings.
             const auto WS = State::workspaceState()->query().id(m_gotoWorkspace).run();
 
             if (WS)
-                (void)Config::Actions::changeWorkspace(std::to_string(m_gotoWorkspace));
+                (void)Config::Actions::changeWorkspace(WS);
             else if (const auto FRESH = State::workspaceState()->create(m_gotoWorkspace, MONITOR->m_id))
-                MONITOR->changeWorkspace(FRESH);
+                (void)Config::Actions::changeWorkspace(FRESH);
 
             return;
         }
@@ -782,9 +787,22 @@ namespace hyprspace {
         }
 
         if (!entry.windows.empty()) {
-            if (const auto W = entry.windows.front().window.lock())
+            if (const auto W = entry.windows.front().window.lock()) {
                 focusSelection(W, config::warpCursor());
+                return;
+            }
         }
+
+        // An empty workspace has no window whose focus establishes its output.
+        // Keep native monitor and null-window focus for cross-output selection,
+        // including an empty workspace already active on that output.
+        if (WS->m_isSpecialWorkspace) {
+            // The native special-workspace action uses current focus rather
+            // than the workspace owner and would move it back to the source.
+            Desktop::focusState()->rawMonitorFocus(MONITOR);
+            Desktop::focusState()->rawWindowFocus(nullptr, Desktop::FOCUS_REASON_KEYBIND);
+        } else
+            (void)Config::Actions::changeWorkspace(WS);
     }
 
     // ---------------------------------------------------------------- input --
@@ -879,19 +897,44 @@ namespace hyprspace {
         if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) {
             const long WANT = workspaceForDigit(static_cast<int>(sym - XKB_KEY_0));
 
-            m_clickedWindow.reset();
-
-            for (size_t i = 0; i < m_tiles.size(); ++i) {
-                if (m_entries[m_tiles[i].key].workspaceId == WANT) {
-                    selectIndex(static_cast<int>(i));
-                    close(true);
-                    return true;
+            COverview* destination = this;
+            bool       foundTile   = false;
+            for (const auto& view : session().views) {
+                if (view->closing())
+                    continue;
+                for (size_t i = 0; i < view->m_tiles.size(); ++i) {
+                    if (view->m_entries[view->m_tiles[i].key].workspaceId != WANT)
+                        continue;
+                    destination = view.get();
+                    destination->selectIndex(static_cast<int>(i));
+                    foundTile = true;
+                    break;
                 }
+                if (foundTile)
+                    break;
             }
 
-            // No tile: the workspace is empty or does not exist yet. Go anyway.
-            m_gotoWorkspace = WANT;
-            close(true);
+            // An inactive empty workspace has no tile, but its covered output
+            // still owns the transition. Native monitor rules can also bind a
+            // workspace before it exists. Fade that grid into its empty desktop.
+            if (!foundTile) {
+                const auto ws  = State::workspaceState()->query().id(WANT).run();
+                const auto mon = ws ? ws->m_monitor.lock() : Config::workspaceRuleMgr()->getBoundMonitorForWS(std::to_string(WANT));
+                if (mon)
+                    for (const auto& view : session().views)
+                        if (!view->closing() && view->m_monitor == mon) {
+                            destination = view.get();
+                            break;
+                        }
+            }
+
+            destination->m_clickedWindow.reset();
+            destination->m_gotoWorkspace = foundTile ? 0 : WANT;
+            destination->close(true);
+            // The key matcher observes the view where this key arrived. Close
+            // that source too so it releases the grab and dismisses other views.
+            if (destination != this)
+                close(false);
             return true;
         }
 
@@ -1267,7 +1310,7 @@ namespace hyprspace {
 
         // The window being carried is drawn last, over everything, so it is not
         // clipped by the tile it is being dragged out of.
-        const auto&     drag    = session().drag;
+        const auto&     drag    = session().pendingResize ? *session().pendingResize : session().drag;
         const PHLWINDOW DRAGGED = (drag.active() && drag.moved) ? drag.window.lock() : nullptr;
 
         // Stroke a box. rect() fills, and the tile border trick of drawing a
@@ -1291,7 +1334,18 @@ namespace hyprspace {
         rect(MONBOX, config::overviewBgColor().modifyA(config::overviewBgDim() * PROGRESS));
 
         // --- workspace tiles ----------------------------------------------------
-        for (size_t i = 0; i < m_tiles.size(); ++i) {
+        // The growing destination covers other previews throughout the close,
+        // independent of its numeric position in the grid's draw order.
+        const auto   anchor     = std::ranges::find_if(m_tiles, [&](const auto& tile) { return static_cast<int>(tile.key) == m_animationAnchor; });
+        const size_t anchorTile = m_closing && anchor != m_tiles.end() ? static_cast<size_t>(anchor - m_tiles.begin()) : m_tiles.size();
+        for (size_t order = 0; order < m_tiles.size(); ++order) {
+            size_t i = order;
+            if (anchorTile < m_tiles.size()) {
+                if (order == m_tiles.size() - 1)
+                    i = anchorTile;
+                else if (order >= anchorTile)
+                    ++i;
+            }
             auto& entry = m_entries[m_tiles[i].key];
 
             const SBoxF cell = displayedCell(entry);

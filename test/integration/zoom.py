@@ -1058,6 +1058,16 @@ def gestures(s, wait_for):
 
 
 def transitions(s, wait_for):
+    fixture = load_overview_fixture(s, wait_for)
+
+    def close_same_tick():
+        response = json.loads(s.run("hyprctl", "dispatch", "hyprspace-test:transition-close"))
+        before = {cell["workspace"]: cell for cell in response["before"]}
+        after = {cell["workspace"]: cell for cell in response["after"]}
+        assert before.keys() == after.keys(), response
+        assert all(abs(cell[part] - after[key][part]) <= 1 for key, cell in before.items()
+                   for part in ("x", "y", "w", "h")), response
+
     s.ctl("keyword", "animations:enabled", "true")
     s.ctl("keyword", "animation", "windowsMove,1,12,default")
     primary_destinations(s)
@@ -1224,10 +1234,24 @@ def transitions(s, wait_for):
         wait_for(lambda: not s.status()["views"])
         assert all(window["alpha"] == 1 for window in s.status()["windows"])
         s.check("closing during opening and held zoom preserves displayed geometry and restores visibility")
+        for settle in (True, False):
+            opened(s, wait_for)
+            if settle:
+                time.sleep(1.4)
+            s.key(Z, 1)
+            s.key(TAB, 1)
+            s.key(TAB, 0)
+            time.sleep(0.08)
+            close_same_tick()
+            s.key(Z, 0)
+            wait_for(lambda: not s.status()["views"])
+            assert all(window["alpha"] == 1 for window in s.status()["windows"])
+            s.check(f"same-tick close during {'held zoom' if settle else 'opening and zoom'} preserves every displayed workspace cell")
     finally:
         s.key(Z, 0)
         s.ctl("keyword", "animations:enabled", "false")
         s.close()
+        s.ctl("plugin", "unload", str(fixture))
 
 
 def wheel_transitions(s, wait_for):
@@ -1276,12 +1300,11 @@ def wheel_transitions(s, wait_for):
         inspection(s, wait_for)
         wheel(s, -4)
         wait_for(lambda: s.status()["zoom"]["extra_factor"] > 1.5 and s.status()["zoom"]["inspection_transitioning"])
-        before = tile(s, 11)
-        s.key(Z, 0)
-        after = tile(s, 11)
+        # Assert native key-release continuity in one compositor callback;
+        # status requests on either side can span advancing animation frames.
+        assert s.ctl("dispatch", "hyprspace-test:zoom-release-continuity", str(Z)) == "ok"
+        s.key(Z, 0)  # Complete the virtual keyboard's corresponding release.
         assert s.status()["zoom"]["extra_factor"] == s.status()["zoom"]["extra_goal"] == 1
-        assert abs(after["w"] / before["w"] - 1) < 0.06, (before, after)
-        assert abs(after["h"] / before["h"] - 1) < 0.06, (before, after)
         released(s, wait_for)
         assert same_geometry(grid, tiles(s))
         s.key(Z, 1)

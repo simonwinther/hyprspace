@@ -854,9 +854,9 @@ bindm = SUPER,mouse:273,resizewindow
         destination = self.windows()["hs-A"]["workspace"]["id"]
         original = self.windows()["hs-B"]["workspace"]["id"]
         empty_workspace = next(
-            monitor["activeWorkspace"]["id"]
-            for monitor in self.data("monitors")
-            if monitor["activeWorkspace"]["id"] not in (destination, original)
+            workspace["id"]
+            for workspace in self.data("workspaces")
+            if workspace["id"] not in (destination, original) and workspace["windows"] == 0
         )
         existing = {w["address"] for w in self.data("clients")}
         profile = self.root / "firefox-profile"
@@ -1649,6 +1649,11 @@ def main():
         "--only",
         choices=(
             "all",
+            "robustness",
+            "launch",
+            "gestures",
+            "capture",
+            "performance",
             "install",
             "interactions",
             "matrix",
@@ -1667,6 +1672,7 @@ def main():
             "lifecycle",
             "overview",
             "zoom",
+            "transitions",
             "resize",
             "browser",
             "discord",
@@ -1746,6 +1752,18 @@ def main():
                     isolated.finish()
             else:
                 dispatchers.lifecycle(suite)
+        if args.only in ("all", "robustness", "launch"):
+            import launch_regressions
+            launch_regressions.run(suite, wait_for)
+        if args.only in ("all", "robustness", "gestures"):
+            import gesture_regressions
+            gesture_regressions.run(suite, wait_for)
+        if args.only in ("all", "robustness", "capture"):
+            import capture_regressions
+            capture_regressions.coverage(suite, wait_for)
+        if args.only == "performance":
+            import performance
+            performance.run(suite, wait_for)
         if args.only in ("all", "configuration"):
             import configuration
 
@@ -1806,6 +1824,9 @@ def main():
             import zoom
 
             zoom.lifecycle(suite, wait_for)
+        if args.only in ("all", "transitions"):
+            import transition_regressions
+            transition_regressions.run(suite, wait_for)
         if args.only == "companions" or args.only == "all" and args.companions:
             assert args.companions, "--companions is required for the companion suite"
             suite.companions(args.companions)

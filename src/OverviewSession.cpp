@@ -51,7 +51,6 @@ namespace hyprspace {
     void COverviewSession::stopInput() {
         cancelZoom();
         cancelDrag();
-        hooks::cancelPlacement();
         ownCursor(false);
         hooks::syncKeyboardFocus();
     }
@@ -176,13 +175,17 @@ namespace hyprspace {
                 cancelDrag();
                 return;
             }
-            const auto delta = pos - drag.pickup;
-            drag.moved |= delta.size() >= 5;
+            const auto delta        = pos - drag.pickup;
+            auto       desktopDelta = delta / drag.scale;
+            if (drag.mode == SOverviewDrag::MOVE && target)
+                desktopDelta = desktopPoint(*target) - desktopPoint(drag.source);
+            // Native thresholds use desktop logical pixels, and only a real
+            // displacement strictly beyond the threshold starts a gesture.
+            drag.moved |= desktopDelta.size() > drag.threshold;
             if (drag.mode == SOverviewDrag::MOVE) {
                 drag.box.x = pos.x - drag.offset.x;
                 drag.box.y = pos.y - drag.offset.y;
             } else {
-                const auto desktopDelta = delta / drag.scale;
                 if (const auto box = hooks::resizeGeometry(w, drag.source.desktopBox, {desktopDelta.x, desktopDelta.y}, drag.resizeLeft, drag.resizeTop)) {
                     const auto point = mapPreviewPoint({box->x, box->y}, drag.source.desktopBox, drag.source.preview);
                     if (point)
@@ -288,8 +291,15 @@ namespace hyprspace {
     }
 
     void COverviewSession::updateCursor() {
-        if (m_cursorOwned)
-            hooks::setCursor(panning() ? "grabbing" : panAvailable() && g_pInputManager->getModsFromAllKBs() == 0 ? "grab" : "default");
+        if (!m_cursorOwned)
+            return;
+        const auto shape = drag.active()                                                 ? (drag.mode == SOverviewDrag::MOVE ? "grabbing"
+                                                                                            : drag.resizeTop                 ? (drag.resizeLeft ? "nw-resize" : "ne-resize")
+                                                                                                                             : (drag.resizeLeft ? "sw-resize" : "se-resize"))
+                           : panning()                                                   ? "grabbing"
+                           : panAvailable() && g_pInputManager->getModsFromAllKBs() == 0 ? "grab"
+                                                                                         : "default";
+        hooks::setCursor(shape);
     }
 
     void COverviewSession::cancelPan() {
@@ -521,7 +531,7 @@ namespace hyprspace {
         }
         if (pressed && (mods & HL_MODIFIER_META) && (button == 0x110 || button == 0x111)) {
             const auto target = hit(m_pointer);
-            if (!target || !target->window || drag.active())
+            if (!target || !target->window || drag.active() || pendingResize)
                 return true;
             cancelZoomEdge();
             drag.mode          = button == 0x110 ? SOverviewDrag::MOVE : SOverviewDrag::RESIZE;
@@ -531,6 +541,7 @@ namespace hyprspace {
             drag.offset        = m_pointer - Vector2D{target->preview.x, target->preview.y};
             drag.desktopOffset = target->desktop - Vector2D{target->desktopBox.x, target->desktopBox.y};
             drag.box           = target->preview;
+            drag.threshold     = std::max(0.0, static_cast<double>(*CConfigValue<Config::INTEGER>("binds:drag_threshold")));
             for (const auto& view : views) {
                 if (view->monitor() == target->monitor)
                     drag.sourceCell = view->workspaceCell(target->workspace);
@@ -548,6 +559,7 @@ namespace hyprspace {
             for (const auto& view : views)
                 if (auto texture = view->textureFor(target->window.lock()))
                     m_dragTexture = texture;
+            updateCursor();
             damage();
             return true;
         }
@@ -559,10 +571,16 @@ namespace hyprspace {
                 if (destination) {
                     if (drag.mode == SOverviewDrag::RESIZE)
                         destination->desktop = drag.source.desktop + (m_pointer - drag.pickup) / drag.scale;
-                    hooks::place(drag.window.lock(), drag.source, *destination, drag.mode == SOverviewDrag::RESIZE);
+                    if (hooks::place(drag.window.lock(), drag.source, *destination, drag.mode == SOverviewDrag::RESIZE) && drag.mode == SOverviewDrag::RESIZE)
+                        pendingResize = drag;
                 }
             }
-            cancelDrag();
+            drag = {};
+            if (!pendingResize)
+                m_dragTexture.reset();
+            updateCursor();
+            updateZoom();
+            damage();
             return true;
         }
         return false;
@@ -570,8 +588,17 @@ namespace hyprspace {
 
     void COverviewSession::cancelDrag() {
         drag = {};
+        pendingResize.reset();
         m_dragTexture.reset();
+        hooks::cancelPlacement();
+        updateCursor();
         updateZoom();
+        damage();
+    }
+    void COverviewSession::finishPlacement() {
+        pendingResize.reset();
+        if (!drag.active())
+            m_dragTexture.reset();
         damage();
     }
     SP<Render::ITexture> COverviewSession::dragTexture() const {
@@ -583,7 +610,6 @@ namespace hyprspace {
             m_zoomTarget.reset();
         }
         cancelDrag();
-        hooks::cancelPlacement();
         if (selection.command() && selection.command()->monitor == mon)
             selection.clear();
     }

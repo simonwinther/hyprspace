@@ -287,6 +287,7 @@ plugin {
 | Option | Type | Default | Meaning |
 |---|---|---|---|
 | `follow_mouse` | bool | `true` | Hovering a tile selects it |
+| `diagnostics` | bool | `false` | Keep up to 64 recent compositor timing samples in the local status socket |
 | `warp_cursor` | bool | `true` | Warp the pointer onto the chosen window when committing |
 
 `warp_cursor` matters more than it looks. With Hyprland's `input:follow_mouse`
@@ -331,7 +332,13 @@ Picking a workspace on one screen dismisses the others without changing what
 they were showing. A monitor with nothing on it still dims, because one screen
 left bright next to the others reads as a bug rather than as emptiness.
 
-One session owns all views and the active drag. A drag preview follows the
+Number keys find their workspace across the open monitors. The destination
+monitor zooms into that workspace while the others return to their desktops.
+The expanding destination covers the other previews throughout the close.
+Empty workspaces focus their owning monitor too; monitor rules also apply to
+numbers whose workspaces have not been created yet.
+
+One session owns all views and the active drag. Started gestures retain pointer ownership over ordinary panels, and wheel input stays with the gesture. Move and resize cursors restore on release or cancellation. Motion must exceed the native drag threshold in mapped desktop coordinates. Released resize pictures remain visible until the deferred native resize commits; a second gesture waits for that commit. A drag preview follows the
 pointer across outputs, including their offsets, scale and rotation. The source
 and destination use workspace identities and weak window references. Tile
 positions stay fixed during the drag while window membership is reconciled.
@@ -394,7 +401,7 @@ matching. Sorting file paths also makes the specification's otherwise undefined
 Capture allocation failures retain a valid previous image. Without one, a
 clipped backing rectangle represents the window until capture succeeds. Failed
 allocations wait one second before retrying, even during animated resizing.
-Captures larger than 32 MiB are represented by this fallback; all captures
+Captures larger than 32 MiB are downsampled to fit that budget while their logical size and pointer mapping stay unchanged. Allocation failures use the previous capture or backing rectangle; all captures
 together are limited to 256 MiB of RGBA pixels and 256 live textures. Existing full-resolution captures
 within those limits retain the normal output scale and rotation behavior.
 
@@ -409,8 +416,10 @@ rasters to 4 MiB and 8192 pixels per dimension.
 
 The private diagnostic `status` response includes `resources` counters for live
 and peak pixel bytes, cache entries, hits, misses, evictions, allocation failures
-and capture fallbacks. Byte counts estimate pixel storage; they exclude driver
-metadata. The resource integration fixture exercises title/width churn, retained
+and capture fallbacks, plus successful downsampled frames. Byte counts estimate pixel storage; they exclude driver
+metadata. Enable `plugin:hyprspace:diagnostics` to record up to 64 recent frames with preparation, capture, render completion and pending pointer-input timings. Samples clear when disabled. Input timing ends at compositor `RENDER_POST`, before output commit. It measures CPU render submission; GPU completion and display presentation require separate measurements.
+
+The resource integration fixture exercises title/width churn, retained
 frame references, failed GL allocation and repeated overlay close/reopen.
 Each overview view also includes `zoom_edges`: available directions, destination
 workspace IDs, hint bounds in global logical pixels, and pending dwell state.
@@ -570,6 +579,10 @@ scrolling, bounded pointer-anchored wheel inspection, high-resolution input,
 right-button panning, cursor restoration, mouse reconnects, resource stability
 and closing during transitions. Run them alone with
 `make integration-test INTEGRATION_ARGS='--only zoom'`.
+
+Cross-monitor numeric selection, empty destinations, preview stacking and the
+desktop handoff have separate rendered-frame checks. Run them with
+`make integration-test INTEGRATION_ARGS='--only transitions'`.
 
 [Verification instructions and release gates](interactive.md#verification)
 describe the automated and physical suites. The

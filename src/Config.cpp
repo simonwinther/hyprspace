@@ -50,6 +50,7 @@ namespace hyprspace::config {
 
             SP<Config::Values::CBoolValue> followMouse;
             SP<Config::Values::CBoolValue> warpCursor;
+            SP<Config::Values::CBoolValue> diagnostics;
         };
 
         SValues g_values;
@@ -121,6 +122,7 @@ namespace hyprspace::config {
 
         // ---- shared ----
         g_values.followMouse = reg<CBoolValue>("plugin:hyprspace:follow_mouse", "move the selection to whatever the pointer hovers", true);
+        g_values.diagnostics = reg<CBoolValue>("plugin:hyprspace:diagnostics", "record bounded frame preparation and input timing samples", false);
         g_values.warpCursor  = reg<CBoolValue>("plugin:hyprspace:warp_cursor",
                                                "warp the pointer onto the chosen window when committing; needed for the selection to stick when "
                                                "input:follow_mouse is enabled",
@@ -129,6 +131,9 @@ namespace hyprspace::config {
 
     float overviewBgDim() {
         return g_values.overviewBgDim ? g_values.overviewBgDim->value() : 0.80F;
+    }
+    bool diagnosticsEnabled() {
+        return g_values.diagnostics && g_values.diagnostics->value();
     }
     CHyprColor overviewBgColor() {
         return colorOf(g_values.overviewBgColor, 0xff11111b);

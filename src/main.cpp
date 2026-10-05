@@ -10,6 +10,8 @@
 
 #include "BuildInfo.hpp"
 #include "Config.hpp"
+#include "Capture.hpp"
+#include "Diagnostics.hpp"
 #include "Input.hpp"
 #include "Overview.hpp"
 #include "OverviewSession.hpp"
@@ -450,6 +452,10 @@ namespace {
         return g_externalUi.pending || g_externalUi.active || g_pSeatManager->m_seatGrab || PROTO::inputCapture->isCaptured();
     }
 
+    bool ownsPointerInput() {
+        return ownsInput() && !yieldingInput() && (session().drag.active() || !foregroundPointer());
+    }
+
     void onLayerOpened(PHLLS layer) {
         if (!g_externalUi.pending && !g_externalUi.active)
             return;
@@ -657,7 +663,7 @@ namespace {
             session().ownCursor(false);
             return;
         }
-        const bool foreground = yieldingInput() || (!session().drag.active() && foregroundPointer());
+        const bool foreground = !ownsPointerInput();
         session().ownCursor(!foreground);
         if (foreground) {
             session().observePointer(pos);
@@ -665,6 +671,8 @@ namespace {
             return;
         }
         info.cancelled = true;
+        if (const auto monitor = State::monitorState()->query().vec(pos).run())
+            diagnostics::input(monitor->m_id);
         if (switcherLive())
             g_switcher->onMouseMove(pos);
         else
@@ -676,10 +684,15 @@ namespace {
     // silently scrolls the page behind it.
     void onMouseAxis(IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
         reconcilePanButton();
-        if (yieldingInput() || foregroundPointer() || !ownsInput())
+        if (!ownsPointerInput())
             return;
 
         info.cancelled = true;
+        if (const auto monitor = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run())
+            diagnostics::input(monitor->m_id);
+
+        if (session().drag.active())
+            return;
 
         const SScrollInput SCROLL{
             .delta      = event.delta,
@@ -704,7 +717,7 @@ namespace {
         constexpr uint32_t RMB = 0x111;
         reconcilePanButton();
         const bool PRESSED      = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
-        const bool pointerOwned = !yieldingInput() && (session().drag.active() || !foregroundPointer()) && ownsInput();
+        const bool pointerOwned = ownsPointerInput();
         // A new outside press hands the aggregate button back to the seat,
         // even if detach/reattach hid the old release between input callbacks.
         if (PRESSED && event.button == RMB && g_panButtonTracked && !pointerOwned) {
@@ -740,6 +753,8 @@ namespace {
         // An intact press lease cannot become another grip after cancellation.
         if (PRESSED && event.button == RMB && captured)
             return;
+        if (const auto monitor = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run())
+            diagnostics::input(monitor->m_id);
 
         if (switcherLive()) {
             g_switcher->onMouseButton(event.button, PRESSED);
@@ -775,11 +790,13 @@ namespace {
 
     void onRenderPre(PHLMONITOR monitor) {
         reconcilePanButton();
+        diagnostics::enable(config::diagnosticsEnabled());
+        diagnostics::CFrame measured{monitor && (overviewOn(monitor) || (g_switcher && g_switcher->monitor() == monitor)) ? monitor->m_id : -1};
         if (!overlaysAllowed())
             return;
         hooks::syncKeyboardFocus();
         if (overviewLive()) {
-            const bool own = !yieldingInput() && !foregroundPointer();
+            const bool own = ownsPointerInput();
             if (own != session().cursorOwned()) {
                 session().ownCursor(own);
                 if (own)
@@ -789,6 +806,8 @@ namespace {
             }
         }
         if (session().drag.active() && (!session().drag.window || !session().drag.window->m_isMapped))
+            session().cancelDrag();
+        if (session().pendingResize && (!session().pendingResize->window || !session().pendingResize->window->m_isMapped))
             session().cancelDrag();
         if (g_switcher && !g_switcher->closing() && g_switcher->monitor() == monitor)
             g_switcher->refreshWindows();
@@ -817,6 +836,11 @@ namespace {
     }
 
     void onRenderStage(eRenderStage stage) {
+        if (stage == RENDER_BEGIN) {
+            const auto monitor         = g_pHyprRenderer->m_renderData.pMonitor.lock();
+            diagnostics::renderMonitor = monitor ? monitor->m_id : -1;
+        } else if (stage == RENDER_POST)
+            diagnostics::finish();
         if (!overlaysAllowed() || !active())
             return;
 
@@ -861,6 +885,11 @@ namespace {
     }
 
     void onMonitorRemoved(PHLMONITOR monitor) {
+        if (monitor) {
+            diagnostics::inputs.erase(monitor->m_id);
+            diagnostics::lastFrames.erase(monitor->m_id);
+            diagnostics::prepared.erase(monitor->m_id);
+        }
         session().monitorRemoved(monitor);
         destroyOverviewOn(monitor);
         if (g_switcher && g_switcher->monitor() == monitor)
@@ -870,6 +899,7 @@ namespace {
     // -------------------------------------------------------- dispatchers ----
 
     SDispatchResult dispatchOverview(std::string args) {
+        diagnostics::enable(config::diagnosticsEnabled());
         // An already-open overview toggles closed, which makes a single Super
         // binding behave the way people expect — and it closes every monitor's,
         // wherever the pointer happens to be sitting, so the set that opened
@@ -904,11 +934,15 @@ namespace {
             // on it still gets one: a screen left bright and live beside the
             // ones that dimmed reads as a glitch rather than as emptiness.
             for (const auto& MONITOR : State::monitorState()->monitors()) {
-                if (MONITOR && MONITOR->m_enabled && !MONITOR->isMirror())
+                if (MONITOR && MONITOR->m_enabled && !MONITOR->isMirror()) {
+                    diagnostics::input(MONITOR->m_id);
                     session().views.push_back(std::make_unique<COverview>(MONITOR));
+                }
             }
-        } else if (const auto MONITOR = targetMonitor())
+        } else if (const auto MONITOR = targetMonitor()) {
+            diagnostics::input(MONITOR->m_id);
             session().views.push_back(std::make_unique<COverview>(MONITOR));
+        }
 
         if (session().views.empty())
             return {.success = false, .error = "hyprspace: no monitor"};
@@ -1077,8 +1111,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                    [] { return overlaysAllowed() && overviewLive() && !switcherLive() && !yieldingInput(); },
                    [](PHLMONITOR monitor) { return overlaysAllowed() && isOverlayMonitor(monitor) && !yieldingInput(); });
     try {
+        installCaptureHooks();
         launch::install();
     } catch (...) {
+        uninstallCaptureHooks();
         hooks::uninstall();
         throw;
     }
@@ -1108,6 +1144,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
     destroySwitcher();
 
     launch::uninstall();
+    uninstallCaptureHooks();
+    diagnostics::enable(false);
     hooks::uninstall();
     g_listeners = {};
     g_overviewSession.reset();

@@ -4,6 +4,7 @@
 #include "Overview.hpp"
 #include "Launch.hpp"
 #include "OverlayPolicy.hpp"
+#include "Diagnostics.hpp"
 
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
@@ -40,8 +41,9 @@ namespace hyprspace::hooks {
     namespace {
         CFunctionHook *                 keyHook = nullptr, *inputHook = nullptr, *focusHook = nullptr, *coordsHook = nullptr, *warpHook = nullptr;
         CFunctionHook *                 pointerHook = nullptr, *imeModsHook = nullptr, *axisHook = nullptr, *mouseBindHook = nullptr;
-        double                          axisScale  = 1.0;
-        bool                            keyRelease = false;
+        CFunctionHook*                  layoutPointerHook = nullptr;
+        double                          axisScale         = 1.0;
+        bool                            keyRelease        = false;
         std::optional<Vector2D>         desktopPoint;
         std::function<bool()>           ownsKeyboard;
         std::function<bool()>           launchEnabled;
@@ -134,6 +136,10 @@ namespace hyprspace::hooks {
             friend auto member(SResizeSize);
         };
         template struct CAccess<SResizeSize, &Layout::Supplementary::CDragStateController::m_beginDragSizeXY>;
+        struct SDragThreshold {
+            friend auto member(SDragThreshold);
+        };
+        template struct CAccess<SDragThreshold, &Layout::Supplementary::CDragStateController::m_dragThresholdReached>;
         std::optional<std::array<std::string, 2>> savedCursor;
         std::string                               installedCursor;
         SP<CEventLoopTimer>                       resizeTimer;
@@ -244,6 +250,15 @@ namespace hyprspace::hooks {
             return reinterpret_cast<Fn>(mouseBindHook->m_original)(self);
         }
 
+        void layoutPointerMove(Layout::CLayoutManager* self, const Vector2D& point) {
+            using Fn = void (*)(Layout::CLayoutManager*, const Vector2D&);
+            // Released gestures resume normal panel hover. Only the mapped
+            // final commit may move their still-pending native resize target.
+            if (!desktopPoint && resizeTimer && resizeTarget && self->dragController()->target() == resizeTarget)
+                return;
+            reinterpret_cast<Fn>(layoutPointerHook->m_original)(self, point);
+        }
+
         class CKeepLayerKeyboard {
           public:
             explicit CKeepLayerKeyboard(bool keep) {
@@ -338,7 +353,11 @@ namespace hyprspace::hooks {
             const Hyprutils::Utils::CScopeGuard restore([previous] { keyRelease = previous; });
             pruneKeys();
             const bool owned = ownsKeyboard && ownsKeyboard();
-            auto       it    = std::ranges::find_if(keys, [&](const auto& key) { return key.keyboard == keyboard && key.code == e.keycode; });
+            if (owned && pressed && diagnostics::enabled)
+                if (const auto* view = session().keyboardView())
+                    if (const auto monitor = view->monitor())
+                        diagnostics::input(monitor->m_id);
+            auto it = std::ranges::find_if(keys, [&](const auto& key) { return key.keyboard == keyboard && key.code == e.keycode; });
             if (!pressed && it != keys.end()) {
                 const auto saved = *it;
                 keys.erase(it);
@@ -408,8 +427,11 @@ namespace hyprspace::hooks {
             if (match == matches.end())
                 throw std::runtime_error("[hyprspace] missing compositor hook: " + signature);
             auto result = HyprlandAPI::createFunctionHook(PHANDLE, match->address, callback);
-            if (!result || !result->hook())
+            if (!result || !result->hook()) {
+                if (result)
+                    HyprlandAPI::removeFunctionHook(PHANDLE, result);
                 throw std::runtime_error("[hyprspace] failed compositor hook: " + signature);
+            }
             return result;
         }
     } // namespace
@@ -483,6 +505,14 @@ namespace hyprspace::hooks {
                 return pointer && pointer->m_connected;
             });
         };
+    }
+
+    std::string cursorShape() {
+        const auto& overrides = Pointer::Cursor::overrideController.get()->*member(SCursorOverrides{});
+        for (const auto& shape : overrides | std::views::reverse)
+            if (!shape.empty())
+                return shape;
+        return {};
     }
 
     bool keyboardOwned() {
@@ -679,6 +709,8 @@ namespace hyprspace::hooks {
         if (auto target = resizeTarget.lock(); target && g_layoutManager->dragController()->target() == target)
             atDesktopPoint(resizePickup, [] { g_layoutManager->endDragTarget(); });
         resizeTarget.reset();
+        if (g_overviewSession)
+            session().finishPlacement();
     }
 
     std::optional<SBoxF> resizeGeometry(PHLWINDOW window, const SBoxF& initial, SPoint delta, bool left, bool top) {
@@ -733,11 +765,15 @@ namespace hyprspace::hooks {
             g_layoutManager->beginDragTarget(target, resize ? MBIND_RESIZE : MBIND_MOVE);
             if (!g_layoutManager->dragController()->target())
                 return;
-            // Cross the configured threshold at pickup, then replay the final
-            // motion. updateDragWindow reads the scoped pickup coordinate.
-            const auto threshold = CConfigValue<Config::INTEGER>("binds:drag_threshold");
-            if (*threshold > 0)
-                g_layoutManager->moveMouse(pickup + Vector2D{static_cast<double>(*threshold) + 1, 0.0});
+            // The overview already verified real mapped motion crossed the
+            // threshold. Run native pickup at its original point without a
+            // fictitious movement that could resize the window itself.
+            auto* controller = g_layoutManager->dragController().get();
+            if (!controller->dragThresholdReached()) {
+                controller->*member(SDragThreshold{}) = true;
+                if (controller->updateDragWindow())
+                    return;
+            }
         });
         if (!g_layoutManager->dragController()->target())
             return false;
@@ -766,6 +802,10 @@ namespace hyprspace::hooks {
                             if (target->floating())
                                 motion = pickup + Vector2D{(bounded->w - box.w) * (left ? -1 : 1), (bounded->h - box.h) * (top ? -1 : 1)};
                             atDesktopPoint(motion, [&] {
+                                // Native key-release matching resets this flag.
+                                // Restore the real threshold crossing without
+                                // reinitializing the original pickup geometry.
+                                g_layoutManager->dragController().get()->*member(SDragThreshold{}) = true;
                                 g_layoutManager->moveMouse(motion);
                                 if (target->floating()) {
                                     // Resizing belongs to its source workspace even when
@@ -819,7 +859,7 @@ namespace hyprspace::hooks {
             if (dispatchers.contains(name) || name.starts_with("hyprspace:") || name == "movecursor" || !compositorDispatcher(name, dispatcher))
                 continue;
             const auto registration = ++nextRegistration;
-            auto callback = [name, original = dispatcher](std::string args) {
+            auto       callback     = [name, original = dispatcher](std::string args) {
                 if (dispatchDepth)
                     return original(std::move(args));
                 const bool owned = keyboardOwned();
@@ -874,15 +914,16 @@ namespace hyprspace::hooks {
         launchEnabled = std::move(launching);
         promotePanels = std::move(panels);
         try {
-            keyHook       = hook("onKeyEvent", "CKeybindManager::onKeyEvent(", reinterpret_cast<void*>(onKey));
-            inputHook     = hook("onKeyboardKey", "CInputManager::onKeyboardKey(", reinterpret_cast<void*>(keyboardInput));
-            focusHook     = hook("setKeyboardFocus", "CSeatManager::setKeyboardFocus(", reinterpret_cast<void*>(keyboardFocus));
-            coordsHook    = hook("getMouseCoordsInternal", "CInputManager::getMouseCoordsInternal(", reinterpret_cast<void*>(mouseCoords));
-            warpHook      = hook("warpTo", "Pointer::CPointerController::warpTo(", reinterpret_cast<void*>(warp));
-            pointerHook   = hook("mouseMoveUnified", "CInputManager::mouseMoveUnified(", reinterpret_cast<void*>(pointerMove));
-            axisHook      = hook("onMouseWheel", "CInputManager::onMouseWheel(", reinterpret_cast<void*>(pointerAxis));
-            imeModsHook   = hook("sendMods", "CInputMethodKeyboardGrabV2::sendMods(", reinterpret_cast<void*>(imeModifiers));
-            mouseBindHook = hook("ensureMouseBindState", "CKeybindManager::ensureMouseBindState(", reinterpret_cast<void*>(ensureMouseBindState));
+            keyHook           = hook("onKeyEvent", "CKeybindManager::onKeyEvent(", reinterpret_cast<void*>(onKey));
+            inputHook         = hook("onKeyboardKey", "CInputManager::onKeyboardKey(", reinterpret_cast<void*>(keyboardInput));
+            focusHook         = hook("setKeyboardFocus", "CSeatManager::setKeyboardFocus(", reinterpret_cast<void*>(keyboardFocus));
+            coordsHook        = hook("getMouseCoordsInternal", "CInputManager::getMouseCoordsInternal(", reinterpret_cast<void*>(mouseCoords));
+            warpHook          = hook("warpTo", "Pointer::CPointerController::warpTo(", reinterpret_cast<void*>(warp));
+            pointerHook       = hook("mouseMoveUnified", "CInputManager::mouseMoveUnified(", reinterpret_cast<void*>(pointerMove));
+            axisHook          = hook("onMouseWheel", "CInputManager::onMouseWheel(", reinterpret_cast<void*>(pointerAxis));
+            imeModsHook       = hook("sendMods", "CInputMethodKeyboardGrabV2::sendMods(", reinterpret_cast<void*>(imeModifiers));
+            mouseBindHook     = hook("ensureMouseBindState", "CKeybindManager::ensureMouseBindState(", reinterpret_cast<void*>(ensureMouseBindState));
+            layoutPointerHook = hook("moveMouse", "Layout::CLayoutManager::moveMouse(", reinterpret_cast<void*>(layoutPointerMove));
             reconcileDispatchers();
         } catch (...) {
             uninstall();
@@ -905,11 +946,12 @@ namespace hyprspace::hooks {
                 current->second = std::move(registration.original);
         }
         dispatchers.clear();
-        for (auto handle : {keyHook, inputHook, focusHook, coordsHook, warpHook, pointerHook, imeModsHook, axisHook, mouseBindHook})
+        for (auto handle : {keyHook, inputHook, focusHook, coordsHook, warpHook, pointerHook, imeModsHook, axisHook, mouseBindHook, layoutPointerHook})
             if (handle)
                 HyprlandAPI::removeFunctionHook(PHANDLE, handle);
         keyHook = inputHook = focusHook = coordsHook = warpHook = nullptr;
         pointerHook = imeModsHook = axisHook = mouseBindHook = nullptr;
+        layoutPointerHook                                    = nullptr;
         axisScale                                            = 1.0;
         keyRelease                                           = false;
         desktopPoint.reset();

@@ -19,8 +19,11 @@ namespace hyprspace {
         static constexpr size_t MAX_CAPTURES      = 256;
         static constexpr size_t MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
         size_t                  bytes = 0, peakBytes = 0, attempts = 0, failures = 0, fallbacks = 0, previous = 0, omitted = 0;
+        size_t                  downsampled = 0;
     };
 
+    void                     installCaptureHooks();
+    void                     uninstallCaptureHooks();
     const SCaptureResources& captureResources();
     SP<Render::IFramebuffer> createCaptureFramebuffer();
 

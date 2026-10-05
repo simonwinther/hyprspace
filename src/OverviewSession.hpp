@@ -27,7 +27,8 @@ namespace hyprspace {
         SBoxF           sourceCell; // monitor-local displayed workspace at pickup
         Vector2D        scale      = {1, 1};
         bool            resizeLeft = false, resizeTop = false;
-        bool            moved = false;
+        double          threshold = 0;
+        bool            moved     = false;
         bool            active() const {
             return mode != NONE;
         }
@@ -40,6 +41,9 @@ namespace hyprspace {
         std::vector<std::unique_ptr<COverview>> views;
         CTargetSelection<SOverviewTarget>       selection;
         SOverviewDrag                           drag;
+        // A released resize is still pictured while the native controller
+        // flushes its final motion. It no longer owns a pressed button.
+        std::optional<SOverviewDrag> pendingResize;
 
         bool                    live() const;
         void                    begin();
@@ -72,6 +76,7 @@ namespace hyprspace {
         void                           followKeyboardFocus();
         bool                           button(uint32_t button, bool pressed, uint32_t mods);
         void                           cancelDrag();
+        void                           finishPlacement();
         void                           monitorRemoved(PHLMONITOR monitor);
         void                           damage();
         PHLWORKSPACE                   workspace(const SOverviewTarget& target) const;

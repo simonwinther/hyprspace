@@ -55,5 +55,6 @@ namespace hyprspace::config {
     // --- shared ---
     bool followMouse();
     bool warpCursor();
+    bool diagnosticsEnabled();
 
 } // namespace hyprspace::config
