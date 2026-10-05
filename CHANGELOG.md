@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/simonwinther/hyprspace/compare/v1.3.1...v1.4.0) (2026-10-05)
+
+
+### Features
+
+* integrate local robustness improvements with v1.3.1 ([035da55](https://github.com/simonwinther/hyprspace/commit/035da558937b6a4dd663067d7055bb36e3026cad))
+
 ## [1.3.1](https://github.com/simonwinther/hyprspace/compare/v1.3.0...v1.3.1) (2026-10-04)
 
 
