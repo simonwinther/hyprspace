@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
-#include <expected>
 #include <limits>
 #include <optional>
 #include <span>
@@ -87,9 +86,16 @@ namespace hyprspace {
 
     // Reusing a local empty is independent of fresh-ID reservations. Every
     // existing positive ID is occupied, including an empty on another output.
-    inline std::expected<SEmptyWorkspaceChoice, std::string> chooseEmptyWorkspace(std::span<const SEmptyWorkspaceCandidate> workspaces, int64_t monitor,
-                                                                                  std::span<const SEmptyWorkspaceRule> rules) {
+    inline std::optional<SEmptyWorkspaceChoice> chooseEmptyWorkspace(std::span<const SEmptyWorkspaceCandidate> workspaces, int64_t monitor,
+                                                                     std::span<const SEmptyWorkspaceRule> rules, std::string* error = nullptr) {
         using namespace emptyWorkspaceDetail;
+        if (error)
+            error->clear();
+        const auto fail = [error](std::string message) -> std::optional<SEmptyWorkspaceChoice> {
+            if (error)
+                *error = std::move(message);
+            return std::nullopt;
+        };
         const SEmptyWorkspaceCandidate* chosen   = nullptr;
         const auto                      priority = [](const auto& ws) { return ws.prepared ? 0 : ws.active ? 1 : 2; };
         for (const auto& ws : workspaces) {
@@ -126,10 +132,10 @@ namespace hyprspace {
                     if (const auto range = initialNameInterval(naming.selector))
                         reserved.push_back(*range);
                     else if (!trim(naming.selector).starts_with("special") && !trim(naming.selector).starts_with("name:"))
-                        return std::unexpected("hyprspace: conditional default_name cannot be allocated safely: " + naming.selector);
+                        return fail("hyprspace: conditional default_name cannot be allocated safely: " + naming.selector);
                 }
             } else if (!selector.starts_with("special"))
-                return std::unexpected("hyprspace: conditional workspace monitor binding cannot be allocated safely: " + rule.selector);
+                return fail("hyprspace: conditional workspace monitor binding cannot be allocated safely: " + rule.selector);
         }
 
         // Jump over intervals, rather than iterating potentially enormous
@@ -142,7 +148,7 @@ namespace hyprspace {
             if (range.last < candidate)
                 continue;
             if (range.last >= MAX_EMPTY_WORKSPACE_ID)
-                return std::unexpected("hyprspace: no available workspace number on this monitor");
+                return fail("hyprspace: no available workspace number on this monitor");
             candidate = range.last + 1;
         }
         return SEmptyWorkspaceChoice{candidate, false};

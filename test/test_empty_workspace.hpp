@@ -78,10 +78,13 @@ static void testEmptyWorkspaceAllocation() {
 
     section("empty workspace: unsupported assignments fail before allocation but allow existing local empties");
     rules = {{.selector = "r[1-10] w[0]", .monitorBinding = true}};
-    CHECK(!chooseEmptyWorkspace({}, 10, rules));
+    std::string error;
+    CHECK(!chooseEmptyWorkspace({}, 10, rules, &error));
+    CHECK(!error.empty());
     occupied.push_back({.id = 11, .monitor = 10, .empty = true});
-    choice = chooseEmptyWorkspace(occupied, 10, rules);
+    choice = chooseEmptyWorkspace(occupied, 10, rules, &error);
     CHECK(choice && choice->existing && choice->id == 11);
+    CHECK(error.empty());
     rules[0].monitorBinding = false; // conditional styling remains native
     CHECK(chooseEmptyWorkspace({}, 10, rules)->id == 1);
     rules[0].monitorBinding = true;

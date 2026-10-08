@@ -169,9 +169,10 @@ namespace hyprspace {
                  .targetMonitor  = !rule->m_monitor.empty() && State::monitorState()->query().relativeTo(monitor).configString(rule->m_monitor).run() == monitor,
                  .defaultName    = rule->m_defaultName});
         }
-        const auto choice = chooseEmptyWorkspace(candidates, monitor->m_id, rules);
+        std::string error;
+        const auto  choice = chooseEmptyWorkspace(candidates, monitor->m_id, rules, &error);
         if (!choice)
-            return std::unexpected(choice.error());
+            return std::unexpected(error);
         const auto ws =
             choice->existing ? State::workspaceState()->query().id(choice->id).run() : State::workspaceState()->create(choice->id, monitor->m_id, "", isEmpty);
         if (!valid(ws) || ws->m_monitor != monitor)
