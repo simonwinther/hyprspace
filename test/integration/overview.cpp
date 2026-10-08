@@ -326,8 +326,10 @@ namespace {
             return {.success = false, .error = "probe takes no arguments"};
 
         const auto& overrides = cursorOverrides(*overrideController);
-        const auto  result    = nlohmann::json{
-            {"unknown", overrides[CURSOR_OVERRIDE_UNKNOWN]}, {"window_edge", overrides[CURSOR_OVERRIDE_WINDOW_EDGE]}, {"shape", cursorShape(*overrideController)}};
+        const auto  result    = nlohmann::json{{"unknown", overrides[CURSOR_OVERRIDE_UNKNOWN]},
+                                               {"window_edge", overrides[CURSOR_OVERRIDE_WINDOW_EDGE]},
+                                               {"shape", cursorShape(*overrideController)},
+                                               {"rendered", g_pHyprRenderer->shouldRenderCursor()}};
         return {.success = false, .error = result.dump()};
     }
 

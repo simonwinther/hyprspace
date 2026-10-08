@@ -11,7 +11,7 @@ separate compatibility testing.
 
 Use **hyprpm** on Arch and other Linux setups with the supported Hyprland build,
 or the **tagged flake** on Nix. [Published releases](https://github.com/simonwinther/hyprspace/releases)
-are the stable-version list. The commands below select `v1.3.1`. An unversioned
+are the stable-version list. The commands below select `v1.4.0`. An unversioned
 repository install tracks development.
 
 ### Arch Linux and hyprpm
@@ -22,7 +22,7 @@ and select the release explicitly:
 ```bash
 sudo pacman -S --needed hyprland base-devel git cmake cpio cairo pango gdk-pixbuf2 librsvg libei nlohmann-json jq python
 hyprpm update
-hyprpm add https://github.com/simonwinther/hyprspace.git v1.3.1
+hyprpm add https://github.com/simonwinther/hyprspace.git v1.4.0
 hyprpm enable hyprspace
 hyprpm reload
 ```
@@ -66,7 +66,7 @@ Add these inputs to your system flake:
 
 ```nix
 inputs.hyprland.url = "github:hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f";
-inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.3.1";
+inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.4.0";
 inputs.hyprspace.inputs.hyprland.follows = "hyprland";
 ```
 
@@ -110,11 +110,16 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 
 | Control | Action |
 |---|---|
-| Super + A | Open or close the workspace overview |
+| Super + A | Open the overview; press again to open the selected workspace |
 | Click a preview | Focus that window |
 | Arrows or Tab, then Enter | Select and open a workspace |
+| N or + Empty workspace | Select an empty workspace on the monitor under the pointer |
+| Middle-click | Select an empty workspace on that monitor and keep the overview open |
 | Hold Z | Fit the selected workspace; release to return to the grid |
-| Wheel while holding Z | Zoom around the pointer; scroll back to the fitted view |
+| Wheel / vertical two-finger scroll while holding Z | Zoom around the pointer; scroll back to the fitted view |
+| + / − while holding Z | Zoom around the center; hold to repeat (`=` and keypad + / − also work) |
+| Space + touchpad motion while holding Z and magnified | Grab and pan the view |
+| Shift + arrows while holding Z and magnified | Pan toward that direction; hold to repeat |
 | Right drag while holding Z and magnified | Pan the view with grab/grabbing cursor feedback |
 | 1 through 9, or 0 | Open workspace 1 through 10 |
 | Super + left drag | Rearrange a window or move it across workspaces and outputs |
@@ -129,15 +134,32 @@ workspaces. Alt+Tab uses the active normal workspace on the monitor under the
 pointer. Setting `switcher:current_workspace_only = false` includes windows
 across all workspaces and monitors.
 
+Inside the overview, **middle-click**, press **N** or click **+ Empty workspace**
+to prepare a destination on the monitor under the pointer. Hyprspace reuses an
+empty workspace there before creating another. The overview stays open and
+highlights the tile: launch an application, drag a window into it, or press Enter
+to open it. The pointer stays where it is and workspace tiles stay in numeric
+order. You can also Super-drag a window directly onto the button. Preparing a destination leaves
+the desktop unchanged until you commit an action, so Escape still dismisses it.
+Change `overview:empty_workspace_key` to another XKB key name, or use an empty
+value to disable the shortcut. If it matches `overview:zoom_key`, zoom keeps that
+key and the empty-workspace shortcut is disabled.
+
 On a small screen, hold **Z** to smoothly enlarge one workspace. While holding
 it, use arrows or Tab/Shift+Tab to browse that monitor's workspaces, or hover
 briefly at an edge to slide to its neighbor. Edge hints show the available
 directions, including above and below. Releasing Z smoothly restores the grid.
-While holding Z, scroll up to inspect the area under the pointer, then right-click
-and drag to move the magnified view. The hand cursor closes while you drag. Scroll
-down to return to the fitted workspace; zoom stops there and at four times that
+While holding Z, use vertical two-finger scrolling or the wheel to inspect the
+area under the pointer. On a laptop, hold Space and move one finger to pan, or
+use Shift+arrows. For keyboard-only inspection, use + / − to zoom around the
+center, then Shift+arrows to pan. Held zoom and pan keys repeat at your configured
+keyboard rate. Right-click and drag also pans; the hand cursor closes during a
+grab. Scroll down to return to the fitted workspace; zoom stops there and at four times that
 size. Release Z at any point to return to the grid. A monitor with one workspace
 already shows the fitted view, so Z alone keeps that framing.
+
+Press Super+A again to zoom directly into the current selection, including after
+hovering another workspace. Escape dismisses the overview without selecting.
 
 ![Pointer-anchored wheel zoom and right-button panning while holding Z](docs/screenshots/zoom-pan.gif)
 

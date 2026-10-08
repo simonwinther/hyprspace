@@ -34,6 +34,7 @@ namespace hyprspace::config {
             SP<Config::Values::CColorValue>  overviewTitleBgColor;
             SP<Config::Values::CStringValue> overviewFont;
             SP<Config::Values::CStringValue> overviewZoomKey;
+            SP<Config::Values::CStringValue> overviewEmptyWorkspaceKey;
             SP<Config::Values::CBoolValue>   overviewWheelZoom;
             SP<Config::Values::CColorValue>  overviewFullscreenBorder;
 
@@ -98,8 +99,11 @@ namespace hyprspace::config {
         g_values.overviewFont            = reg<CStringValue>("plugin:hyprspace:overview:font", "pango font description used in the overview", "Sans 12");
         g_values.overviewZoomKey = reg<CStringValue>("plugin:hyprspace:overview:zoom_key", "unmodified XKB key held to enlarge the selected workspace; empty disables",
                                                      "z", SStringValueOptions{.validator = hooks::validateZoomKey});
+        g_values.overviewEmptyWorkspaceKey =
+            reg<CStringValue>("plugin:hyprspace:overview:empty_workspace_key", "unmodified XKB key to select an empty workspace on the pointer's monitor; empty disables",
+                              "n", SStringValueOptions{.validator = hooks::validateEmptyWorkspaceKey});
         g_values.overviewWheelZoom =
-            reg<CBoolValue>("plugin:hyprspace:overview:wheel_zoom", "zoom the held workspace around the pointer with the vertical mouse wheel", true);
+            reg<CBoolValue>("plugin:hyprspace:overview:wheel_zoom", "magnify and pan the held workspace with wheel, touchpad or keyboard input", true);
         g_values.overviewFullscreenBorder =
             reg<CColorValue>("plugin:hyprspace:overview:fullscreen_border", "outline and badge marking the window that is fullscreen", 0xff89b4fa);
 
@@ -191,6 +195,15 @@ namespace hyprspace::config {
         if (name.empty() || !hooks::validateZoomKey(name))
             return XKB_KEY_NoSymbol;
         return xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+    }
+    xkb_keysym_t overviewEmptyWorkspaceKey() {
+        const auto name = g_values.overviewEmptyWorkspaceKey ? g_values.overviewEmptyWorkspaceKey->value() : "n";
+        if (name.empty() || !hooks::validateEmptyWorkspaceKey(name))
+            return XKB_KEY_NoSymbol;
+        const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+        // Preserve existing custom zoom keys when the new shortcut shares one.
+        // Validation of either setting is independent, avoiding recursive reads.
+        return sym == overviewZoomKey() ? XKB_KEY_NoSymbol : sym;
     }
     bool overviewWheelZoom() {
         return g_values.overviewWheelZoom ? g_values.overviewWheelZoom->value() : true;

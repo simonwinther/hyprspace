@@ -4,7 +4,7 @@ import time
 
 from PIL import Image
 from resize import area
-from zoom import center, tile
+from zoom import center, inspection, tile
 
 
 def tap(s, code):
@@ -48,6 +48,91 @@ def prepared(s, wait_for):
     time.sleep(1.4)
     s.move(center(tile(s, 10)))
     assert s.status()['target']['workspace'] == 10
+
+
+def toggle(s):
+    s.key(125, 1)
+    tap(s, 30)  # Super+A uses the native binding matcher.
+    s.key(125, 0)
+
+
+def toggle_destinations(s, wait_for):
+    s.ctl('keyword', 'workspace', f'21,monitor:{s.names[0]},persistent:true')
+    for follow, destination, magnify in ((True, 21, False), (True, 2, True), (False, 21, False)):
+        s.ctl('keyword', 'animations:enabled', 'false')
+        focus_source(s)
+        s.ctl('keyword', 'plugin:hyprspace:follow_mouse', 'true')
+        s.ctl('keyword', 'animations:enabled', 'true')
+        toggle(s)
+        wait_for(lambda: s.status()['live'])
+        time.sleep(1.4)
+        old_workspace = 1 if destination == 2 else 10
+        normal = tile(s, destination)
+        old = tile(s, old_workspace)
+        if follow:
+            s.move(center(normal))
+        else:
+            s.move(center(tile(s, 10)))
+            s.ctl('keyword', 'plugin:hyprspace:follow_mouse', 'false')
+            tap(s, 107)  # End selects workspace 21 on the source output.
+            s.move(center(tile(s, 2)))
+        assert s.status()['target']['workspace'] == destination
+        if magnify:
+            s.key(44, 1)
+            inspection(s, wait_for, 1)
+            tap(s, 13)
+            inspection(s, wait_for, 1.15)
+            s.move(center(tile(s, destination)))
+            s.key(57, 1)
+            wait_for(lambda: s.status()['zoom']['panning'])
+            s.motion(8, 4)
+            old = tile(s, old_workspace)
+        toggle(s)
+        assert not s.status()['live']
+        s.ctl('dispatch', 'hyprspace-test:transition-frame', '.25')
+        try:
+            assert tile(s, destination)['w'] > normal['w'] * 1.2
+            assert tile(s, old_workspace)['w'] <= old['w'] + 1, ('toggle zoomed into the old workspace', old, tile(s, old_workspace))
+            assert s.data('activeworkspace')['id'] == destination
+        finally:
+            s.ctl('dispatch', 'hyprspace-test:transition-frame', '0')
+            s.key(57, 0)
+            s.key(44, 0)
+        wait_for(lambda: not s.status()['views'])
+        s.check(f'Super+A commits workspace {destination} directly with follow_mouse={follow} and inspection={magnify}')
+
+    s.ctl('keyword', 'animations:enabled', 'false')
+    s.ctl('keyword', 'plugin:hyprspace:follow_mouse', 'true')
+    for cancel in ('off', 'close', 'escape'):
+        s.ctl('dispatch', 'focusmonitor', s.names[1])
+        s.ctl('dispatch', 'workspace', '1')
+        focus_source(s)
+        before = {m['name']: m['activeWorkspace']['id'] for m in s.data('monitors')}
+        toggle(s)
+        wait_for(lambda: s.status()['live'])
+        s.move(center(tile(s, 2)))
+        assert s.status()['target']['workspace'] == 2
+        if cancel == 'escape':
+            tap(s, 1)
+        else:
+            s.ctl('dispatch', 'hyprspace:overview' if cancel == 'off' else 'hyprspace:close', *(['off'] if cancel == 'off' else []))
+        wait_for(lambda: not s.status()['views'])
+        assert {m['name']: m['activeWorkspace']['id'] for m in s.data('monitors')} == before
+    s.check('explicit off, close and Escape still dismiss without committing the hovered destination')
+
+    focus_source(s)
+    toggle(s)
+    wait_for(lambda: s.status()['live'])
+    s.move(s.preview_point('hs-A'))
+    s.key(125, 1)
+    s.button(1)
+    assert s.status()['dragging']
+    tap(s, 30)
+    s.button(0)
+    s.key(125, 0)
+    wait_for(lambda: not s.status()['views'])
+    assert s.windows()['hs-A']['workspace']['id'] == 10
+    s.check('Super+A during a provisional drag dismisses safely and consumes the late button release')
 
 
 def run(s, wait_for):
@@ -110,6 +195,7 @@ def run(s, wait_for):
         work = area(monitor)
         assert abs(s.windows()['hs-B']['at'][0] - work['x']) < 30
         s.check('cross-output zoom hands off to the selected desktop window with restored visibility')
+        toggle_destinations(s, wait_for)
 
         # Persistent empty remote destinations have a tile too and must focus
         # their output, rather than retain focus on the source client.
@@ -168,6 +254,8 @@ def run(s, wait_for):
 
         s.ctl('keyword', 'animations:enabled', 'false')
         s.ctl('keyword', 'plugin:hyprspace:overview:all_monitors', 'true')
+        s.ctl('keyword', 'plugin:hyprspace:follow_mouse', 'true')
+        s.ctl('keyword', 'workspace', '21,persistent:false')
         s.ctl('keyword', 'binds:workspace_back_and_forth', 'true')
         # Keep native focus on workspace 2 while pointer selection names 10,
         # so a string resolver would reinterpret this as back-and-forth.
@@ -208,5 +296,7 @@ def run(s, wait_for):
         s.close()
         s.ctl('keyword', 'plugin:hyprspace:overview:all_monitors', 'true')
         s.ctl('keyword', 'binds:workspace_back_and_forth', 'false')
+        s.ctl('keyword', 'plugin:hyprspace:follow_mouse', 'true')
+        s.ctl('keyword', 'workspace', '21,persistent:false')
         s.env.pop('HS_CONTENT_MARKER', None)
         s.ctl('plugin', 'unload', str(fixture))

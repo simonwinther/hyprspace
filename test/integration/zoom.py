@@ -313,6 +313,329 @@ def edge_browsing(s, wait_for):
         s.close()
 
 
+def cursor_visibility(s, wait_for):
+    s.close()
+    fixture = load_overview_fixture(s, wait_for)
+    options = ("cursor:hide_on_key_press", "cursor:invisible", "plugin:hyprspace:overview:include_special")
+    saved = {key: json.loads(s.ctl("-j", "getoption", key)) for key in options}
+
+    def visible():
+        return json.loads(s.run("hyprctl", "dispatch", "hyprspace-test:cursor-overrides", "probe"))["rendered"]
+
+    try:
+        s.setup("dwindle", 0, 1)
+        s.ctl("keyword", "cursor:hide_on_key_press", "true")
+        s.ctl("keyword", "cursor:invisible", "false")
+        s.ctl("keyword", "plugin:hyprspace:overview:include_special", "true")
+        for special in (False, True):
+            kind = "special" if special else "normal"
+            if special:
+                s.ctl("dispatch", "movetoworkspacesilent", f'special:zoom-cursor,address:{s.windows()["hs-A"]["address"]}')
+            workspace = s.windows()["hs-A"]["workspace"]["id"]
+            s.move(s.point(s.windows()["hs-B"]))
+            s.key(SHIFT, 1)
+            s.key(SHIFT, 0)
+            wait_for(lambda: not visible())
+            s.ctl("dispatch", "hyprspace:overview", "on")
+            wait_for(lambda: s.status()["cursor_owned"] and visible())
+            s.move(s.preview_point("hs-A"))
+            wait_for(lambda: s.status()["target"]["workspace"] == workspace)
+            s.key(Z, 1)
+            wait_for(lambda: s.status()["zoom"]["held"] and visible())
+            time.sleep(.3)
+            assert visible()
+            s.key(Z, 1)
+            assert visible()
+            s.motion(8, 4)
+            assert visible() and s.status()["zoom"]["held"]
+            s.run("grim", "-c", "-s", "1", "-o", s.names[0], str(s.root / f"zoom-cursor-{kind}.png"))
+            s.ctl("keyword", "cursor:invisible", "true")
+            wait_for(lambda: not visible())
+            s.ctl("keyword", "cursor:invisible", "false")
+            wait_for(visible)
+            s.key(Z, 0)
+            s.close()
+            # Closing replays native pointer focus, which clears keyboard
+            # hiding like mouse motion. A fresh native key must hide again.
+            s.key(SHIFT, 1)
+            s.key(SHIFT, 0)
+            wait_for(lambda: not visible())
+            s.motion(-8, -4)
+            wait_for(visible)
+            s.check(f"{kind} workspace zoom retains a visible cursor through held/repeated keys and motion; explicit invisibility and native key hiding resume correctly")
+    finally:
+        s.key(SHIFT, 0)
+        s.key(Z, 0)
+        s.close()
+        for key, value in saved.items():
+            setting = value.get("bool", value.get("int"))
+            s.ctl("keyword", key, str(setting).lower())
+        s.ctl("plugin", "unload", str(fixture))
+
+
+def laptop_controls(s, wait_for):
+    s.close()
+    options = ("input:repeat_delay", "input:repeat_rate", "input:touchpad:scroll_factor")
+    saved = {key: json.loads(s.ctl("-j", "getoption", key)) for key in options}
+    secondary = layer = None
+
+    def tap(code):
+        s.key(code, 1)
+        s.key(code, 0)
+
+    try:
+        s.ctl("keyword", "input:repeat_delay", "100")
+        s.ctl("keyword", "input:repeat_rate", "12")
+        s.ctl("keyword", "input:touchpad:scroll_factor", ".4")
+        s.ctl("keyword", "plugin:hyprspace:overview:wheel_zoom", "true")
+        s.setup("dwindle", 0, 1)
+        primary_destinations(s)
+        opened(s, wait_for)
+        native = s.geometry()
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        s.move(center(tile(s, 11)))
+        fitted = tile(s, 11)
+        s.scroll(delta=-3.75, discrete=0, source=1)
+        inspection(s, wait_for, 1.15 ** .1)
+        assert s.geometry() == native
+        s.scroll(delta=3.75, discrete=0, source=1)
+        inspection(s, wait_for, 1)
+        s.ctl("keyword", "input:touchpad:scroll_factor", "-.4")
+        s.scroll(delta=3.75, discrete=0, source=1)
+        inspection(s, wait_for, 1.15 ** .1)
+        s.scroll(delta=-3.75, discrete=0, source=1)
+        inspection(s, wait_for, 1)
+        s.check("fractional two-finger inspection honors the native device factor without moving windows")
+        s.ctl("keyword", "input:touchpad:scroll_factor", "1")
+
+        # Baseline Space remains captured, even though no camera can be panned.
+        s.key(57, 1)
+        assert s.status()["live"] and not s.status()["zoom"]["panning"]
+        s.key(57, 0)
+        s.move(center(tile(s, 12)))
+        pointer = s.data("cursorpos")
+        tap(13)  # '=' zooms the selected viewport even on another output.
+        inspection(s, wait_for, 1.15)
+        assert s.status()["target"]["workspace"] == 11
+        assert s.data("cursorpos") == pointer
+        s.key(SHIFT, 1)
+        tap(13)  # '+'
+        s.key(SHIFT, 0)
+        inspection(s, wait_for, 1.15 ** 2)
+        tap(78)  # KP_Add
+        inspection(s, wait_for, 1.15 ** 3)
+        tap(74)  # KP_Subtract
+        tap(12)  # '-'
+        inspection(s, wait_for, 1.15)
+        s.key(13, 1)
+        time.sleep(.4)
+        s.key(13, 0)
+        enlarged = inspection(s, wait_for)
+        assert enlarged["extra_factor"] > 1.15 ** 3, enlarged
+        assert s.geometry() == native
+        s.check("centered +/− aliases and native-delay key repeat work without pointer motion or selection changes")
+        marker = s.root / "modified-inspection-key"
+        s.ctl("keyword", "bind", f"CTRL,equal,exec,touch {marker}")
+        factor = enlarged["extra_factor"]
+        s.key(29, 1)
+        tap(13)
+        s.key(29, 0)
+        wait_for(marker.exists)
+        assert abs(s.status()["zoom"]["extra_factor"] - factor) < .0001
+        s.ctl("keyword", "unbind", "CTRL,equal")
+        s.check("modified inspection keys retain native binding routing while Z is held")
+
+        # Zoom to the bound and pan from a centered camera.
+        for _ in range(32):
+            tap(13)
+        inspection(s, wait_for, 4)
+        before = tile(s, 11)
+        s.key(SHIFT, 1)
+        tap(106)
+        after = tile(s, 11)
+        assert abs(after["x"] - before["x"] + 40) < .1, (before, after)
+        tap(105)
+        assert abs(tile(s, 11)["x"] - before["x"]) < .1
+        tap(108)
+        assert abs(tile(s, 11)["y"] - before["y"] + 40) < .1
+        tap(103)
+        s.key(106, 1)
+        time.sleep(.4)
+        s.key(106, 0)
+        s.key(SHIFT, 0)
+        assert tile(s, 11)["x"] < before["x"] - 80
+        assert s.status()["zoom"]["workspace"] == 11
+        assert s.geometry() == native
+        s.check("Shift+arrows pan 40 logical pixels toward the viewport direction and repeat without browsing workspaces")
+
+        s.move(center(fitted))
+        s.key(57, 1)
+        wait_for(lambda: s.status()["zoom"]["panning"])
+        overview_cursor(s, wait_for, "grabbing")
+        before = tile(s, 11)
+        s.motion(23, 17)
+        after = tile(s, 11)
+        assert abs(after["x"] - before["x"] - 23) < .1
+        assert abs(after["y"] - before["y"] - 17) < .1
+        tap(12)
+        s.scroll(delta=15, source=1)
+        assert s.status()["zoom"]["extra_factor"] == 4
+        s.key(57, 0)
+        assert not s.status()["zoom"]["panning"]
+        assert same_geometry({0: after}, {0: tile(s, 11)})
+        assert s.geometry() == native
+        s.check("Z+Space and one-finger motion grab the preview, pause magnification, and retain its camera on release")
+
+        s.key(13, 1)
+        s.key(57, 1)
+        s.close()
+        s.key(Z, 0)
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        time.sleep(.3)
+        s.key(13, 1)  # Stale repeats must not act on the new hold.
+        assert s.status()["zoom"]["extra_factor"] == 1
+        s.key(13, 0)
+        s.key(57, 0)
+        assert s.status()["live"] and not s.status()["zoom"]["panning"]
+        s.check("closing cancels key repeat and Space grabs; stale presses and releases cannot affect a new Z hold")
+
+        s.ctl("keyword", "plugin:hyprspace:overview:wheel_zoom", "false")
+        tap(13)
+        s.key(SHIFT, 1)
+        tap(106)
+        s.key(SHIFT, 0)
+        tap(57)
+        assert s.status()["live"] and s.status()["zoom"]["extra_factor"] == 1
+        s.ctl("keyword", "plugin:hyprspace:overview:wheel_zoom", "true")
+        tap(TAB)
+        assert s.status()["zoom"]["workspace"] == 21
+        tap(105)
+        assert s.status()["zoom"]["workspace"] == 11
+        tap(13)
+        inspection(s, wait_for, 1.15)
+        s.move(center(tile(s, 11)))
+
+        # Losing a keyboard's Space lease must leave the other keyboard's Z held.
+        secondary = s.spawn([str(s.artifact("test-pointer"))], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        assert reply(secondary) == "ready"
+        secondary.stdin.write("key 57 1\n")
+        secondary.stdin.flush()
+        assert reply(secondary) == "ok"
+        wait_for(lambda: s.status()["zoom"]["panning"])
+        secondary.terminate()
+        secondary.wait(timeout=3)
+        secondary = None
+        wait_for(lambda: not s.status()["zoom"]["pan_held"])
+        assert s.status()["zoom"]["held"]
+        s.check("wheel_zoom disables all extra controls, arrows and Tab keep browsing, and keyboard removal drops only its Space lease")
+
+        s.key(57, 1)
+        wait_for(lambda: s.status()["zoom"]["panning"])
+        layer = s.spawn(["python3", str(s.artifact("layer.py")), str(s.root / "laptop-foreground")])
+        wait_for(lambda: not s.status()["keyboard_owned"])
+        released(s, wait_for)
+        assert not s.status()["zoom"]["pan_held"]
+        layer.terminate()
+        layer.wait(timeout=3)
+        layer = None
+        wait_for(lambda: s.status()["keyboard_owned"])
+        s.key(57, 0)
+        s.key(Z, 0)
+        assert s.status()["live"] and not s.status()["zoom"]["held"]
+        tap(57)
+        wait_for(lambda: not s.status()["views"])
+        s.check("foreground handoff cancels a Space grab and consumes its late release; standalone Space still commits")
+    finally:
+        for process in (secondary, layer):
+            if process is not None and process.poll() is None:
+                process.terminate()
+                process.wait(timeout=3)
+        for code in (Z, SHIFT, 29, 13, 12, 57, 105, 106, 103, 108):
+            s.key(code, 0)
+        s.ctl("keyword", "unbind", "CTRL,equal")
+        s.close()
+        for key, value in saved.items():
+            s.ctl("keyword", key, str(value.get("float", value.get("int"))))
+
+
+def laptop_teardown(s, wait_for):
+    s.close()
+    s.setup("dwindle", 0, 1)
+    primary_destinations(s)
+
+    def magnified():
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        for _ in range(3):
+            s.key(13, 1)
+            s.key(13, 0)
+        inspection(s, wait_for, 1.15 ** 3)
+        s.move(center(tile(s, 11)))
+        s.key(57, 1)
+        wait_for(lambda: s.status()["zoom"]["panning"])
+
+    magnified()
+    locker = s.spawn([str(s.artifact("test-lock"))], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
+
+    def request(command):
+        locker.stdin.write(command.encode() + b"\n")
+        locker.stdin.flush()
+        return json.loads(reply(locker))
+
+    try:
+        assert reply(locker) == "ready"
+        request("lock")
+        wait_for(lambda: request("counts")["locked"])
+        wait_for(lambda: not s.status()["views"])
+        state = s.status()
+        assert not state["zoom"]["held"] and not state["zoom"]["pan_held"]
+        assert not state["keyboard_owned"] and not state["cursor_owned"]
+        before = request("counts")["keys"]
+        s.key(57, 0)
+        s.key(Z, 0)
+        assert request("counts")["keys"] == before
+        s.key(13, 1)
+        s.key(13, 0)
+        wait_for(lambda: request("counts")["keys"] == before + 2)
+        request("unlock")
+        wait_for(lambda: not request("counts")["locked"])
+        s.check("locking cancels a Space grab, consumes captured key releases, and restores fresh native keys to the locker")
+    finally:
+        s.key(57, 0)
+        s.key(Z, 0)
+        if locker.poll() is None:
+            if request("counts")["locked"]:
+                request("unlock")
+            locker.terminate()
+            locker.wait(timeout=3)
+
+    magnified()
+    s.key(13, 1)  # Arm a repeat timer while the grip pauses its action.
+    s.ctl("plugin", "unload", str(s.plugin))
+    for code in (13, 57, Z):
+        s.key(code, 0)
+    time.sleep(.2)
+    assert s.compositor.poll() is None
+    s.ctl("plugin", "load", str(s.plugin))
+    s.ctl("reload")
+    state = s.status()
+    assert not state["live"] and not state["views"] and not state["zoom"]["held"]
+    assert not state["zoom"]["pan_held"] and not state["zoom"]["panning"]
+    assert state["resources"]["captures"]["bytes"] == state["resources"]["textures"]["bytes"] == 0
+    magnified()
+    s.key(Z, 0)
+    released(s, wait_for)
+    assert not s.status()["zoom"]["pan_held"]
+    s.key(57, 0)
+    assert s.status()["live"]
+    s.close()
+    s.check("unload cancels keyboard grips and repeat callbacks; reload and Z release retain clean key ownership")
+
+
 def lifecycle(s, wait_for):
     defaults = ("zoom_key", "padding", "workspace_labels", "include_special", "wheel_zoom")
     saved = {
@@ -322,11 +645,13 @@ def lifecycle(s, wait_for):
     secondary = None
     layer = None
     try:
+        cursor_visibility(s, wait_for)
         s.ctl("keyword", "animations:enabled", "false")
         s.ctl("keyword", "plugin:hyprspace:follow_mouse", "true")
         s.ctl("keyword", "plugin:hyprspace:overview:zoom_key", "z")
         s.ctl("keyword", "plugin:hyprspace:overview:wheel_zoom", "true")
         s.ctl("keyword", "plugin:hyprspace:overview:include_special", "false")
+        laptop_controls(s, wait_for)
         s.setup("dwindle", 0, 1)
         for workspace in range(21, 30):
             s.ctl("keyword", "workspace", f"{workspace},monitor:{s.names[0]},persistent:true,layout:dwindle")
@@ -520,6 +845,7 @@ def lifecycle(s, wait_for):
         pan_input_lifecycle(s, wait_for)
         scrolling(s, wait_for)
         transformed(s, wait_for)
+        laptop_teardown(s, wait_for)
         wheel_teardown(s, wait_for)
     finally:
         for process in (secondary, layer):
@@ -1870,10 +2196,12 @@ def scrolling(s, wait_for):
     wheel(s, 32)
     inspection(s, wait_for, 1)
     assert same_geometry({(s.names[0], 11): fitted}, {(s.names[0], 11): tile(s, 11)})
-    s.scroll(delta=15, discrete=0, source=1)
-    wait_for(lambda: s.geometry() != before)
-    assert s.status()["zoom"]["extra_factor"] == 1
+    s.scroll(delta=-15, discrete=0, source=1)
+    inspection(s, wait_for, 1.15)
+    assert s.geometry() == before
     assert s.status()["zoom"]["held"] and s.status()["zoom"]["workspace"] == 11
+    s.scroll(delta=15, discrete=0, source=1)
+    inspection(s, wait_for, 1)
     for axis, source in ((1, 0), (0, 3)):
         before = s.geometry()
         sign = -1 if source == 3 else 1
@@ -1885,10 +2213,13 @@ def scrolling(s, wait_for):
     s.scroll()
     wait_for(lambda: s.geometry() != before)
     assert s.status()["zoom"]["extra_factor"] == 1
+    before = s.geometry()
+    s.scroll(delta=15, discrete=0, source=1)
+    wait_for(lambda: s.geometry() != before)
     s.ctl("keyword", "plugin:hyprspace:overview:wheel_zoom", "true")
     s.key(Z, 0)
     released(s, wait_for)
-    s.check("held wheel zoom and right-button pan leave the native scrolling tape stable; finger, horizontal, tilt and opted-out input retain tape panning")
+    s.check("held wheel/finger zoom and panning leave the native scrolling tape stable; horizontal, tilt and opted-out input retain tape panning")
     s.close()
 
     from regressions import arrow

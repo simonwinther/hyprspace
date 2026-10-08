@@ -36,6 +36,7 @@ hl.monitor({{ output = "WAYLAND-3", mode = "960x600@60", position = "2200x100", 
 '''
             if plugin:
                 text += f"hl.plugin.load({json.dumps(str(self.plugin))})\n"
+                text += 'hl.bind("SUPER + A", function() return hl.plugin.hyprspace.overview() end)\n'
             return text
 
         def reload_count(self):
@@ -190,21 +191,58 @@ def lifecycle(s, wait_for):
         evidence.setdefault("reloads", []).append({"error": error, "configerrors": s.run("hyprctl", "configerrors"), "count": s.reload_count()})
         save()
 
+    def empty_workspace(phase):
+        case = {"phase": phase, "command": "emptyworkspace", "before": prepare(True)}
+        evidence["cases"].append(case)
+        save()
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.emptyworkspace("bad"); assert(not result.ok and result.error:find("arguments"))')
+        assert s.status()["target"]["workspace"] == 12
+        s.ctl("eval", "local result = hl.plugin.hyprspace.emptyworkspace(); assert(result.ok, result.error)")
+        target = s.status()["target"]
+        workspace = next(workspace for workspace in s.data("workspaces") if workspace["id"] == target["workspace"])
+        assert workspace["monitor"] == s.names[1], workspace
+        assert target["window"] == "0x0" and s.status()["live"], target
+        assert s.data("activeworkspace")["id"] == case["before"]["activeworkspace"]["id"]
+        s.ctl("eval", "local result = hl.plugin.hyprspace.emptyworkspace(); assert(result.ok, result.error)")
+        assert s.status()["target"]["workspace"] == target["workspace"]
+        case.update(target=target, workspace=workspace, after=state())
+        s.close()
+        desktops = lambda monitors: {m["name"]: (m["activeWorkspace"]["id"], m["specialWorkspace"]["id"]) for m in monitors}
+        assert desktops(s.data("monitors")) == desktops(case["before"]["monitors"])
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.emptyworkspace(); assert(not result.ok and result.error:find("overview"))')
+        case["passed"] = True
+        save()
+        s.check(f"Lua {phase} emptyworkspace uses the pointer output without changing the desktop and rejects inactive or argument calls")
+
+    def toggle_selection(phase):
+        prepare(True)
+        s.run("wtype", "-M", "logo", "-k", "a", "-m", "logo")
+        wait_for(lambda: not s.status()["views"])
+        assert s.data("activeworkspace")["id"] == 12
+        assert s.data("activewindow")["address"] == s.windows()["hs-B"]["address"]
+        s.check(f"Lua {phase} Super+A commits the hovered workspace through the overview dispatcher")
+
     try:
         for phase in ("startup", "reload-1", "reload-2"):
             if phase != "startup":
                 reload()
             route(phase, "workspace")
             route(phase, "exec")
+            empty_workspace(phase)
+            toggle_selection(phase)
         # Invalid configurations must not poison the next valid Lua state.
         reload("local invalid = )\n", error="syntax")
         reload()
         route("syntax-recovery", "workspace")
         route("syntax-recovery", "exec")
+        empty_workspace("syntax-recovery")
+        toggle_selection("syntax-recovery")
         reload('error("hyprspace-test-runtime")\n', error="runtime")
         reload()
         route("runtime-recovery", "workspace")
         route("runtime-recovery", "exec")
+        empty_workspace("runtime-recovery")
+        toggle_selection("runtime-recovery")
         s.close()
         count = s.reload_count()
         s.config.write_text(s.config_text(plugin=False))
