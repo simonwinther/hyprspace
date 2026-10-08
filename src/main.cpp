@@ -701,6 +701,7 @@ namespace {
             .wheel      = event.source == WL_POINTER_AXIS_SOURCE_WHEEL || event.source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT,
             .horizontal = event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL,
             .wheelTilt  = event.source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT,
+            .finger     = event.source == WL_POINTER_AXIS_SOURCE_FINGER,
         };
 
         if (switcherLive()) {
@@ -715,6 +716,7 @@ namespace {
 
     void onMouseButton(IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
         constexpr uint32_t RMB = 0x111;
+        constexpr uint32_t MMB = 0x112;
         reconcilePanButton();
         const bool PRESSED      = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
         const bool pointerOwned = ownsPointerInput();
@@ -735,7 +737,7 @@ namespace {
         const bool OWNS_INPUT = pointerOwned && !(panPress && !captured && g_pInputManager->hasHeldButtons());
 
         if (!PRESSED && event.button == RMB)
-            session().cancelPan();
+            session().releaseMousePan();
 
         if (!g_mouseButtons.consume(event.button, PRESSED, OWNS_INPUT))
             return;
@@ -750,8 +752,8 @@ namespace {
             return;
         if (panPress && !g_panConnectionsValid)
             return;
-        // An intact press lease cannot become another grip after cancellation.
-        if (PRESSED && event.button == RMB && captured)
+        // A captured press cannot begin another gesture before its release.
+        if (PRESSED && (event.button == RMB || event.button == MMB) && captured)
             return;
         if (const auto monitor = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run())
             diagnostics::input(monitor->m_id);
@@ -915,8 +917,18 @@ namespace {
             return {.success = false, .error = "hyprspace: session is locked"};
 
         if (overviewLive()) {
-            if (args != "on")
-                closeOverviews();
+            if (args != "on") {
+                // Snapshot the destination's displayed camera before input
+                // teardown releases held zoom or a pan grip.
+                if (!session().drag.active() && session().selection.command()) {
+                    if (auto* destination = session().keyboardView())
+                        destination->close(true);
+                    for (const auto& view : session().views)
+                        view->close(false);
+                    session().stopInput();
+                } else
+                    closeOverviews();
+            }
             return {.success = true};
         }
 
@@ -981,6 +993,14 @@ namespace {
         // key), there will never be an Alt release to commit on. Fall back to
         // committing on Enter/click, which onKey already handles.
         return {.success = true};
+    }
+
+    SDispatchResult dispatchEmptyWorkspace(std::string args) {
+        if (!args.empty())
+            return {.success = false, .error = "hyprspace: emptyworkspace takes no arguments"};
+        if (!overlaysAllowed())
+            return {.success = false, .error = "hyprspace: session is locked"};
+        return session().emptyWorkspace();
     }
 
     SDispatchResult dispatchLayoutCycle(std::string) {
@@ -1064,11 +1084,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:switch", dispatchSwitch);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:close", dispatchClose);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:layoutcycle", dispatchLayoutCycle);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:emptyworkspace", dispatchEmptyWorkspace);
 
     if (Config::mgr()->type() == Config::CONFIG_LUA) {
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "overview", [](lua_State* state) { return dispatchFromLua(state, dispatchOverview); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "switch", [](lua_State* state) { return dispatchFromLua(state, dispatchSwitch); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "layoutcycle", [](lua_State* state) { return dispatchFromLua(state, dispatchLayoutCycle); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "emptyworkspace", [](lua_State* state) { return dispatchFromLua(state, dispatchEmptyWorkspace); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "close", [](lua_State* state) { return dispatchFromLua(state, dispatchClose); });
     }
 

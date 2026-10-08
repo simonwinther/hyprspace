@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.0](https://github.com/simonwinther/hyprspace/compare/v1.3.1...v1.4.0) (2026-10-08)
+
+- Add empty workspace shortcuts and simplify the button.
+- Add touchpad and keyboard zoom and panning while holding Z.
+- Keep the cursor visible during zoom and fix Super+A transitions.
+- Bound captures and fix launch placement and drag transitions.
+
+Supports Hyprland 0.56.2 (`efb50993780079460b0cbed1363e2166a2de1d9f`).
+Host and private compositor tests pass.
+
 ## [1.3.1](https://github.com/simonwinther/hyprspace/compare/v1.3.0...v1.3.1) (2026-10-04)
 
 

@@ -57,7 +57,16 @@ static void testZoomInput() {
     const SOverviewCamera fit{3, -450, -100}, pending{1.2, -20, 100};
     const SBoxF           cell{150, 100, 300, 200};
     const auto            fittedCell = fit.apply(cell), pendingCell = pending.apply(cell);
-    CInspectionZoom       early;
+    section("inspection input: finger deltas retain fractions and keyboard steps share the bounded lens");
+    CInspectionZoom fingerZoom, keyboardZoom;
+    CHECK(fingerZoom.scroll({.delta = -3.75, .value120 = -9999, .wheel = false, .finger = true}, 0.4, footprint, 400, 300, 1));
+    CHECK_NEAR(fingerZoom.goal().scale, std::pow(1.15, 0.1), 1e-9);
+    CHECK(keyboardZoom.zoom(-1, 1, footprint, 400, 300, 1));
+    CHECK_NEAR(keyboardZoom.goal().scale, 1.15, 1e-9);
+    CHECK(!fingerZoom.scroll({.delta = -15, .wheel = false, .horizontal = true, .finger = true}, 1, footprint, 400, 300, 1));
+    CHECK(!keyboardZoom.zoom(NAN, 1, footprint, 400, 300, 1));
+
+    CInspectionZoom early;
     CHECK(early.beginFitTransition(pending, fit));
     const auto takeover = early.current(0);
     CHECK_NEAR(takeover.scale, 0.4, 1e-12);

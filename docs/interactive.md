@@ -6,6 +6,16 @@ mapped from the visible preview. Empty active and configured persistent
 workspaces are included. Monitor offsets, scale, rotation, reserved areas and
 separated fullscreen previews are part of that mapping.
 
+Unmodified **middle-click**, **N**, or the per-output **+ Empty workspace** control
+selects an empty normal workspace on the pointer's output, reusing a prepared or active
+empty workspace before another local empty workspace or a free positive ID.
+Selection keeps the overview open without changing native workspace or focus. The session holds
+prepared workspaces until dismissal and includes them in collection. Enter,
+launching and committed drops establish the native destination normally.
+Empty named normal workspaces can be reused; new workspaces receive numeric IDs.
+Special, remote and incompatible monitor-bound workspaces are excluded;
+unsupported conditional monitor assignments prevent fresh allocation.
+
 Pointer motion selects a destination. Over a foreground layer or a gap, commands
 retain the last valid destination. Dropping in a gap cancels the move. Keyboard
 focus navigation selects its resulting window until pointer motion resumes.
@@ -23,7 +33,7 @@ the native layer renderer above the overview. A scoped native hit-test adapter
 promotes those panels during pointer routing, then restores the compositor's layer
 lists and fullscreen policy. Popup and grab handling stays native.
 
-Unmodified navigation and Shift+Tab stay with the overview. Other keys pass once
+Unmodified navigation, N and Shift+Tab stay with the overview. Other keys pass once
 through the real keybinding matcher. Device maps, modifiers, repeats, releases and
 submaps stay under native control. The chosen workspace/window is established
 before running an action; native focus warps are suppressed during that action.
@@ -34,20 +44,49 @@ modifier notifications and focus-enter delivery. IME modifier forwarding is also
 suppressed during ownership; native focus and modifiers resume on dismissal,
 handoff or unload, respecting lock and grab restrictions.
 
+`overview:empty_workspace_key` accepts an XKB key name or an empty value to
+disable the shortcut. Zoom retains precedence when both configured keys match.
+The empty-workspace action has a separate first-press route, targeting the
+pointer's monitor independently of keyboard selection. Its captured repeats and
+release stay consumed across remapping, reload, dismissal and foreground handoff.
+Modified keys and first presses outside overview keyboard ownership retain native
+routing. `hyprspace:emptyworkspace` and `hl.plugin.hyprspace.emptyworkspace()`
+expose the same action, require an open overview and accept no arguments.
+
+Unmodified middle-click prepares the same destination while the overview owns
+pointer input on a covered output. It does not move the cursor or change the
+numeric workspace order. Monitor gaps, uncovered outputs, active drags, pending
+resizes and panning do not prepare a workspace. A captured middle-button press
+acts once until release, including across dismissal and reopening; foreground
+and panel clicks retain native routing.
+
 Wheel and two-finger input over a scrolling workspace move the native tape within
 its bounds. Wheel fractions remain proportional; finger deltas map into logical
 preview distance. Scroll factors come from the device that emitted the event.
-While the zoom key is held, vertical wheel rotation instead magnifies the fitted
+While the zoom key is held, vertical wheel rotation or finger scrolling magnifies the fitted
 workspace around the pointer, bounded to 1–4 times its normal fit. Wheel input
-also acts during opening and the initial zoom transition. Touchpad,
-horizontal-wheel and wheel-tilt panning retain their existing behavior;
-`overview:wheel_zoom = false` restores vertical-wheel panning during held zoom.
-While Z is held, right-button dragging pans magnified preview content within
+also acts during opening and the initial zoom transition. Horizontal-wheel and
+wheel-tilt panning retain their existing behavior. `overview:wheel_zoom = false`
+disables all extra magnification and panning controls and restores native scrolling.
+While Z is held, +/− (including =, Shift+plus and keypad add/subtract) changes
+the centered lens by 1.15 per step. Shift+arrows pans the viewport toward that
+direction by 40 logical pixels. Both repeat at the emitting keyboard's delay and
+rate. Unmodified arrows and Tab keep workspace navigation.
+Space while Z is held captures a keyboard grip for ordinary pointer motion,
+including one-finger touchpad movement. It is consumed at the baseline fit too.
+Grip leases and repeated keys are tied to their keyboard and zoom hold; release,
+device removal, input handoff, closing, locking and unload cancel their actions.
+Late releases and repeats remain consumed and cannot affect a newer hold.
+Right-button dragging also pans magnified preview content within
 its fitted bounds. Open and closed hand cursors distinguish available panning
 from an active grab. Releasing the button retains the view; releasing Z restores
 the grid. The grab owns mouse actions until release or cancellation, and leaves
 native window movement and the scrolling tape untouched. Super+right-button
 resize remains available outside the grab.
+The overview toggle commits the command selection using the same displayed
+destination close camera as Enter. It snapshots that camera before cancelling
+held inputs and closes every output together. Explicit off, close and Escape
+retain dismissal behavior; a toggle during a provisional window drag dismisses.
 Edge arrows reveal the closest hidden column using native fit/center behavior.
 Page Up/Page Down select the previous/next column in screen order, keeping that
 window selected until the pointer moves. Enter focuses it and closes. Workspace
@@ -74,6 +113,13 @@ Super+left and Super+right create provisional move/resize previews. The session
 owns one drag across all outputs, including preview portions crossing output
 edges. The destination tile and insertion point are highlighted. Collection uses
 stable workspace identities while tile positions remain fixed during a drag.
+
+The empty-workspace control is a separate drop target. Hovering it changes only
+feedback; a valid move release resolves the destination and uses the same native
+placement lifecycle. Cancellation allocates nothing. The control hides during
+ordinary held zoom/panning but remains available for move drags started from
+zoom. Preparation and successful drops return to the grid; resize and
+pending-resize gestures do not prepare a destination.
 
 A valid release replays pickup and drop in Hyprland's native drag controller at
 mapped desktop coordinates. Layout algorithms, floating pickup offsets, grouping
@@ -204,6 +250,8 @@ scaled outputs, cancellation and animated closing. These run in the full suite.
 repeated reloads, invalid-configuration recovery and plugin unloading. It uses its
 own private Lua compositor, including in the full suite, and asserts that native
 focus differs from the hovered overview target before each routed command.
+`--only empty_workspaces` checks empty-destination reuse/allocation, per-output
+controls, keyboard ownership and committed/cancelled drops.
 The repeat test measures a synchronous native resize, so completion
 of an already launched child process cannot be mistaken for a stuck repeat timer.
 Drag fixtures explicitly hold their virtual keyboard modifier until mouse release;

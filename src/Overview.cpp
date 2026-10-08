@@ -35,10 +35,17 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <optional>
 #include <ranges>
 
 namespace hyprspace {
+
+    namespace {
+        constexpr double EMPTY_WORKSPACE_TEXT_SCALE = 0.9;
+        constexpr double EMPTY_WORKSPACE_KEY_SCALE  = 0.75;
+    } // namespace
 
     COverview::COverview(PHLMONITOR monitor) : m_monitor(monitor) {
         m_originalFocus     = Desktop::focusState()->window();
@@ -116,7 +123,7 @@ namespace hyprspace {
                 continue;
             const auto rule = Config::workspaceRuleMgr()->getWorkspaceRuleFor(ws);
             if (ws != MONITOR->m_activeWorkspace && ws != MONITOR->m_activeSpecialWorkspace && ws->getWindowCount() == 0 &&
-                !(rule && rule->m_isPersistent.value_or(false)))
+                !(rule && rule->m_isPersistent.value_or(false)) && !session().preparedWorkspace(ws))
                 continue;
             SEntry entry;
             entry.workspaceId   = ws->m_id;
@@ -268,19 +275,23 @@ namespace hyprspace {
                 input.push_back(STileInput{.key = i, .workspaceId = m_entries[i].workspaceId});
 
             SLayoutParams params;
-            params.screenW    = m_usable.w;
-            params.screenH    = m_usable.h;
-            params.padding    = key.padding;
-            params.gap        = key.gap;
-            params.aspect     = m_usable.h > 0 ? m_usable.w / m_usable.h : 16.0 / 9.0;
-            params.labelSpace = key.labels ? 34.0 : 0.0;
+            params.screenW = m_usable.w;
+            // The toolbar fits inside the usual outer padding. Reserve only
+            // the missing space for tighter grids, retaining their aspect and
+            // the established single-workspace zoom fit at default settings.
+            const double toolbar = std::max(0.0, workspaceToolbarHeight() - static_cast<double>(key.padding));
+            params.screenH       = m_usable.h - toolbar;
+            params.padding       = key.padding;
+            params.gap           = key.gap;
+            params.aspect        = m_usable.h > 0 ? m_usable.w / m_usable.h : 16.0 / 9.0;
+            params.labelSpace    = key.labels ? 34.0 : 0.0;
 
             ++m_layoutCounters.gridLayouts;
             auto result = layout(input, params);
             m_tiles     = std::move(result.tiles);
             for (auto& tile : m_tiles) {
                 tile.box.x += m_usable.x;
-                tile.box.y += m_usable.y;
+                tile.box.y += m_usable.y + toolbar;
             }
             m_tileLayoutKey = key;
         }
@@ -479,15 +490,28 @@ namespace hyprspace {
     }
 
     bool COverview::inspectScroll(const SScrollInput& event, const Vector2D& globalPos) {
+        if ((!event.wheel && !event.finger) || event.horizontal || event.wheelTilt || !std::isfinite(event.delta))
+            return false;
+        const double detents = event.wheel && event.value120 != 0 ? event.value120 / 120.0 : event.delta / 15.0;
+        return inspectZoom(detents, hooks::scrollFactor(), globalPos);
+    }
+
+    void COverview::panInspectionKey(const Vector2D& delta) {
+        const auto mon = monitor();
+        if (mon && beginInspectionPan(mon->m_position + Vector2D{m_usable.cx(), m_usable.cy()}))
+            panInspection(delta);
+    }
+
+    bool COverview::inspectZoom(double detents, double factor, std::optional<Vector2D> globalPos) {
         if (!inspectionReady())
             return false;
         const auto mon = monitor();
-        if (!mon || !SBoxF{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y}.contains(globalPos.x, globalPos.y))
+        if (!mon || (globalPos && !SBoxF{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y}.contains(globalPos->x, globalPos->y)))
             return false;
-        const auto local     = globalPos - mon->m_position;
+        const auto local     = globalPos ? *globalPos - mon->m_position : Vector2D{m_usable.cx(), m_usable.cy()};
         const auto footprint = m_zoomFit->camera.apply(m_zoomFit->cell);
         const auto displayed = workspaceCell(m_zoomFit->workspace);
-        if (!m_usable.contains(local.x, local.y) || !displayed.contains(local.x, local.y))
+        if (!m_usable.contains(local.x, local.y) || (globalPos && !displayed.contains(local.x, local.y)))
             return false;
         m_scroll.reset();
         auto       prospective = m_inspection;
@@ -498,7 +522,7 @@ namespace hyprspace {
                 return false;
             progress = 0;
         }
-        if (!prospective.scroll(event, hooks::scrollFactor(), footprint, local.x, local.y, progress, displayed))
+        if (!prospective.zoom(detents, factor, footprint, local.x, local.y, progress, displayed))
             return false;
         if (fitting) {
             // Rebase before overview progress, preserving every displayed cell
@@ -983,6 +1007,8 @@ namespace hyprspace {
         const auto mon = monitor();
         if (!mon || !SBoxF{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y}.contains(globalPos.x, globalPos.y))
             return std::nullopt;
+        if (emptyWorkspaceButtonHit(globalPos))
+            return std::nullopt;
         const auto local = globalPos - mon->m_position;
         const int  index = tileAtLocal(local);
         if (index < 0)
@@ -1106,6 +1132,80 @@ namespace hyprspace {
         }
     }
 
+    bool COverview::refreshPreparedWorkspace(PHLWORKSPACE workspace, PHLWINDOW window) {
+        if (!valid(workspace) || workspace->m_monitor != m_monitor || m_closing)
+            return false;
+        refreshWindows();
+        selectTarget({.workspace = {workspace->m_id, workspace->m_name}, .monitor = m_monitor, .window = window});
+        const auto target = selectedTarget();
+        if (!target || target->workspace != SWorkspaceIdentity{workspace->m_id, workspace->m_name})
+            return false;
+        session().selection.keyboard(*target);
+        damage();
+        return true;
+    }
+
+    double COverview::workspaceToolbarHeight() const {
+        return std::min(52.0, m_usable.h / 4.0);
+    }
+
+    const COverview::SEmptyWorkspaceButtonText& COverview::emptyWorkspaceButtonText(double scale) const {
+        const auto  font  = config::overviewFont();
+        const auto  label = m_emptyWorkspaceError.empty() ? "Empty workspace" : "Workspace unavailable";
+        std::string keyLabel;
+        const auto  key = config::overviewEmptyWorkspaceKey();
+        if (key != XKB_KEY_NoSymbol && m_emptyWorkspaceError.empty()) {
+            char name[128]{};
+            if (xkb_keysym_get_name(key, name, sizeof(name)) > 0) {
+                keyLabel = name;
+                if (keyLabel.size() == 1)
+                    keyLabel[0] = std::toupper(static_cast<unsigned char>(keyLabel[0]));
+            }
+        }
+        if (!m_emptyWorkspaceButtonText || m_emptyWorkspaceButtonText->font != font || m_emptyWorkspaceButtonText->label != label ||
+            m_emptyWorkspaceButtonText->key != keyLabel || m_emptyWorkspaceButtonText->scale != scale) {
+            // Input and rendering share measured bounds; only remeasure when
+            // the font, shortcut, error state or output scale changes.
+            int width = 0, height = 0;
+            measureText(label, font, width, height, scale * EMPTY_WORKSPACE_TEXT_SCALE);
+            const double titleWidth = std::ceil(width / scale);
+            double       keyWidth   = 0;
+            if (!keyLabel.empty()) {
+                measureText(keyLabel, font, width, height, scale * EMPTY_WORKSPACE_KEY_SCALE);
+                keyWidth = std::max(20.0, std::min(std::ceil(width / scale), 64.0 * EMPTY_WORKSPACE_KEY_SCALE) + 10);
+            }
+            m_emptyWorkspaceButtonText = SEmptyWorkspaceButtonText{font, label, std::move(keyLabel), scale, titleWidth, keyWidth};
+        }
+        return *m_emptyWorkspaceButtonText;
+    }
+
+    std::optional<SBoxF> COverview::emptyWorkspaceButton() const {
+        const auto  mon  = monitor();
+        const auto& drag = session().drag;
+        if (!mon || m_closing || session().pendingResize || drag.mode == SOverviewDrag::RESIZE || (session().zoomLocked() && drag.mode != SOverviewDrag::MOVE))
+            return std::nullopt;
+        const double height       = workspaceToolbarHeight();
+        const double inset        = std::min(8.0, height / 4.0);
+        const double margin       = std::min(16.0, m_usable.w / 8.0);
+        const auto&  text         = emptyWorkspaceButtonText(mon->m_scale);
+        const double titleInset   = m_emptyWorkspaceError.empty() ? 30 : 12;
+        const double width        = std::min(titleInset + text.titleWidth + (text.keyWidth > 0 ? text.keyWidth + 12 : 0) + 12, m_usable.w - margin * 2.0);
+        const double buttonHeight = std::min(32.0, height - inset * 2.0);
+        if (width < 24 || buttonHeight < 16)
+            return std::nullopt;
+        return SBoxF{mon->m_position.x + m_usable.x + m_usable.w - margin - width, mon->m_position.y + m_usable.y + inset, width, buttonHeight};
+    }
+
+    bool COverview::emptyWorkspaceButtonHit(const Vector2D& globalPos) const {
+        const auto box = emptyWorkspaceButton();
+        return box && box->contains(globalPos.x, globalPos.y);
+    }
+
+    void COverview::setEmptyWorkspaceError(std::string error) {
+        m_emptyWorkspaceError = std::move(error);
+        damage();
+    }
+
     void COverview::onMouseMove(const Vector2D& globalPos) {
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR)
@@ -1113,8 +1213,9 @@ namespace hyprspace {
 
         const auto LOCAL = globalPos - MONITOR->m_position;
 
-        const int  IDX    = tileAtLocal(LOCAL);
-        const auto WINDOW = windowAtLocal(LOCAL);
+        const bool EMPTY_BUTTON = emptyWorkspaceButtonHit(globalPos);
+        const int  IDX          = EMPTY_BUTTON ? -1 : tileAtLocal(LOCAL);
+        const auto WINDOW       = EMPTY_BUTTON ? nullptr : windowAtLocal(LOCAL);
 
         if (IDX == m_hovered && WINDOW == m_hoveredWindow.lock())
             return;
@@ -1136,7 +1237,9 @@ namespace hyprspace {
         const auto mon = monitor();
         if (!mon)
             return;
-        const auto pos   = g_pInputManager->getMouseCoordsInternal();
+        const auto pos = g_pInputManager->getMouseCoordsInternal();
+        if (emptyWorkspaceButtonHit(pos))
+            return;
         const auto local = pos - mon->m_position;
         const int  index = tileAtLocal(local);
         if (index >= 0) {
@@ -1382,6 +1485,15 @@ namespace hyprspace {
             const auto TILEBG = config::overviewTileBgColor();
             rect(cell, TILEBG.modifyA(TILEBG.a * STYLE.plateVisibility), round);
 
+            if (SELECTED && entry.windows.empty() && PROGRESS > 0.35F && session().preparedWorkspace(State::workspaceState()->query().id(entry.workspaceId).run()) &&
+                cell.w > 80 && cell.h > 60) {
+                if (auto hint = textures().text("Launch an app or drop a window", FONT, config::overviewLabelColor(), static_cast<int>(cell.w - 32), SCALE)) {
+                    const auto size = logicalSize(hint);
+                    const auto box  = fitBox({cell.cx() - size.x / 2, cell.y + 16, size.x, cell.h - 32}, size.x / size.y);
+                    tex(hint, box, FADE * PROGRESS * 0.7F);
+                }
+            }
+
             for (const auto index : entry.drawOrder) {
                 const auto& slot = entry.windows[index];
                 const auto  W    = slot.window.lock();
@@ -1567,6 +1679,55 @@ namespace hyprspace {
                 } else {
                     border(box, OUTLINE, BORDER, ROUNDING);
                     windowTexture(DRAGGED, t, box, 0.92F, ROUNDING, hidden::shouldBlurWindow(DRAGGED));
+                }
+            }
+        }
+
+        // Keep the destination control visible above a carried preview, even
+        // when a drag starts from a magnified workspace.
+        if (auto button = emptyWorkspaceButton()) {
+            button->x -= MONITOR->m_position.x;
+            button->y -= MONITOR->m_position.y;
+            const bool   hover    = emptyWorkspaceButtonHit(g_pInputManager->getMouseCoordsInternal());
+            const auto   ink      = hover ? config::overviewActiveBorder() : config::overviewLabelColor();
+            const auto   bg       = config::overviewTitleBgColor();
+            const double rounding = std::min(10.0, button->h / 2.0);
+            rect(*button, bg.modifyA(bg.a * PROGRESS * (hover ? 1.F : 0.65F)), rounding);
+
+            const auto& text       = emptyWorkspaceButtonText(SCALE);
+            double      keyWidth   = 0;
+            auto        keyTexture = text.key.empty() ? nullptr : textures().text(text.key, FONT, ink, 64, SCALE * EMPTY_WORKSPACE_KEY_SCALE);
+            if (keyTexture && button->w >= 144) {
+                const auto size     = logicalSize(keyTexture);
+                keyWidth            = text.keyWidth;
+                const double height = std::min(20.0, button->h - 12);
+                const SBoxF  badge{button->x + button->w - keyWidth - 12, button->cy() - height / 2, keyWidth, height};
+                const auto   textBox = fitBox({badge.x + 4, badge.y + 2, badge.w - 8, badge.h - 4}, size.x / size.y);
+                tex(keyTexture, textBox, PROGRESS * 0.65F);
+                keyWidth += 12;
+            }
+            const bool   showPlus   = m_emptyWorkspaceError.empty() && button->w >= 80;
+            const double titleInset = showPlus ? 30 : 12;
+            if (showPlus) {
+                const auto color = ink.modifyA(ink.a * PROGRESS * (hover ? 1.F : 0.7F));
+                rect({button->x + 12, button->cy() - 0.75, 10, 1.5}, color, 0.75);
+                rect({button->x + 16.25, button->cy() - 5, 1.5, 10}, color, 0.75);
+            }
+            const int titleWidth = static_cast<int>(button->w - keyWidth - titleInset - 12);
+            if (titleWidth > 0) {
+                if (auto title = textures().text(text.label, FONT, ink, static_cast<int>(std::ceil(titleWidth / EMPTY_WORKSPACE_TEXT_SCALE)),
+                                                 SCALE * EMPTY_WORKSPACE_TEXT_SCALE)) {
+                    const auto size = logicalSize(title);
+                    const auto box  = fitBox({button->x + titleInset, button->y + 4, std::min(size.x, static_cast<double>(titleWidth)), button->h - 8}, size.x / size.y);
+                    tex(title, box, PROGRESS * (hover ? 1.F : 0.9F));
+                }
+            }
+            const int errorWidth = static_cast<int>(button->x - m_usable.x - 24);
+            if (!m_emptyWorkspaceError.empty() && errorWidth > 40) {
+                if (auto text = textures().text(m_emptyWorkspaceError, FONT, config::overviewLabelColor(), errorWidth, SCALE)) {
+                    const auto size = logicalSize(text);
+                    const auto box  = fitBox({m_usable.x + 12, button->y + 4, size.x, button->h - 8}, size.x / size.y);
+                    tex(text, box, PROGRESS);
                 }
             }
         }

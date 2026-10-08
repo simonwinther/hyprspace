@@ -71,18 +71,27 @@ namespace hyprspace {
         void onScroll(const SScrollInput& event);
 
         // --- render lifecycle ---
-        void                              prepareFrame(); // capture live window contents
-        std::vector<UP<IPassElement>>     buildPass();    // ordinary elements appended to Hyprland's pass
-        void                              damage();
-        std::optional<SOverviewTarget>    targetAt(const Vector2D& globalPos) const;
-        std::optional<SOverviewTarget>    selectedTarget() const;
-        void                              selectTarget(const SOverviewTarget& target);
+        void                           prepareFrame(); // capture live window contents
+        std::vector<UP<IPassElement>>  buildPass();    // ordinary elements appended to Hyprland's pass
+        void                           damage();
+        std::optional<SOverviewTarget> targetAt(const Vector2D& globalPos) const;
+        std::optional<SOverviewTarget> selectedTarget() const;
+        void                           selectTarget(const SOverviewTarget& target);
+        bool                           refreshPreparedWorkspace(PHLWORKSPACE workspace, PHLWINDOW window = nullptr);
+        std::optional<SBoxF>           emptyWorkspaceButton() const;
+        bool                           emptyWorkspaceButtonHit(const Vector2D& globalPos) const;
+        void                           setEmptyWorkspaceError(std::string error);
+        const std::string&             emptyWorkspaceError() const {
+            return m_emptyWorkspaceError;
+        }
         std::vector<SOverviewTarget>      inspectTargets() const;
         bool                              zoomTo(const SWorkspaceIdentity& workspace);
         void                              releaseZoom();
         bool                              zoomTransitioning() const;
         bool                              zoomNavigationReady() const;
         bool                              inspectScroll(const SScrollInput& event, const Vector2D& globalPos);
+        bool                              inspectZoom(double detents, double factor, std::optional<Vector2D> globalPos = std::nullopt);
+        void                              panInspectionKey(const Vector2D& delta);
         bool                              inspectionReady() const;
         bool                              inspectionActive() const;
         bool                              inspectionTransitioning() const;
@@ -190,9 +199,17 @@ namespace hyprspace {
         // The part of the monitor windows actually live in — the full output
         // minus whatever layer surfaces reserved (the bar). Tiles map this, not
         // the whole output, so no tile carries an empty strip where the bar sits.
-        SBoxF               m_usable;
-        std::vector<SEntry> m_entries;
-        std::vector<STile>  m_tiles;
+        SBoxF       m_usable;
+        double      workspaceToolbarHeight() const;
+        std::string m_emptyWorkspaceError;
+        struct SEmptyWorkspaceButtonText {
+            std::string font, label, key;
+            double      scale, titleWidth, keyWidth;
+        };
+        const SEmptyWorkspaceButtonText&                 emptyWorkspaceButtonText(double scale) const;
+        mutable std::optional<SEmptyWorkspaceButtonText> m_emptyWorkspaceButtonText;
+        std::vector<SEntry>                              m_entries;
+        std::vector<STile>                               m_tiles;
 
         struct STileLayoutKey {
             SBoxF  usable;

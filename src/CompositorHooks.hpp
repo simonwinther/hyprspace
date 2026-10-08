@@ -19,6 +19,7 @@ namespace hyprspace::hooks {
     void                             renderPanels(PHLMONITOR monitor);
     bool                             keyboardOwned();
     std::expected<void, std::string> validateZoomKey(const std::string& name);
+    std::expected<void, std::string> validateEmptyWorkspaceKey(const std::string& name);
     double                           scrollFactor();
     void                             syncKeyboardFocus();
     CFunctionHook*                   attach(const std::string& name, const std::string& signature, void* callback);

@@ -23,6 +23,7 @@
 #include <hyprland/src/protocols/XDGActivation.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
+#include <hyprutils/utils/ScopeGuard.hpp>
 
 #include <nlohmann/json.hpp>
 #include <sys/socket.h>
@@ -60,8 +61,11 @@ namespace hyprspace::launch {
         using Env        = std::vector<std::pair<std::string, std::string>>;
         using Activation = std::function<void(CXdgActivationV1*, const char*, wl_resource*)>;
         struct SContext {
-            SOverviewTarget           target;
-            PHLWORKSPACEREF           workspace;
+            SOverviewTarget target;
+            PHLWORKSPACEREF workspace;
+            // Only prepared overview destinations need ownership beyond the
+            // session. Ordinary captures retain their weak identity semantics.
+            PHLWORKSPACE              preparedLifetime;
             bool                      hasWorkspace = false;
             std::vector<PHLWINDOWREF> existing;
         };
@@ -115,8 +119,9 @@ namespace hyprspace::launch {
             if (const auto ws = State::workspaceState()->query().id(target->workspace.id).run()) {
                 if (!valid(ws) || ws->m_name != target->workspace.name)
                     return {};
-                context.workspace    = ws;
-                context.hasWorkspace = true;
+                context.workspace        = ws;
+                context.hasWorkspace     = true;
+                context.preparedLifetime = session().preparedLifetime(ws);
             }
             for (const auto& w : Desktop::windowState()->windows())
                 if (w->m_isMapped)
@@ -158,6 +163,7 @@ namespace hyprspace::launch {
                 return;
             auto& context        = it->second.context;
             it->second.completed = true;
+            const Hyprutils::Utils::CScopeGuard releasePrepared([&context] { context.preparedLifetime.reset(); });
             if (std::ranges::any_of(context.existing, [&](const auto& old) { return old == w; }))
                 return; // existing-window activation always retains native behavior
             it->second.placed = w;
@@ -359,8 +365,11 @@ namespace hyprspace::launch {
                                              {"w", box.w},
                                              {"h", box.h}});
                         }
-                        const auto&    counts = view->layoutCounters();
-                        nlohmann::json edges  = nlohmann::json::array();
+                        const auto&    counts      = view->layoutCounters();
+                        nlohmann::json emptyButton = nullptr;
+                        if (const auto box = view->emptyWorkspaceButton())
+                            emptyButton = {{"x", box->x}, {"y", box->y}, {"w", box->w}, {"h", box->h}};
+                        nlohmann::json edges = nlohmann::json::array();
                         for (const auto& hint : view->zoomEdgeHints()) {
                             const char* direction = "";
                             switch (hint.direction) {
@@ -387,6 +396,8 @@ namespace hyprspace::launch {
                         }
                         result["views"].push_back({{"monitor", mon->m_name},
                                                    {"tiles", tiles},
+                                                   {"empty_workspace_button", emptyButton},
+                                                   {"empty_workspace_error", view->emptyWorkspaceError()},
                                                    {"zoom_edges", edges},
                                                    {"layout",
                                                     {{"frames", counts.frames},

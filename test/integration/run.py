@@ -1663,6 +1663,7 @@ def main():
             "dispatchers",
             "lua",
             "selection",
+            "empty_workspaces",
             "layout",
             "resources",
             "configuration",
@@ -1786,6 +1787,10 @@ def main():
             import selection
 
             selection.consistency(suite, wait_for)
+        if args.only in ("all", "robustness", "empty_workspaces"):
+            import empty_workspaces
+
+            empty_workspaces.run(suite, wait_for)
         if args.only in ("all", "switcher"):
             import switcher
 

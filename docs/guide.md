@@ -71,9 +71,10 @@ update.
 
 | Dispatcher | Argument | Effect |
 |---|---|---|
-| `hyprspace:overview` | *(none)* | Toggle the overview on every monitor |
+| `hyprspace:overview` | *(none)* | Open on every monitor, or commit the current selection and close |
 | `hyprspace:overview` | `on` | Open, never toggle closed |
-| `hyprspace:overview` | `off` | Close if open |
+| `hyprspace:overview` | `off` | Dismiss if open, without selecting |
+| `hyprspace:emptyworkspace` | *(none)* | Select an empty workspace on the pointer's monitor; requires an open overview |
 | `hyprspace:switch` | *(none)* / `next` | Open the switcher, or step forward |
 | `hyprspace:switch` | `prev` / `backward` | Open the switcher, or step backward |
 | `hyprspace:close` | *(none)* | Dismiss whichever overlay is up, without selecting |
@@ -90,7 +91,13 @@ keyboard grab, which makes it a reliable escape hatch.
 | `Esc` | Close, keep the current workspace |
 | `Enter` / `Space` | Switch to the selected workspace and close |
 | `Tab` / `Shift+Tab` | Next / previous workspace |
+| `N` | Select an empty workspace on the monitor under the pointer and keep the overview open |
+| Middle-click | Select an empty workspace on this monitor and keep the overview open |
 | Hold `Z` | Enlarge the selected workspace; release to smoothly restore the grid |
+| `Z` + wheel / vertical two-finger scroll | Magnify around the pointer |
+| `Z` + `+` / `−` (`=`, keypad + / −) | Magnify around the viewport center; hold to repeat |
+| `Z` + `Space` + pointer motion | Grab and pan magnified content, including one-finger touchpad motion |
+| `Z` + `Shift` + arrows | Pan the viewport toward that direction; hold to repeat |
 | `←` `↓` `↑` `→` | Move to the nearest tile in that direction |
 | `h/j/k/l` | Same, vim style |
 | `1` through `9`, `0` | Go to that workspace at once, no Enter needed (`0` = workspace 10) |
@@ -103,6 +110,49 @@ keyboard grab, which makes it a reliable escape hatch.
 | `Super` + drag right | Resize that window in place, scaled into the tile |
 | Wheel / two-finger scroll | Pan the scrolling workspace under the pointer; other layouts step the workspace selection |
 | Edge arrows inside a scrolling tile | Reveal the next hidden column and keep the overview open |
+| + Empty workspace | Prepare an empty workspace on this output, or accept a Super-dragged window |
+
+Middle-click without modifiers, press **N**, or click **+ Empty workspace** on a
+monitor to prepare an empty destination there. This uses the pointer's monitor
+even when keyboard navigation selected a tile on another output or `follow_mouse = false`.
+It reuses a prepared or active empty normal workspace first, then another empty
+normal workspace on that monitor. Otherwise it creates the lowest available
+positive workspace number, respecting workspace
+monitor rules and workspaces already owned by other outputs. Empty named normal
+workspaces can be reused; new workspaces receive numeric IDs. Special workspaces
+are not candidates. Conditional monitor assignment rules that cannot
+be resolved safely prevent fresh allocation and return an error; reuse remains
+available.
+
+The destination is selected and highlighted while the overview stays open.
+Workspace tiles stay in numeric order, and preparation does not move the cursor.
+Preparing it leaves the active desktop and focus unchanged. Press Enter to open
+it, launch an application there, or Super-drag a window into its tile. You can
+drop directly onto **+ Empty workspace** to prepare and move in one gesture;
+allocation happens only on a valid release. Escape cancels a provisional drag,
+and dismissing an unused prepared workspace releases it without changing your
+desktop. Existing persistent workspace settings are retained.
+
+The button hides during held zoom and panning, and reappears for window move
+drags, including ones started from zoom. It is unavailable during resizing.
+Pressing N or middle-clicking returns to the grid; while a window drag, pan or
+released resize is in progress, these shortcuts do nothing. Holding N acts once
+until its release.
+Foreground launcher typing, modified N bindings and typing outside the overview
+keep their normal behavior.
+
+Middle-clicks on panels or foreground UI and while the overview is closed keep
+their normal routing. Middle-clicking an output without an overview, or a monitor gap,
+does not prepare a workspace. One middle-button press acts once until release;
+its release remains consumed if the overview closes while the button is held.
+
+Set `overview:empty_workspace_key` to another XKB key name, or an empty value to
+disable this shortcut. Navigation, modifier, lock and system keys are rejected.
+If it names the same key as `overview:zoom_key`, zoom takes precedence and the
+empty-workspace shortcut is disabled. The button and `hyprspace:emptyworkspace`
+dispatcher remain available. For a custom native binding, call that dispatcher
+without arguments; in Lua use `hl.plugin.hyprspace.emptyworkspace()`. Both require
+an open overview.
 
 Hold **Z** without modifiers to fit the selected workspace into most of its
 monitor, keeping the existing padding and workspace label. Arrows, Tab and
@@ -117,17 +167,27 @@ Entering an edge during an opening or camera animation starts the dwell once
 the animation settles. Drags and foreground input handoff cancel unfinished
 hovers; moving within the edge can start a fresh dwell after input returns.
 Scrolling arrows remain separate from workspace navigation, and scrolling layouts
-still accept touchpad, horizontal-wheel and wheel-tilt panning.
+still accept horizontal-wheel and wheel-tilt panning.
 
-While Z is held, the vertical mouse wheel zooms around the pointer in every
-layout. Wheel input takes effect during the initial fit or opening animation,
+While Z is held, the vertical mouse wheel or two-finger scrolling zooms around
+the pointer in every layout. Input takes effect during the initial fit or opening animation,
 retargeting the displayed camera smoothly. Wheel up enlarges and wheel down
 reduces magnification, honoring the device's scroll direction and factor. Extra
 zoom is bounded between the normal Z-held fit and four times that fit; scrolling
-outward restores its exact framing. High-resolution wheels retain fractional
-detents. Inspection stays on the held
+outward restores its exact framing. High-resolution wheels and touchpad deltas
+retain fractional steps. Inspection stays on the held
 workspace's output, and wheel input over another output is consumed without
-changing that workspace.
+changing that workspace. For keyboard-only zoom, press **+** or **−** while Z is
+held; **=**, **Shift+plus** and keypad add/subtract are also accepted. Each press
+changes magnification by a factor of 1.15 around the viewport center, even if the
+pointer is on another output. Held keys use the keyboard's repeat delay and rate.
+
+On a laptop, hold **Z+Space** and move one finger on the touchpad to pan magnified
+content. Space is consumed while Z is held, including at the normal fit where
+there is nothing to pan. Release Space to retain the camera. **Z+Shift+arrows**
+pans the viewport toward that direction by 40 logical pixels per step, repeating
+while held. Unmodified arrows and Tab continue to browse workspaces.
+
 Hold the right mouse button while Z is held to grab and pan a magnified
 workspace. The picture follows the mouse, bounded to keep its normal fitted
 footprint covered. The open-hand cursor indicates that panning is available;
@@ -135,14 +195,15 @@ the closed hand indicates an active grab. Pickup preserves the displayed camera,
 including during wheel animation. A grab begun before the initial fit is ready
 waits for a movable camera. At the normal fit, there is nothing to pan. Release
 the right button to retain the view, or release Z to return to the grid. Wheel
-input and other mouse actions pause during the grab. Super+right-button resize
+input, keyboard magnification and other mouse actions pause during the grab. Super+right-button resize
 remains available when starting outside a grab; ordinary right-click dismissal
 remains available outside held zoom.
 Edge-hover browsing pauses during extra zoom and its return to the fitted view;
 real pointer motion can start a fresh dwell afterward. Keyboard workspace
 browsing clears extra zoom and fits the new workspace. Changes to the usable
 monitor area or workspace tile also clear extra zoom and refit. Set
-`overview:wheel_zoom` to `false` to retain the previous wheel behavior.
+`overview:wheel_zoom` to `false` to disable extra wheel, touchpad and keyboard
+magnification and panning, retaining the previous scrolling behavior.
 
 Wheel selection of other workspaces pauses during zoom. Release Z at any
 magnification to return directly to the overview grid
@@ -151,9 +212,11 @@ including during zoom-out, so pressing Z again enlarges the workspace currently
 under the pointer. Releasing Z without moving retains the selected workspace.
 
 Zoom affects previews and keeps the overview open. Clicking a window or pressing
-Enter still opens the selection, and Escape still dismisses the overview. An
+Enter or Super+A again opens the selection directly, and Escape still dismisses
+the overview. Space alone also commits when Z is released. Explicit `off` and
+`hyprspace:close` dismiss without selecting. An
 output already showing a single workspace keeps its existing Z-fit geometry but
-still accepts extra wheel zoom. New zoom
+still accepts extra magnification. New zoom
 presses and workspace browsing pause during a drag; releasing Z during a drag
 still restores the grid, with resize gestures retaining their pickup scale.
 Foreground keyboard handoff cancels held zoom and requires a new press afterward.
@@ -308,7 +371,8 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:padding` | int | `56` | Outer padding |
 | `overview:gap` | int | `28` | Gap between workspace tiles |
 | `overview:zoom_key` | string | `z` | Unmodified hold-to-zoom key; empty disables it. Use an XKB key name that does not conflict with overview navigation or system keys |
-| `overview:wheel_zoom` | bool | `true` | Vertical mouse-wheel inspection while the zoom key is held; bounds are 1–4 times the normal held fit. Disable to retain previous wheel behavior |
+| `overview:empty_workspace_key` | string | `n` | Unmodified key that selects an empty workspace on the pointer's monitor; empty disables it. Zoom takes precedence if both keys match |
+| `overview:wheel_zoom` | bool | `true` | Extra wheel, vertical touchpad and keyboard magnification/panning while the zoom key is held; bounds are 1–4 times the normal held fit. Disable to retain previous scrolling behavior |
 | `overview:band_gap` | int | `28` | Deprecated compatibility key; ignored. `overview:gap` controls both axes |
 | `overview:all_workspaces` | bool | `true` | Deprecated compatibility key; ignored. Populated, active and persistent workspaces are always included |
 | `overview:rounding` | int | `14` | Tile corner radius |
@@ -322,7 +386,8 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:all_monitors` | bool | `true` | Open on every monitor at once rather than only the one under the pointer |
 | `overview:font` | string | `Sans 12` | Pango font description |
 
-Empty active workspaces and configured persistent workspaces are included.
+Empty active workspaces, configured persistent workspaces and destinations
+prepared during the overview are included.
 
 #### Multiple monitors
 

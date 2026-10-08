@@ -112,6 +112,7 @@ namespace hyprspace {
         bool     wheel      = true;
         bool     horizontal = false;
         bool     wheelTilt  = false;
+        bool     finger     = false;
     };
 
     // The lens acts on baseline-camera output coordinates. Its two affine
@@ -188,14 +189,21 @@ namespace hyprspace {
 
         bool scroll(const SScrollInput& event, double scrollFactor, const SBoxF& footprint, double pointerX, double pointerY, double progress,
                     std::optional<SBoxF> displayedFootprint = std::nullopt) {
-            if (!event.wheel || event.horizontal || event.wheelTilt || !std::isfinite(event.delta) || !std::isfinite(scrollFactor) || scrollFactor == 0 ||
-                !std::isfinite(pointerX) || !std::isfinite(pointerY) || !std::isfinite(progress) || !std::isfinite(footprint.x) || !std::isfinite(footprint.y) ||
-                !std::isfinite(footprint.w) || !std::isfinite(footprint.h) || footprint.w <= 0 || footprint.h <= 0)
+            if ((!event.wheel && !event.finger) || event.horizontal || event.wheelTilt || !std::isfinite(event.delta))
+                return false;
+            const double detents = event.wheel && event.value120 != 0 ? event.value120 / 120.0 : event.delta / 15.0;
+            return zoom(detents, scrollFactor, footprint, pointerX, pointerY, progress, displayedFootprint);
+        }
+
+        bool zoom(double detents, double scrollFactor, const SBoxF& footprint, double pointerX, double pointerY, double progress,
+                  std::optional<SBoxF> displayedFootprint = std::nullopt) {
+            if (!std::isfinite(detents) || !std::isfinite(scrollFactor) || scrollFactor == 0 || !std::isfinite(pointerX) || !std::isfinite(pointerY) ||
+                !std::isfinite(progress) || !std::isfinite(footprint.x) || !std::isfinite(footprint.y) || !std::isfinite(footprint.w) || !std::isfinite(footprint.h) ||
+                footprint.w <= 0 || footprint.h <= 0)
                 return false;
             const double right = footprint.x + footprint.w, bottom = footprint.y + footprint.h;
             if (!std::isfinite(right) || !std::isfinite(bottom))
                 return false;
-            const double detents = event.value120 != 0 ? event.value120 / 120.0 : event.delta / 15.0;
             if (detents == 0)
                 return false;
 

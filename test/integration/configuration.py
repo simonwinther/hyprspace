@@ -69,10 +69,14 @@ def contracts(s, wait_for):
         assert set(views()) == {s.names[0]}
         s.ctl("dispatch", "hyprspace:overview")
         wait_for(lambda: not s.status()["views"])
+        assert s.data("activewindow")["address"] == s.windows()["hs-A"]["address"]
+        # Committing can warp the pointer to the selected workspace. Establish
+        # the next opening's output after that commit has finished.
+        s.move(s.point(s.windows()["hs-B"], 0.5, 0.5))
         s.ctl("dispatch", "hyprspace:overview")
         wait_for(lambda: set(views()) == {s.names[1]})
         s.close()
-        s.check("all_monitors=false keeps one session: on is idempotent, toggle closes it, reopening follows the pointer")
+        s.check("all_monitors=false keeps one session: on is idempotent, toggle commits selection, reopening follows the current pointer")
 
         focus("hs-A")
         assert commit(2) == s.windows()["hs-A"]["address"]

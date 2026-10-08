@@ -171,7 +171,7 @@ namespace hyprspace {
             if (it == m_contexts.end() || it->second.consumed)
                 return std::nullopt;
             it->second.consumed = true;
-            return it->second.context;
+            return std::move(it->second.context);
         }
         void clear() {
             m_contexts.clear();

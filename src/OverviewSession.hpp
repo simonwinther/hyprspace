@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <optional>
+#include <expected>
 
 namespace hyprspace {
     class COverview;
@@ -51,6 +52,9 @@ namespace hyprspace {
         void                    restoreVisibility();
         void                    reconcileVisibility();
         bool                    covers(PHLMONITOR monitor) const;
+        SDispatchResult         emptyWorkspace(PHLMONITOR monitor = nullptr);
+        bool                    preparedWorkspace(PHLWORKSPACE workspace) const;
+        PHLWORKSPACE            preparedLifetime(PHLWORKSPACE workspace) const;
         void                    hideWindow(PHLWINDOW window);
         void                    pointer(const Vector2D& pos, bool userMotion = false);
         void                    observePointer(const Vector2D& pos);
@@ -60,8 +64,22 @@ namespace hyprspace {
         void                    zoomRelease(uint64_t token);
         void                    cancelZoom();
         bool                    zoomScroll(const SScrollInput& event, const Vector2D& pos);
-        void                    cancelPan();
-        bool                    panHeld() const {
+        void                    zoomStep(int direction);
+        void                    panKey(const Vector2D& delta);
+        std::optional<uint64_t> panPress();
+        void                    panRelease(uint64_t token);
+        uint64_t                zoomGeneration() const {
+            return zoomHeld() ? m_zoomGeneration : 0;
+        }
+        bool keyboardPanHeld() const {
+            return m_pan && m_pan->keyboard;
+        }
+        void releaseMousePan() {
+            if (!keyboardPanHeld())
+                cancelPan();
+        }
+        void cancelPan();
+        bool panHeld() const {
             return m_pan.has_value();
         }
         bool panning() const {
@@ -91,19 +109,29 @@ namespace hyprspace {
         std::optional<SOverviewTarget> hit(const Vector2D& pos) const;
 
       private:
-        void       syncSelection();
-        void       updateZoom();
-        void       retargetSelection(COverview& view);
-        void       cancelZoomEdge();
-        bool       zoomEdgeEnabled(const COverview& view) const;
-        COverview* zoomView() const;
-        void       advanceZoomEdge(PHLMONITOR renderedMonitor);
-        void       updatePan();
-        void       updateCursor();
+        void                                     syncSelection();
+        void                                     updateZoom();
+        void                                     retargetSelection(COverview& view);
+        void                                     cancelZoomEdge();
+        bool                                     zoomEdgeEnabled(const COverview& view) const;
+        COverview*                               zoomView() const;
+        void                                     advanceZoomEdge(PHLMONITOR renderedMonitor);
+        void                                     updatePan();
+        void                                     updateCursor();
+        COverview*                               emptyWorkspaceView(PHLMONITOR monitor) const;
+        COverview*                               emptyWorkspaceButtonView(const Vector2D& point) const;
+        std::expected<PHLWORKSPACE, std::string> resolveEmptyWorkspace(PHLMONITOR monitor, bool isEmpty);
+        void                                     retainPreparedWorkspace(PHLWORKSPACE workspace);
+        void                                     prunePreparedWorkspaces();
+        struct SPreparedWorkspace {
+            PHLWORKSPACE  workspace;
+            PHLMONITORREF monitor;
+        };
         struct SInspectionPan {
             SWorkspaceIdentity workspace;
             PHLMONITORREF      monitor;
-            bool               started = false;
+            bool               started  = false;
+            bool               keyboard = false;
         };
         struct SZoomEdgeIntent {
             SWorkspaceIdentity source, destination;
@@ -112,11 +140,15 @@ namespace hyprspace {
         CZoomEdgeHover                  m_zoomEdgeHover;
         std::optional<SZoomEdgeIntent>  m_zoomEdgeIntent;
         CZoomHoldState                  m_zoomHolds;
+        CZoomHoldState                  m_panHolds;
+        uint64_t                        m_zoomGeneration = 0;
         std::optional<SOverviewTarget>  m_zoomTarget;
         std::optional<SInspectionPan>   m_pan;
         CVisibilityLedger<PHLWINDOWREF> m_visibility;
         SP<Render::ITexture>            m_dragTexture;
-        bool                            m_cursorOwned = false;
+        std::vector<SPreparedWorkspace> m_preparedWorkspaces;
+        bool                            m_emptyButtonPressed = false;
+        bool                            m_cursorOwned        = false;
         Vector2D                        m_pointer;
     };
 
