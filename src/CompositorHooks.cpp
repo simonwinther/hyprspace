@@ -432,6 +432,7 @@ namespace hyprspace::hooks {
             case XKB_KEY_Escape:
             case XKB_KEY_Return:
             case XKB_KEY_KP_Enter:
+            case XKB_KEY_s:
             case XKB_KEY_space:
             case XKB_KEY_Tab:
             case XKB_KEY_Left:
