@@ -866,6 +866,7 @@ namespace hyprspace {
 
         case XKB_KEY_Return:
         case XKB_KEY_KP_Enter:
+        case XKB_KEY_s:
         case XKB_KEY_space:
             close(true);
             return true;

@@ -89,7 +89,7 @@ keyboard grab, which makes it a reliable escape hatch.
 | Key | Action |
 |---|---|
 | `Esc` | Close, keep the current workspace |
-| `Enter` / `Space` | Switch to the selected workspace and close |
+| `Enter` / `S` / `Space` | Switch to the selected workspace and close |
 | `Tab` / `Shift+Tab` | Next / previous workspace |
 | `N` | Select an empty workspace on the monitor under the pointer and keep the overview open |
 | Middle-click | Select an empty workspace on this monitor and keep the overview open |
@@ -241,7 +241,7 @@ including during zoom-out, so pressing Z again enlarges the workspace currently
 under the pointer. Releasing Z without moving retains the selected workspace.
 
 Zoom affects previews and keeps the overview open. Clicking a window or pressing
-Enter or Super+A again opens the selection directly, and Escape still dismisses
+Enter, S or Super+A again opens the selection directly, and Escape still dismisses
 the overview. Space alone also commits when Z is released. Explicit `off` and
 `hyprspace:close` dismiss without selecting. An
 output already showing a single workspace keeps its existing Z-fit geometry but

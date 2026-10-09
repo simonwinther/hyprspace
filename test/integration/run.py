@@ -1816,6 +1816,9 @@ def main():
             suite.interactions()
             suite.ctl("plugin", "load", str(suite.plugin))
         if args.only in ("all", "keyboard"):
+            import selection
+
+            selection.shortcuts(suite, wait_for)
             suite.keyboard()
         if args.only in ("all", "foreground"):
             suite.foreground()

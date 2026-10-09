@@ -112,7 +112,7 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 |---|---|
 | Super + A | Open the overview; press again to open the selected workspace |
 | Click a preview | Focus that window |
-| Arrows or Tab, then Enter | Select and open a workspace |
+| Arrows or Tab / Shift+Tab, then Enter or S | Select and open a workspace |
 | N or + Empty workspace | Select an empty workspace on the monitor under the pointer |
 | Middle-click | Select an empty workspace on that monitor and keep the overview open |
 | Hold Z | Fit the selected workspace; release to return to the grid |
@@ -160,7 +160,8 @@ key and the empty-workspace shortcut is disabled.
 On a small screen, hold **Z** to smoothly enlarge one workspace. While holding
 it, use arrows or Tab/Shift+Tab to browse that monitor's workspaces, or hover
 briefly at an edge to slide to its neighbor. Edge hints show the available
-directions, including above and below. Releasing Z smoothly restores the grid.
+directions, including above and below. Press **S** or Enter to open the selected
+workspace while holding Z. Releasing Z smoothly restores the grid.
 While holding Z, use vertical two-finger scrolling or the wheel to inspect the
 area under the pointer. On a laptop, hold Space and move one finger to pan, or
 use Shift+arrows. For keyboard-only inspection, use + / − to zoom around the
