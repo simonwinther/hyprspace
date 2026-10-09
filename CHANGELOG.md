@@ -2,10 +2,13 @@
 
 ## [1.5.0](https://github.com/simonwinther/hyprspace/compare/v1.4.0...v1.5.0) (2026-10-09)
 
+- Move regular workspaces between monitors with Super+Alt+left-drag.
+- Keep destination activation and pinned windows intact, and animate moved
+  workspace tiles into their new grid positions.
+- Open the selected workspace with S or Enter, including while holding Z.
+  Use Tab or Shift+Tab to browse workspaces.
 
-### Features
-
-* add workspace dragging between monitors ([01767b6](https://github.com/simonwinther/hyprspace/commit/01767b6fd87d668bf2fdac3ab69f630d9c28024a))
+Supports Hyprland 0.56.2 (`efb50993780079460b0cbed1363e2166a2de1d9f`).
 
 ## [1.4.0](https://github.com/simonwinther/hyprspace/compare/v1.3.1...v1.4.0) (2026-10-08)
 
