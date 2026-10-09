@@ -39,6 +39,13 @@ def same_geometry(before, after, tolerance=0.1):
     )
 
 
+def close_same_tick(s):
+    response = json.loads(s.run("hyprctl", "dispatch", "hyprspace-test:transition-close"))
+    before = {cell["workspace"]: cell for cell in response["before"]}
+    after = {cell["workspace"]: cell for cell in response["after"]}
+    assert same_geometry(before, after, tolerance=1), response
+
+
 def released(s, wait_for):
     wait_for(lambda: not s.status()["zoom"]["held"] and not s.status()["zoom"]["returning"])
 
@@ -1386,14 +1393,6 @@ def gestures(s, wait_for):
 def transitions(s, wait_for):
     fixture = load_overview_fixture(s, wait_for)
 
-    def close_same_tick():
-        response = json.loads(s.run("hyprctl", "dispatch", "hyprspace-test:transition-close"))
-        before = {cell["workspace"]: cell for cell in response["before"]}
-        after = {cell["workspace"]: cell for cell in response["after"]}
-        assert before.keys() == after.keys(), response
-        assert all(abs(cell[part] - after[key][part]) <= 1 for key, cell in before.items()
-                   for part in ("x", "y", "w", "h")), response
-
     s.ctl("keyword", "animations:enabled", "true")
     s.ctl("keyword", "animation", "windowsMove,1,12,default")
     primary_destinations(s)
@@ -1568,7 +1567,7 @@ def transitions(s, wait_for):
             s.key(TAB, 1)
             s.key(TAB, 0)
             time.sleep(0.08)
-            close_same_tick()
+            close_same_tick(s)
             s.key(Z, 0)
             wait_for(lambda: not s.status()["views"])
             assert all(window["alpha"] == 1 for window in s.status()["windows"])
@@ -1780,11 +1779,9 @@ def wheel_transitions(s, wait_for):
         s.move(center(tile(s, 11)))
         wheel(s, -4)
         wait_for(lambda: s.status()["zoom"]["extra_factor"] > 1.8 and s.status()["zoom"]["inspection_transitioning"])
-        before = tile(s, 11)
-        s.key(28, 1)
-        s.key(28, 0)
-        after = tile(s, 11)
-        assert abs(after["w"] / before["w"] - 1) < 0.08, (before, after)
+        # Input round trips advance the animation; compare its close boundary
+        # within one compositor tick instead of measuring later frames.
+        close_same_tick(s)
         s.key(Z, 0)
         wait_for(lambda: not s.status()["views"])
         assert all(window["alpha"] == 1 for window in s.status()["windows"])
