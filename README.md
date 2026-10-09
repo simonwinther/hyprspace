@@ -124,6 +124,7 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | 1 through 9, or 0 | Open workspace 1 through 10 |
 | Super + left drag | Rearrange a window or move it across workspaces and outputs |
 | Super + right drag | Resize a window in its preview |
+| Super + Alt + left drag | Move a workspace to another monitor |
 | Super + L (optional binding) | Cycle dwindle/scrolling on the indicated workspace |
 | Alt + Tab / Alt + Shift + Tab | Cycle windows forward / backward |
 | Release Alt | Focus the selected window |
@@ -133,6 +134,17 @@ The overview opens on all monitors by default, with each showing its own
 workspaces. Alt+Tab uses the active normal workspace on the monitor under the
 pointer. Setting `switcher:current_workspace_only = false` includes windows
 across all workspaces and monitors.
+
+Hold **Super + Alt** and left-drag anywhere inside a regular workspace tile,
+including over its window previews, then drop anywhere in another monitor's
+overview. The workspace keeps its number, name and layout. The overview stays
+open and selects the moved tile, which glides into its new slot on release;
+the destination keeps its current desktop workspace. Scratchpads cannot be
+dragged this way, and pinned windows stay on the source monitor. Escape cancels
+the drag. Drops on the source monitor,
+panels, monitor gaps or outputs without an overview leave placement unchanged.
+Set `overview:workspace_drag_modifiers` to customize the exact modifiers, or
+leave it empty to disable workspace dragging.
 
 Inside the overview, **middle-click**, press **N** or click **+ Empty workspace**
 to prepare a destination on the monitor under the pointer. Hyprspace reuses an

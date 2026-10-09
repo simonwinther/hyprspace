@@ -6,9 +6,14 @@
 #include <hyprland/src/config/values/types/FloatValue.hpp>
 #include <hyprland/src/config/values/types/IntValue.hpp>
 #include <hyprland/src/config/values/types/StringValue.hpp>
+#include <hyprland/src/devices/IKeyboard.hpp>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
+#include <array>
+#include <cctype>
+#include <expected>
 #include <memory>
+#include <sstream>
 
 namespace hyprspace::config {
 
@@ -35,6 +40,7 @@ namespace hyprspace::config {
             SP<Config::Values::CStringValue> overviewFont;
             SP<Config::Values::CStringValue> overviewZoomKey;
             SP<Config::Values::CStringValue> overviewEmptyWorkspaceKey;
+            SP<Config::Values::CStringValue> overviewWorkspaceDragModifiers;
             SP<Config::Values::CBoolValue>   overviewWheelZoom;
             SP<Config::Values::CColorValue>  overviewFullscreenBorder;
 
@@ -64,6 +70,46 @@ namespace hyprspace::config {
 
         CHyprColor colorOf(const SP<Config::Values::CColorValue>& v, uint64_t fallback) {
             return CHyprColor(v ? static_cast<uint64_t>(v->value()) : fallback);
+        }
+
+        std::expected<uint32_t, std::string> workspaceDragModifiers(std::string name) {
+            if (name.find_first_not_of(" \t\r\n\f\v") == std::string::npos)
+                return 0;
+            // Native modifier aliases, with token validation so misspellings
+            // cannot silently select another overview mouse gesture.
+            constexpr std::array aliases{
+                std::pair{"SHIFT", HL_MODIFIER_SHIFT}, std::pair{"CAPS", HL_MODIFIER_CAPS}, std::pair{"CTRL", HL_MODIFIER_CTRL}, std::pair{"CONTROL", HL_MODIFIER_CTRL},
+                std::pair{"ALT", HL_MODIFIER_ALT},     std::pair{"MOD2", HL_MODIFIER_MOD2}, std::pair{"MOD3", HL_MODIFIER_MOD3}, std::pair{"SUPER", HL_MODIFIER_META},
+                std::pair{"WIN", HL_MODIFIER_META},    std::pair{"LOGO", HL_MODIFIER_META}, std::pair{"MOD4", HL_MODIFIER_META}, std::pair{"MOD5", HL_MODIFIER_MOD5},
+            };
+            for (auto& character : name)
+                character = character == '+' ? ' ' : static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+
+            uint32_t           mask = 0;
+            std::istringstream tokens(name);
+            std::string        token;
+            while (tokens >> token) {
+                bool matched = false;
+                for (const auto& [alias, modifier] : aliases) {
+                    if (token != alias)
+                        continue;
+                    mask |= modifier;
+                    matched = true;
+                    break;
+                }
+                if (!matched)
+                    return std::unexpected("workspace_drag_modifiers contains an unknown modifier: " + token);
+            }
+            if (!(mask & HL_MODIFIER_META) || !(mask & (HL_MODIFIER_ALT | HL_MODIFIER_CTRL | HL_MODIFIER_SHIFT)))
+                return std::unexpected("workspace_drag_modifiers requires SUPER plus ALT, CTRL or SHIFT; empty disables it");
+            return mask;
+        }
+
+        std::expected<void, std::string> validateWorkspaceDragModifiers(const std::string& name) {
+            const auto modifiers = workspaceDragModifiers(name);
+            if (!modifiers)
+                return std::unexpected(modifiers.error());
+            return {};
         }
     } // namespace
 
@@ -102,6 +148,9 @@ namespace hyprspace::config {
         g_values.overviewEmptyWorkspaceKey =
             reg<CStringValue>("plugin:hyprspace:overview:empty_workspace_key", "unmodified XKB key to select an empty workspace on the pointer's monitor; empty disables",
                               "n", SStringValueOptions{.validator = hooks::validateEmptyWorkspaceKey});
+        g_values.overviewWorkspaceDragModifiers =
+            reg<CStringValue>("plugin:hyprspace:overview:workspace_drag_modifiers", "exact modifiers for left-dragging a workspace to another monitor; empty disables",
+                              "SUPER ALT", SStringValueOptions{.validator = validateWorkspaceDragModifiers});
         g_values.overviewWheelZoom =
             reg<CBoolValue>("plugin:hyprspace:overview:wheel_zoom", "magnify and pan the held workspace with wheel, touchpad or keyboard input", true);
         g_values.overviewFullscreenBorder =
@@ -204,6 +253,10 @@ namespace hyprspace::config {
         // Preserve existing custom zoom keys when the new shortcut shares one.
         // Validation of either setting is independent, avoiding recursive reads.
         return sym == overviewZoomKey() ? XKB_KEY_NoSymbol : sym;
+    }
+    uint32_t overviewWorkspaceDragModifiers() {
+        const auto name = g_values.overviewWorkspaceDragModifiers ? g_values.overviewWorkspaceDragModifiers->value() : "SUPER ALT";
+        return workspaceDragModifiers(name).value_or(0);
     }
     bool overviewWheelZoom() {
         return g_values.overviewWheelZoom ? g_values.overviewWheelZoom->value() : true;

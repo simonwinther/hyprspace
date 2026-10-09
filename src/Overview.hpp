@@ -43,10 +43,10 @@ namespace hyprspace {
             return m_entries.empty();
         }
 
-        // A Super+drag in flight. The gesture can wander onto another output,
+        // A drag in flight. The gesture can wander onto another output,
         // so the overview that started it keeps the pointer until it ends.
         bool dragging() const {
-            return session().drag.active();
+            return session().gestureActive();
         }
 
         bool needsBlur() const {
@@ -71,17 +71,21 @@ namespace hyprspace {
         void onScroll(const SScrollInput& event);
 
         // --- render lifecycle ---
-        void                           prepareFrame(); // capture live window contents
-        std::vector<UP<IPassElement>>  buildPass();    // ordinary elements appended to Hyprland's pass
-        void                           damage();
-        std::optional<SOverviewTarget> targetAt(const Vector2D& globalPos) const;
-        std::optional<SOverviewTarget> selectedTarget() const;
-        void                           selectTarget(const SOverviewTarget& target);
-        bool                           refreshPreparedWorkspace(PHLWORKSPACE workspace, PHLWINDOW window = nullptr);
-        std::optional<SBoxF>           emptyWorkspaceButton() const;
-        bool                           emptyWorkspaceButtonHit(const Vector2D& globalPos) const;
-        void                           setEmptyWorkspaceError(std::string error);
-        const std::string&             emptyWorkspaceError() const {
+        void                                 prepareFrame(); // capture live window contents
+        std::vector<UP<IPassElement>>        buildPass();    // ordinary elements appended to Hyprland's pass
+        void                                 damage();
+        std::optional<SOverviewTarget>       targetAt(const Vector2D& globalPos) const;
+        std::optional<SOverviewTarget>       workspaceTargetAt(const Vector2D& globalPos) const;
+        std::optional<SWorkspaceDragPreview> workspacePreview(const SWorkspaceIdentity& workspace) const;
+        std::optional<SBoxF>                 workspaceDropArea() const;
+        void                                 refreshWorkspaceLayout();
+        std::optional<SOverviewTarget>       selectedTarget() const;
+        void                                 selectTarget(const SOverviewTarget& target);
+        bool                                 refreshPreparedWorkspace(PHLWORKSPACE workspace, PHLWINDOW window = nullptr);
+        std::optional<SBoxF>                 emptyWorkspaceButton() const;
+        bool                                 emptyWorkspaceButtonHit(const Vector2D& globalPos) const;
+        void                                 setEmptyWorkspaceError(std::string error);
+        const std::string&                   emptyWorkspaceError() const {
             return m_emptyWorkspaceError;
         }
         std::vector<SOverviewTarget>      inspectTargets() const;

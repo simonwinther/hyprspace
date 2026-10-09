@@ -175,7 +175,7 @@ namespace hyprspace {
     }
 
     void COverview::refreshWindows() {
-        if (!session().drag.active()) {
+        if (!session().gestureActive()) {
             if (const auto mon = monitor()) {
                 const auto& reserved = mon->m_reservedArea;
                 m_usable             = {reserved.left(), reserved.top(), std::max(1.0, mon->m_size.x - reserved.left() - reserved.right()),
@@ -186,7 +186,7 @@ namespace hyprspace {
         auto       previous = std::move(m_entries);
         m_entries.clear();
         collect();
-        if (session().drag.active()) {
+        if (session().gestureActive()) {
             // Retain tile positions and identities until release, including a
             // now-empty source. New tiles join the layout after the drag.
             for (auto& entry : previous) {
@@ -231,7 +231,7 @@ namespace hyprspace {
         // A focus commit can change fullscreen and desktop geometry. Keep the
         // overview endpoint fixed throughout the closing animation.
         if (!m_closing) {
-            const size_t columns = session().drag.active() ? entry.previewColumns : 0;
+            const size_t columns = session().gestureActive() ? entry.previewColumns : 0;
             // Cache only geometry. Window identities, desktop bounds and draw
             // order are refreshed above, including during closing animations.
             if (!entry.windowLayout || entry.windowLayout->input != input || entry.windowLayout->usable != m_usable || entry.windowLayout->fixedColumns != columns) {
@@ -440,7 +440,7 @@ namespace hyprspace {
     }
 
     bool COverview::inspectionReady() const {
-        return !m_closing && m_zoomFit && config::overviewWheelZoom() && !session().drag.active();
+        return !m_closing && m_zoomFit && config::overviewWheelZoom() && !session().gestureActive();
     }
 
     bool COverview::inspectionActive() const {
@@ -835,6 +835,11 @@ namespace hyprspace {
         if (!pressed)
             return true; // swallow releases too while we hold the grab
 
+        // The carried workspace remains the command target until release.
+        // Native shortcuts are routed before this overview key handler.
+        if (session().workspaceDrag && sym != XKB_KEY_Escape)
+            return true;
+
         m_scroll.reset();
         const bool SHIFT = mods & HL_MODIFIER_SHIFT;
 
@@ -853,7 +858,7 @@ namespace hyprspace {
 
         switch (sym) {
         case XKB_KEY_Escape:
-            if (session().drag.active())
+            if (session().gestureActive())
                 session().cancelDrag();
             else
                 close(false);
@@ -1048,6 +1053,78 @@ namespace hyprspace {
         return target;
     }
 
+    std::optional<SOverviewTarget> COverview::workspaceTargetAt(const Vector2D& globalPos) const {
+        const auto mon = monitor();
+        if (!mon || m_closing || !SBoxF{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y}.contains(globalPos.x, globalPos.y))
+            return std::nullopt;
+        const auto local = globalPos - mon->m_position;
+        for (const auto& tile : m_tiles | std::views::reverse) {
+            const auto& entry = m_entries[tile.key];
+            const auto  cell  = displayedCell(entry);
+            if (!cell.contains(local.x, local.y))
+                continue;
+            const auto point = mapPreviewPoint({local.x, local.y}, cell, m_usable);
+            if (!point)
+                return std::nullopt;
+            SOverviewTarget target{.workspace   = {entry.workspaceId, entry.workspaceName},
+                                   .monitor     = mon,
+                                   .desktop     = mon->m_position + Vector2D{point->x, point->y},
+                                   .preview     = cell,
+                                   .desktopBox  = m_usable,
+                                   .monitorBox  = m_usable,
+                                   .previewClip = cell};
+            for (auto* box : {&target.preview, &target.desktopBox, &target.monitorBox, &target.previewClip}) {
+                box->x += mon->m_position.x;
+                box->y += mon->m_position.y;
+            }
+            return target;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<SWorkspaceDragPreview> COverview::workspacePreview(const SWorkspaceIdentity& workspace) const {
+        const auto mon = monitor();
+        if (!mon || m_closing)
+            return std::nullopt;
+        const auto entry = std::ranges::find_if(m_entries, [&](const auto& e) { return workspace == SWorkspaceIdentity{e.workspaceId, e.workspaceName}; });
+        if (entry == m_entries.end())
+            return std::nullopt;
+        SWorkspaceDragPreview preview{.cell = displayedCell(*entry), .label = entry->name};
+        preview.cell.x += mon->m_position.x;
+        preview.cell.y += mon->m_position.y;
+        for (const auto index : entry->drawOrder) {
+            const auto& slot   = entry->windows[index];
+            const auto  window = slot.window.lock();
+            if (!window || !window->m_isMapped || window->isHidden())
+                continue;
+            auto geometry = geometryFor(*entry, slot);
+            for (auto* box : {&geometry.box, &geometry.clip}) {
+                box->x += mon->m_position.x;
+                box->y += mon->m_position.y;
+            }
+            preview.windows.push_back({.window     = window,
+                                       .box        = geometry.box,
+                                       .clip       = geometry.clip,
+                                       .visibility = visibilityFor(*entry, slot),
+                                       .fullscreen = slot.fullscreen != Fullscreen::FSMODE_NONE,
+                                       .blur       = slot.blur,
+                                       .texture    = m_capture.textureFor(window)});
+        }
+        return preview;
+    }
+
+    std::optional<SBoxF> COverview::workspaceDropArea() const {
+        const auto mon = monitor();
+        if (!mon || m_closing)
+            return std::nullopt;
+        return SBoxF{mon->m_position.x + m_usable.x, mon->m_position.y + m_usable.y, m_usable.w, m_usable.h};
+    }
+
+    void COverview::refreshWorkspaceLayout() {
+        refreshWindows();
+        damage();
+    }
+
     std::optional<SOverviewTarget> COverview::selectedTarget() const {
         const auto mon = monitor();
         if (!mon || m_selected < 0 || m_selected >= static_cast<int>(m_tiles.size()))
@@ -1078,13 +1155,13 @@ namespace hyprspace {
     }
 
     std::optional<SScrollViewport> COverview::scrollingFor(const SEntry& entry) const {
-        if (entry.spread || m_closing || session().drag.active())
+        if (entry.spread || m_closing || session().gestureActive())
             return std::nullopt;
         return hooks::scrollingViewport({.workspace = {entry.workspaceId, entry.workspaceName}, .monitor = m_monitor});
     }
 
     std::optional<std::pair<int, int>> COverview::scrollControlAt(const Vector2D& local) const {
-        if (m_closing || session().drag.active() || m_progress->value() < 0.95F)
+        if (m_closing || session().gestureActive() || m_progress->value() < 0.95F)
             return std::nullopt;
         for (int i = static_cast<int>(m_tiles.size()) - 1; i >= 0; --i) {
             const auto& entry = m_entries[m_tiles[i].key];
@@ -1182,7 +1259,8 @@ namespace hyprspace {
     std::optional<SBoxF> COverview::emptyWorkspaceButton() const {
         const auto  mon  = monitor();
         const auto& drag = session().drag;
-        if (!mon || m_closing || session().pendingResize || drag.mode == SOverviewDrag::RESIZE || (session().zoomLocked() && drag.mode != SOverviewDrag::MOVE))
+        if (!mon || m_closing || session().workspaceDrag || session().pendingResize || drag.mode == SOverviewDrag::RESIZE ||
+            (session().zoomLocked() && drag.mode != SOverviewDrag::MOVE))
             return std::nullopt;
         const double height       = workspaceToolbarHeight();
         const double inset        = std::min(8.0, height / 4.0);
@@ -1207,6 +1285,8 @@ namespace hyprspace {
     }
 
     void COverview::onMouseMove(const Vector2D& globalPos) {
+        if (session().workspaceDrag)
+            return;
         const auto MONITOR = m_monitor.lock();
         if (!MONITOR)
             return;
@@ -1231,7 +1311,7 @@ namespace hyprspace {
 
     // Pan scrolling workspaces in place; other layouts keep tile navigation.
     void COverview::onScroll(const SScrollInput& event) {
-        if (m_tiles.empty() || m_closing || session().drag.active())
+        if (m_tiles.empty() || m_closing || session().gestureActive())
             return;
 
         const auto mon = monitor();
@@ -1320,6 +1400,8 @@ namespace hyprspace {
         if (!MONITOR)
             return;
         ++m_layoutCounters.frames;
+        session().validateWorkspaceDrag();
+        session().validateWorkspaceSettle();
 
         // Every frame of the close, not just the moment of the commit: Hyprland
         // may not have started its workspace slide yet when the selection is
@@ -1352,6 +1434,36 @@ namespace hyprspace {
         }
 
         m_capture.endFrame();
+
+        // Carried workspace windows reuse their source captures on every
+        // covered output. Their blur still needs that output's backdrop.
+        if (const auto& drag = session().workspaceDrag; drag && drag->moved) {
+            const double dx = drag->box.x - drag->preview.cell.x, dy = drag->box.y - drag->preview.cell.y;
+            for (const auto& slot : drag->preview.windows) {
+                const auto window = slot.window.lock();
+                if (!window || !window->m_isMapped || window->isHidden() || window->m_workspace != drag->workspace)
+                    continue;
+                const double left = std::max(slot.box.x, slot.clip.x) + dx, top = std::max(slot.box.y, slot.clip.y) + dy;
+                const double right  = std::min(slot.box.x + slot.box.w, slot.clip.x + slot.clip.w) + dx;
+                const double bottom = std::min(slot.box.y + slot.box.h, slot.clip.y + slot.clip.h) + dy;
+                if (right > left && bottom > top && right > MONITOR->m_position.x && bottom > MONITOR->m_position.y && left < MONITOR->m_position.x + MONITOR->m_size.x &&
+                    top < MONITOR->m_position.y + MONITOR->m_size.y)
+                    m_needsBlur |= hidden::shouldBlurWindow(window);
+            }
+        }
+        if (const auto preview = session().workspaceSettlePreview()) {
+            for (const auto& slot : preview->windows) {
+                const auto window = slot.window.lock();
+                if (!window || !window->m_isMapped || window->isHidden())
+                    continue;
+                const double left = std::max(slot.box.x, slot.clip.x), top = std::max(slot.box.y, slot.clip.y);
+                const double right  = std::min(slot.box.x + slot.box.w, slot.clip.x + slot.clip.w);
+                const double bottom = std::min(slot.box.y + slot.box.h, slot.clip.y + slot.clip.h);
+                if (right > left && bottom > top && right > MONITOR->m_position.x && bottom > MONITOR->m_position.y && left < MONITOR->m_position.x + MONITOR->m_size.x &&
+                    top < MONITOR->m_position.y + MONITOR->m_size.y)
+                    m_needsBlur |= hidden::shouldBlurWindow(window);
+            }
+        }
 
         damage();
     }
@@ -1413,8 +1525,11 @@ namespace hyprspace {
 
         // The window being carried is drawn last, over everything, so it is not
         // clipped by the tile it is being dragged out of.
-        const auto&     drag    = session().pendingResize ? *session().pendingResize : session().drag;
-        const PHLWINDOW DRAGGED = (drag.active() && drag.moved) ? drag.window.lock() : nullptr;
+        const auto&     drag              = session().pendingResize ? *session().pendingResize : session().drag;
+        const PHLWINDOW DRAGGED           = (drag.active() && drag.moved) ? drag.window.lock() : nullptr;
+        const auto&     workspaceDrag     = session().workspaceDrag;
+        const bool      WORKSPACE_CARRIED = workspaceDrag && workspaceDrag->moved;
+        const auto      workspaceSettle   = session().workspaceSettlePreview();
 
         // Stroke a box. rect() fills, and the tile border trick of drawing a
         // larger rect underneath cannot work over content already drawn.
@@ -1451,6 +1566,12 @@ namespace hyprspace {
             }
             auto& entry = m_entries[m_tiles[i].key];
 
+            // The native move is already committed. Only its picture remains
+            // lifted until it reaches this tile; input keeps the real layout.
+            if (workspaceSettle && session().workspaceSettle && session().workspaceSettle->monitor == MONITOR &&
+                session().workspaceSettle->identity == SWorkspaceIdentity{entry.workspaceId, entry.workspaceName})
+                continue;
+
             const SBoxF cell = displayedCell(entry);
             if (cell.w <= 1 || cell.h <= 1)
                 continue;
@@ -1459,13 +1580,16 @@ namespace hyprspace {
             const auto& drop        = session().selection.drop();
             const auto  destination = drag.mode == SOverviewDrag::RESIZE ? drag.source.workspace : (drop ? drop->workspace : SWorkspaceIdentity{});
             const bool  DROP        = DRAGGED && destination == SWorkspaceIdentity{entry.workspaceId, entry.workspaceName};
-            const bool  HOVERED     = DROP || (!DRAGGED && static_cast<int>(i) == m_hovered);
+            const bool  HOVERED     = DROP || (!DRAGGED && !workspaceDrag && static_cast<int>(i) == m_hovered);
 
             // The zoom's anchor stays visible all the way to the desktop, also
             // when closing into a different workspace from the original one.
-            const auto   STYLE = styleFor(entry, SELECTED);
-            const float  FADE  = STYLE.visibility;
-            const double round = ROUNDING * PROGRESS;
+            const auto STYLE = styleFor(entry, SELECTED);
+            const bool SOURCE =
+                WORKSPACE_CARRIED && workspaceDrag->sourceMonitor == MONITOR && workspaceDrag->identity == SWorkspaceIdentity{entry.workspaceId, entry.workspaceName};
+            const float  SOURCE_ALPHA = SOURCE ? 0.28F : 1.F;
+            const float  FADE         = STYLE.visibility * SOURCE_ALPHA;
+            const double round        = ROUNDING * PROGRESS;
 
             // A hairline around every tile so they read as distinct cards against
             // the wallpaper, with the accent border replacing it on selection.
@@ -1483,7 +1607,7 @@ namespace hyprspace {
             // Fade the backing away with the zoom. Leaving it behind a full-size
             // transparent window would change the background at the hand-off.
             const auto TILEBG = config::overviewTileBgColor();
-            rect(cell, TILEBG.modifyA(TILEBG.a * STYLE.plateVisibility), round);
+            rect(cell, TILEBG.modifyA(TILEBG.a * STYLE.plateVisibility * SOURCE_ALPHA), round);
 
             if (SELECTED && entry.windows.empty() && PROGRESS > 0.35F && session().preparedWorkspace(State::workspaceState()->query().id(entry.workspaceId).run()) &&
                 cell.w > 80 && cell.h > 60) {
@@ -1507,7 +1631,7 @@ namespace hyprspace {
                 if (b.w < 1 || b.h < 1)
                     continue;
 
-                const float VISIBILITY = visibilityFor(entry, slot);
+                const float VISIBILITY = visibilityFor(entry, slot) * SOURCE_ALPHA;
                 if (t)
                     windowTexture(W, t, b, VISIBILITY, round, slot.blur, GEOMETRY.clip);
                 else {
@@ -1520,7 +1644,7 @@ namespace hyprspace {
 
                 const bool   FULLSCREEN = slot.fullscreen != Fullscreen::FSMODE_NONE;
                 const auto&  target     = session().selection.command();
-                const bool   HOVER      = !drag.active() && target && target->window == W;
+                const bool   HOVER      = !session().gestureActive() && target && target->window == W;
                 const double MARK       = FULLSCREEN || HOVER ? std::max(2, BORDER) : 1;
                 const auto   COL        = HOVER ? config::overviewActiveBorder() : (FULLSCREEN ? config::overviewFullscreenBorder() : config::overviewTileBorderColor());
                 if (FULLSCREEN || HOVER || entry.spread) {
@@ -1729,6 +1853,116 @@ namespace hyprspace {
                     const auto box  = fitBox({m_usable.x + 12, button->y + 4, size.x, button->h - 8}, size.x / size.y);
                     tex(text, box, PROGRESS);
                 }
+            }
+        }
+
+        // The output is the destination, rather than one of its existing tiles.
+        if (WORKSPACE_CARRIED && workspaceDrag->targetMonitor == MONITOR) {
+            const auto ink = config::overviewActiveBorder();
+            rect(m_usable, ink.modifyA(0.055F));
+            const double inset = std::max(2, BORDER);
+            border({m_usable.x + inset, m_usable.y + inset, m_usable.w - inset * 2, m_usable.h - inset * 2}, ink, BORDER, ROUNDING);
+        }
+
+        // Dragging and settling share one live card. Geometry stays in global
+        // logical coordinates until each output applies its own scale.
+        auto workspaceCard = [&](const SWorkspaceDragPreview& preview, PHLWORKSPACE workspace, float opacity, const CHyprColor& ink, const CHyprColor& labelInk,
+                                 double borderWidth, COverview* captureView = nullptr) {
+            auto local = [&](SBoxF box) {
+                box.x -= MONITOR->m_position.x;
+                box.y -= MONITOR->m_position.y;
+                return box;
+            };
+            const auto cell = local(preview.cell);
+            const auto bg   = config::overviewTileBgColor();
+            border(cell, ink, borderWidth, ROUNDING);
+            rect(cell, bg.modifyA(bg.a * opacity), ROUNDING);
+            for (const auto& slot : preview.windows) {
+                const auto window = slot.window.lock();
+                if (!window || !window->m_isMapped || window->isHidden() || window->m_workspace != workspace)
+                    continue;
+                const auto   box = local(slot.box), clip = local(slot.clip);
+                const float  alpha = slot.visibility * opacity;
+                const double left = std::max(box.x, clip.x), top = std::max(box.y, clip.y);
+                const SBoxF  visible{left, top, std::min(box.x + box.w, clip.x + clip.w) - left, std::min(box.y + box.h, clip.y + clip.h) - top};
+                if (visible.w <= 0 || visible.h <= 0)
+                    continue;
+                const auto texture = captureView ? captureView->textureFor(window) : slot.texture;
+                if (texture)
+                    windowTexture(window, texture, box, alpha, ROUNDING, hidden::shouldBlurWindow(window), clip);
+                else
+                    rect(visible, config::overviewTitleBgColor().modifyA(alpha), ROUNDING);
+                if (slot.fullscreen) {
+                    const auto color = config::overviewFullscreenBorder();
+                    outline(visible, color.modifyA(color.a * alpha), std::max(2, BORDER));
+                }
+            }
+            if (config::overviewShowLabels()) {
+                if (auto text = textures().text(preview.label, FONT, labelInk, static_cast<int>(std::max(1.0, cell.w)), SCALE)) {
+                    const auto size  = logicalSize(text);
+                    const auto badge = overviewWorkspaceLabelBox(cell, size.x, size.y);
+                    const auto color = config::overviewTitleBgColor();
+                    rect(badge, color.modifyA(color.a * opacity), badge.h / 2);
+                    tex(text, {badge.x + (badge.w - size.x) / 2, badge.y + 5, size.x, size.y}, opacity);
+                }
+            }
+        };
+        if (WORKSPACE_CARRIED) {
+            const auto& carried = *workspaceDrag;
+            const auto  source  = std::ranges::find_if(session().views, [&](const auto& view) { return view->monitor() == carried.sourceMonitor; });
+            if (source != session().views.end()) {
+                auto         preview = carried.preview;
+                const double dx = carried.box.x - preview.cell.x, dy = carried.box.y - preview.cell.y;
+                preview.cell = carried.box;
+                for (auto& slot : preview.windows) {
+                    for (auto* box : {&slot.box, &slot.clip}) {
+                        box->x += dx;
+                        box->y += dy;
+                    }
+                }
+                workspaceCard(preview, carried.workspace, 0.94F, config::overviewActiveBorder(), config::overviewActiveBorder(), BORDER, source->get());
+            }
+        }
+        if (workspaceSettle && session().workspaceSettle) {
+            const auto& settle   = *session().workspaceSettle;
+            const float progress = workspaceSettle->progress;
+            auto        ink      = config::overviewActiveBorder();
+            auto        labelInk = ink;
+            double      width    = BORDER;
+            // Selection remains usable during the glide. Blend into the tile's
+            // current border rather than flashing back when the lift ends.
+            if (const auto view = std::ranges::find_if(session().views, [&](const auto& view) { return view->monitor() == settle.monitor; });
+                view != session().views.end()) {
+                const auto& destination = **view;
+                const auto  tile        = std::ranges::find_if(destination.m_tiles, [&](const auto& tile) {
+                    const auto& entry = destination.m_entries[tile.key];
+                    return settle.identity == SWorkspaceIdentity{entry.workspaceId, entry.workspaceName};
+                });
+                if (tile != destination.m_tiles.end()) {
+                    const int  index    = static_cast<int>(tile - destination.m_tiles.begin());
+                    const bool selected = index == destination.m_selected, hovered = index == destination.m_hovered;
+                    const auto target      = selected ? config::overviewActiveBorder() : (hovered ? config::overviewHoverBorder() : config::overviewTileBorderColor());
+                    ink                    = CHyprColor(std::lerp(ink.r, target.r, progress), std::lerp(ink.g, target.g, progress), std::lerp(ink.b, target.b, progress),
+                                                        std::lerp(ink.a, target.a, progress));
+                    const auto labelTarget = selected ? config::overviewActiveBorder() : config::overviewLabelColor();
+                    labelInk               = CHyprColor(std::lerp(labelInk.r, labelTarget.r, progress), std::lerp(labelInk.g, labelTarget.g, progress),
+                                                        std::lerp(labelInk.b, labelTarget.b, progress), std::lerp(labelInk.a, labelTarget.a, progress));
+                    width                  = std::lerp(static_cast<double>(BORDER), selected || hovered ? static_cast<double>(BORDER) : 1.0, progress);
+                }
+            }
+            workspaceCard(*workspaceSettle, settle.workspace, std::lerp(0.94F, 1.F, progress), ink, labelInk, width);
+        }
+
+        // Name the destination above the carried card, including when its
+        // pickup size covers the top of a smaller output.
+        if (WORKSPACE_CARRIED && workspaceDrag->targetMonitor == MONITOR) {
+            const auto ink   = config::overviewActiveBorder();
+            const auto label = "Move workspace " + workspaceDrag->preview.label + " to " + MONITOR->m_name;
+            if (auto text = textures().text(label, FONT, ink, static_cast<int>(std::max(1.0, m_usable.w - 48)), SCALE)) {
+                const auto  size = logicalSize(text);
+                const SBoxF badge{m_usable.x + 16, m_usable.y + 12, size.x + 24, size.y + 12};
+                rect(badge, config::overviewTitleBgColor(), 8);
+                tex(text, {badge.x + 12, badge.y + 6, size.x, size.y}, 1.F);
             }
         }
 

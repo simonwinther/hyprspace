@@ -1652,6 +1652,7 @@ def main():
             "robustness",
             "launch",
             "gestures",
+            "workspace_drag",
             "capture",
             "performance",
             "install",
@@ -1759,6 +1760,9 @@ def main():
         if args.only in ("all", "robustness", "gestures"):
             import gesture_regressions
             gesture_regressions.run(suite, wait_for)
+        if args.only in ("all", "robustness", "workspace_drag"):
+            import workspace_drag
+            workspace_drag.run(suite, wait_for)
         if args.only in ("all", "robustness", "capture"):
             import capture_regressions
             capture_regressions.coverage(suite, wait_for)

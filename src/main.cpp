@@ -120,6 +120,25 @@ namespace {
         }
     }
 
+    std::function<bool()> g_workspaceConnectionsValid;
+    bool                  g_workspaceButtonTracked = false;
+
+    void reconcileWorkspaceButton() {
+        constexpr uint32_t LMB = 0x110;
+        if (!g_workspaceButtonTracked)
+            return;
+        if (!g_mouseButtons.captured(LMB)) {
+            g_workspaceConnectionsValid = {};
+            g_workspaceButtonTracked    = false;
+            return;
+        }
+        if (g_workspaceConnectionsValid && !g_workspaceConnectionsValid()) {
+            session().cancelWorkspaceDrag();
+            g_mouseButtons.orphan(LMB);
+            g_workspaceConnectionsValid = {};
+        }
+    }
+
     struct SListeners {
         CHyprSignalListener key;
         CHyprSignalListener mouseMove;
@@ -205,26 +224,7 @@ namespace {
     }
 
     bool foregroundPointer() {
-        const auto pos = g_pInputManager->getMouseCoordsInternal();
-        const auto mon = State::monitorState()->query().vec(pos).run();
-        if (!mon)
-            return false;
-        Vector2D local;
-        PHLLS    layer;
-        auto     hit = Desktop::viewState()->hitTest();
-        for (auto level : {ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ZWLR_LAYER_SHELL_V1_LAYER_TOP}) {
-            if (hit.layerPopupSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer) ||
-                hit.layerSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer))
-                return true;
-        }
-        std::vector<PHLLSREF> panels;
-        for (auto level : {ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM, ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND})
-            for (const auto& candidate : mon->m_layerSurfaceLayers[level])
-                if (candidate && candidate->m_namespace.starts_with("waybar"))
-                    panels.push_back(candidate);
-        if (hit.layerPopupSurfaceAt(pos, &panels, &local, &layer) || hit.layerSurfaceAt(pos, &panels, &local, &layer))
-            return true;
-        return false;
+        return hooks::foregroundPointerAt(g_pInputManager->getMouseCoordsInternal());
     }
 
     bool foregroundKeyboard() {
@@ -453,7 +453,7 @@ namespace {
     }
 
     bool ownsPointerInput() {
-        return ownsInput() && !yieldingInput() && (session().drag.active() || !foregroundPointer());
+        return ownsInput() && !yieldingInput() && (session().gestureActive() || !foregroundPointer());
     }
 
     void onLayerOpened(PHLLS layer) {
@@ -659,6 +659,7 @@ namespace {
 
     void onMouseMove(Vector2D pos, Event::SCallbackInfo& info) {
         reconcilePanButton();
+        reconcileWorkspaceButton();
         if (!ownsInput()) {
             session().ownCursor(false);
             return;
@@ -684,6 +685,7 @@ namespace {
     // silently scrolls the page behind it.
     void onMouseAxis(IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
         reconcilePanButton();
+        reconcileWorkspaceButton();
         if (!ownsPointerInput())
             return;
 
@@ -691,7 +693,7 @@ namespace {
         if (const auto monitor = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run())
             diagnostics::input(monitor->m_id);
 
-        if (session().drag.active())
+        if (session().gestureActive())
             return;
 
         const SScrollInput SCROLL{
@@ -718,6 +720,7 @@ namespace {
         constexpr uint32_t RMB = 0x111;
         constexpr uint32_t MMB = 0x112;
         reconcilePanButton();
+        reconcileWorkspaceButton();
         const bool PRESSED      = event.state == WL_POINTER_BUTTON_STATE_PRESSED;
         const bool pointerOwned = ownsPointerInput();
         // A new outside press hands the aggregate button back to the seat,
@@ -734,7 +737,9 @@ namespace {
         const bool panPress = PRESSED && event.button == RMB && currentMods() == 0 && !switcherLive() && session().zoomHeld() && config::overviewWheelZoom();
         // Native bookkeeping follows this cancellable callback. Do not take
         // over a new grip while a native button gesture still owns its release.
-        const bool OWNS_INPUT = pointerOwned && !(panPress && !captured && g_pInputManager->hasHeldButtons());
+        const auto workspaceMods  = config::overviewWorkspaceDragModifiers();
+        const bool workspacePress = PRESSED && event.button == 0x110 && workspaceMods != 0 && currentMods() == workspaceMods && !switcherLive();
+        const bool OWNS_INPUT     = pointerOwned && !((panPress || workspacePress) && !captured && g_pInputManager->hasHeldButtons());
 
         if (!PRESSED && event.button == RMB)
             session().releaseMousePan();
@@ -748,12 +753,13 @@ namespace {
             g_panConnectionsValid = hooks::pointerConnectionGuard();
         }
         reconcilePanButton();
+        reconcileWorkspaceButton();
         if (!OWNS_INPUT)
             return;
         if (panPress && !g_panConnectionsValid)
             return;
         // A captured press cannot begin another gesture before its release.
-        if (PRESSED && (event.button == RMB || event.button == MMB) && captured)
+        if (PRESSED && (event.button == RMB || event.button == MMB || workspacePress) && captured)
             return;
         if (const auto monitor = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run())
             diagnostics::input(monitor->m_id);
@@ -763,8 +769,13 @@ namespace {
             return;
         }
 
-        if (session().button(event.button, PRESSED, currentMods()))
+        if (session().button(event.button, PRESSED, currentMods())) {
+            if (PRESSED && event.button == 0x110 && session().workspaceDrag) {
+                g_workspaceButtonTracked    = true;
+                g_workspaceConnectionsValid = session().workspaceDrag->connectionsValid;
+            }
             return;
+        }
 
         if (auto* o = pointerOverview()) {
             o->onMouseButton(event.button, PRESSED, currentMods());
@@ -792,6 +803,7 @@ namespace {
 
     void onRenderPre(PHLMONITOR monitor) {
         reconcilePanButton();
+        reconcileWorkspaceButton();
         diagnostics::enable(config::diagnosticsEnabled());
         diagnostics::CFrame measured{monitor && (overviewOn(monitor) || (g_switcher && g_switcher->monitor() == monitor)) ? monitor->m_id : -1};
         if (!overlaysAllowed())
@@ -807,6 +819,10 @@ namespace {
                     session().selection.pointer(std::nullopt, false);
             }
         }
+        session().validateWorkspaceDrag();
+        session().validateWorkspaceSettle();
+        if (session().workspaceDrag && yieldingInput())
+            session().cancelWorkspaceDrag();
         if (session().drag.active() && (!session().drag.window || !session().drag.window->m_isMapped))
             session().cancelDrag();
         if (session().pendingResize && (!session().pendingResize->window || !session().pendingResize->window->m_isMapped))
@@ -920,7 +936,7 @@ namespace {
             if (args != "on") {
                 // Snapshot the destination's displayed camera before input
                 // teardown releases held zoom or a pan grip.
-                if (!session().drag.active() && session().selection.command()) {
+                if (!session().gestureActive() && session().selection.command()) {
                     if (auto* destination = session().keyboardView())
                         destination->close(true);
                     for (const auto& view : session().views)
@@ -1111,9 +1127,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_listeners.configReloaded  = bus.config.reloaded.listen([] {
         hooks::reconcileDispatchers();
         session().cancelZoom();
+        session().cancelWorkspaceDrag();
+        session().cancelWorkspaceSettle();
         if (g_panButtonTracked)
             g_mouseButtons.orphan(0x111);
         reconcilePanButton();
+        reconcileWorkspaceButton();
         textures().invalidate();
         if (g_switcher)
             g_switcher->reconfigure();

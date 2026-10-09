@@ -15,6 +15,7 @@ namespace hyprspace::hooks {
     void                             setCursor(const std::string& name);
     std::string                      cursorName();
     std::function<bool()>            pointerConnectionGuard();
+    bool                             foregroundPointerAt(const Vector2D& point);
     std::string                      cursorShape();
     void                             renderPanels(PHLMONITOR monitor);
     bool                             keyboardOwned();

@@ -108,9 +108,38 @@ keyboard grab, which makes it a reliable escape hatch.
 | Right click | Close without selecting |
 | `Super` + drag left | Rearrange a window or move it to any workspace tile on any output |
 | `Super` + drag right | Resize that window in place, scaled into the tile |
+| `Super` + `Alt` + drag left | Move a regular workspace to another monitor |
 | Wheel / two-finger scroll | Pan the scrolling workspace under the pointer; other layouts step the workspace selection |
 | Edge arrows inside a scrolling tile | Reveal the next hidden column and keep the overview open |
 | + Empty workspace | Prepare an empty workspace on this output, or accept a Super-dragged window |
+
+Hold **Super + Alt** and left-drag anywhere inside a regular workspace tile,
+including over window previews or from the enlarged zoom view. Once the motion
+exceeds `binds:drag_threshold` in logical pointer coordinates, a carried
+workspace card follows the pointer and highlights the destination monitor.
+Drop anywhere in another open overview's usable monitor area, including over
+tiles or empty space. The workspace keeps its number, name and layout, the
+overview stays open and selects its moved tile, and the destination keeps its
+current desktop workspace. If the source was showing that workspace, it
+switches to another regular workspace. Pinned windows remain on the source
+monitor, following Hyprland's native workspace move behavior. On release, the
+card and its window previews ease into their destination tile over 180 ms.
+The move completes immediately, so the transition does not delay input. The
+transition follows Hyprland's global and `windowsMove` animation enable settings.
+
+Only regular numbered and named workspaces can be moved; scratchpads cannot.
+Releasing over the source monitor, a panel, a monitor gap or an output without
+an overview leaves workspace placement unchanged. Escape cancels the gesture
+and keeps the overview open. Starting from zoom returns to the grid when the
+gesture finishes or is cancelled. Releasing the modifiers after pickup does
+not end the drag. Native keyboard shortcuts retain their usual routing; when
+one executes, it cancels the workspace drag first. Window move and resize
+controls continue to use Super alone.
+
+Set `overview:workspace_drag_modifiers` to choose the exact modifier combination
+that must be held on pickup. It accepts case-insensitive Hyprland modifier names
+separated by spaces or `+`, and requires Super plus at least one of Alt, Ctrl or
+Shift. Unknown names are rejected. An empty value disables the gesture.
 
 Middle-click without modifiers, press **N**, or click **+ Empty workspace** on a
 monitor to prepare an empty destination there. This uses the pointer's monitor
@@ -372,6 +401,7 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:gap` | int | `28` | Gap between workspace tiles |
 | `overview:zoom_key` | string | `z` | Unmodified hold-to-zoom key; empty disables it. Use an XKB key name that does not conflict with overview navigation or system keys |
 | `overview:empty_workspace_key` | string | `n` | Unmodified key that selects an empty workspace on the pointer's monitor; empty disables it. Zoom takes precedence if both keys match |
+| `overview:workspace_drag_modifiers` | string | `SUPER ALT` | Exact modifiers for left-dragging a regular workspace to another monitor; requires Super plus Alt, Ctrl or Shift. Empty disables it |
 | `overview:wheel_zoom` | bool | `true` | Extra wheel, vertical touchpad and keyboard magnification/panning while the zoom key is held; bounds are 1–4 times the normal held fit. Disable to retain previous scrolling behavior |
 | `overview:band_gap` | int | `28` | Deprecated compatibility key; ignored. `overview:gap` controls both axes |
 | `overview:all_workspaces` | bool | `true` | Deprecated compatibility key; ignored. Populated, active and persistent workspaces are always included |
@@ -403,7 +433,7 @@ The expanding destination covers the other previews throughout the close.
 Empty workspaces focus their owning monitor too; monitor rules also apply to
 numbers whose workspaces have not been created yet.
 
-One session owns all views and the active drag. Started gestures retain pointer ownership over ordinary panels, and wheel input stays with the gesture. Move and resize cursors restore on release or cancellation. Motion must exceed the native drag threshold in mapped desktop coordinates. Released resize pictures remain visible until the deferred native resize commits; a second gesture waits for that commit. A drag preview follows the
+One session owns all views and the active drag. Started gestures retain pointer ownership over ordinary panels, and wheel input stays with the gesture. Move and resize cursors restore on release or cancellation. Window motion must exceed the native drag threshold in mapped desktop coordinates; workspace motion uses logical pointer coordinates. Released resize pictures remain visible until the deferred native resize commits; a second gesture waits for that commit. A drag preview follows the
 pointer across outputs, including their offsets, scale and rotation. The source
 and destination use workspace identities and weak window references. Tile
 positions stay fixed during the drag while window membership is reconciled.
@@ -412,6 +442,11 @@ gaps never become valid drop destinations. With `follow_mouse = true`, pointer
 movement resumes selection after keyboard navigation. With `false`, pointer
 motion updates hover/drop targets while commands and Enter retain the keyboard
 selection.
+
+Workspace drops require an overview on the destination monitor, so
+`overview:all_monitors = false` leaves uncovered outputs unavailable. Moving a
+workspace changes its runtime placement; configured monitor assignment rules
+can place it back on their chosen output when the configuration reloads.
 
 Committing always acts on the monitor you picked from, not on the one Hyprland
 still calls focused. That distinction matters here: the overview holds the

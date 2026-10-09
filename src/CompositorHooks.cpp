@@ -10,6 +10,7 @@
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
@@ -508,7 +509,7 @@ namespace hyprspace::hooks {
                     inspectKey(it->inspection);
                 return false;
             }
-            const bool navigation = it != keys.end() ? it->reserved : owned && (reserved(sym, mods) || (sym == XKB_KEY_Escape && session().drag.active()));
+            const bool navigation = it != keys.end() ? it->reserved : owned && (reserved(sym, mods) || (sym == XKB_KEY_Escape && session().gestureActive()));
             if (pressed && it == keys.end()) {
                 const auto zoomKey    = config::overviewZoomKey();
                 const bool zoom       = owned && mods == 0 && zoomKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == zoomKey;
@@ -643,6 +644,28 @@ namespace hyprspace::hooks {
         return (overrideController.get()->*member(SCursorOverrides{}))[CURSOR_OVERRIDE_UNKNOWN];
     }
 
+    bool foregroundPointerAt(const Vector2D& pos) {
+        const auto mon = State::monitorState()->query().vec(pos).run();
+        if (!mon)
+            return false;
+        Vector2D local;
+        PHLLS    layer;
+        auto     hit = Desktop::viewState()->hitTest();
+        for (auto level : {ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ZWLR_LAYER_SHELL_V1_LAYER_TOP}) {
+            if (hit.layerPopupSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer) ||
+                hit.layerSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer))
+                return true;
+        }
+        std::vector<PHLLSREF> panels;
+        for (auto level : {ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM, ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND})
+            for (const auto& candidate : mon->m_layerSurfaceLayers[level])
+                if (candidate && candidate->m_namespace.starts_with("waybar"))
+                    panels.push_back(candidate);
+        if (hit.layerPopupSurfaceAt(pos, &panels, &local, &layer) || hit.layerSurfaceAt(pos, &panels, &local, &layer))
+            return true;
+        return false;
+    }
+
     std::function<bool()> pointerConnectionGuard() {
         const auto& listeners = Pointer::mgr().get()->*member(SPointerListeners{});
         using Listener        = std::remove_cvref_t<decltype(*listeners.front())>;
@@ -708,8 +731,10 @@ namespace hyprspace::hooks {
 
     void syncKeyboardFocus() {
         pruneKeys();
-        if (!keyboardOwned() && g_overviewSession)
+        if (!keyboardOwned() && g_overviewSession) {
             session().cancelZoom();
+            session().cancelWorkspaceDrag();
+        }
         if (!focusHook)
             return;
         using Fn            = void (*)(CSeatManager*, SP<CWLSurfaceResource>);
@@ -791,7 +816,7 @@ namespace hyprspace::hooks {
 
     bool panWorkspace(const SOverviewTarget& target, double distance) {
         const auto scroll = scrolling(target);
-        if (!scroll.algorithm || !scroll.data || session().drag.active() || !std::isfinite(distance))
+        if (!scroll.algorithm || !scroll.data || session().gestureActive() || !std::isfinite(distance))
             return false;
         const auto& controller = scroll.data->controller;
         if (controller->getScrollInhibitor().isInhibited)
@@ -808,7 +833,7 @@ namespace hyprspace::hooks {
 
     bool stepWorkspace(const SOverviewTarget& target, int direction, bool fromSelection) {
         const auto scroll = scrolling(target);
-        if (!scroll.algorithm || !scroll.data || scroll.data->columns.empty() || session().drag.active())
+        if (!scroll.algorithm || !scroll.data || scroll.data->columns.empty() || session().gestureActive())
             return false;
         const auto& controller = scroll.data->controller;
         if (controller->getScrollInhibitor().isInhibited)
@@ -1029,6 +1054,8 @@ namespace hyprspace::hooks {
             auto       callback     = [name, original = dispatcher](std::string args) {
                 if (dispatchDepth)
                     return original(std::move(args));
+                session().cancelWorkspaceDrag();
+                session().cancelWorkspaceSettle();
                 const bool owned = keyboardOwned();
                 if (!owned) {
                     if (!launchEnabled || !launchEnabled())

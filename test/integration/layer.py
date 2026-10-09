@@ -58,6 +58,10 @@ if len(sys.argv) > 3 and sys.argv[3] == "bottom":
     GtkLayerShell.set_keyboard_mode(window, GtkLayerShell.KeyboardMode.NONE)
     GtkLayerShell.set_anchor(window, GtkLayerShell.Edge.RIGHT, True)
     GtkLayerShell.auto_exclusive_zone_enable(window)
+elif len(sys.argv) > 3 and sys.argv[3] == "pointer":
+    # Pointer-only overlays occupy usable output space without reserving it or
+    # taking keyboard ownership away from an in-progress overview gesture.
+    GtkLayerShell.set_keyboard_mode(window, GtkLayerShell.KeyboardMode.NONE)
 
 
 def key(widget, event):

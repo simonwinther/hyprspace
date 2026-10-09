@@ -298,7 +298,7 @@ namespace hyprspace::launch {
             if (line.starts_with("consume "))
                 return consume(line.substr(8));
             if (line == "status") {
-                nlohmann::json result{{"live", session().live()}, {"dragging", session().drag.active()}, {"views", nlohmann::json::array()}};
+                nlohmann::json result{{"live", session().live()}, {"dragging", session().gestureActive()}, {"views", nlohmann::json::array()}};
                 result["modifiers"]          = g_pInputManager->getModsFromAllKBs();
                 result["keyboard_owned"]     = hooks::keyboardOwned();
                 result["cursor_owned"]       = session().cursorOwned();
@@ -326,13 +326,48 @@ namespace hyprspace::launch {
                 if (session().drag.active()) {
                     const auto& drag    = session().drag;
                     const auto  boxJSON = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
-                    result["drag"]      = {{"resize", drag.mode == SOverviewDrag::RESIZE}, {"moved", drag.moved},      {"threshold", drag.threshold},
-                                           {"workspace", drag.source.workspace.id},        {"box", boxJSON(drag.box)}, {"clip", boxJSON(drag.source.previewClip)}};
+                    result["drag"]      = {{"kind", drag.mode == SOverviewDrag::RESIZE ? "resize" : "move"},
+                                           {"resize", drag.mode == SOverviewDrag::RESIZE},
+                                           {"moved", drag.moved},
+                                           {"threshold", drag.threshold},
+                                           {"workspace", drag.source.workspace.id},
+                                           {"box", boxJSON(drag.box)},
+                                           {"clip", boxJSON(drag.source.previewClip)}};
                     for (const auto& view : session().views)
                         if (view->monitor() == drag.source.monitor)
                             for (const auto& target : view->inspectTargets())
                                 if (!target.window && target.workspace == drag.source.workspace)
                                     result["drag"]["clip"] = boxJSON(target.preview);
+                }
+                if (session().workspaceDrag) {
+                    const auto& drag   = *session().workspaceDrag;
+                    const auto  source = drag.sourceMonitor.lock(), destination = drag.targetMonitor.lock();
+                    const auto  boxJSON = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
+                    result["drag"]      = {{"kind", "workspace"},
+                                           {"resize", false},
+                                           {"moved", drag.moved},
+                                           {"threshold", drag.threshold},
+                                           {"workspace", drag.identity.id},
+                                           {"box", boxJSON(drag.box)},
+                                           {"clip", boxJSON(drag.preview.cell)},
+                                           {"source_monitor", source ? source->m_name : ""},
+                                           {"target_monitor", destination ? destination->m_name : ""}};
+                }
+                if (const auto picture = session().workspaceSettlePreview()) {
+                    const auto& settle         = *session().workspaceSettle;
+                    const auto  monitor        = settle.monitor.lock();
+                    const auto  boxJSON        = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
+                    result["workspace_settle"] = {{"workspace", settle.identity.id},
+                                                  {"monitor", monitor->m_name},
+                                                  {"progress", picture->progress},
+                                                  {"box", boxJSON(picture->cell)},
+                                                  {"windows", nlohmann::json::array()}};
+                    for (const auto& view : session().views)
+                        if (view->monitor() == monitor)
+                            if (auto destination = view->workspacePreview(settle.identity))
+                                result["workspace_settle"]["destination"] = boxJSON(destination->cell);
+                    for (const auto& slot : picture->windows)
+                        result["workspace_settle"]["windows"].push_back({{"box", boxJSON(slot.box)}, {"clip", boxJSON(slot.clip)}, {"visibility", slot.visibility}});
                 }
                 result["layout_targets_unique"] = true;
                 for (const auto& workspace : State::workspaceState()->workspaces()) {

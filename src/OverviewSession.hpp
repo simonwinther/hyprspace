@@ -4,9 +4,12 @@
 #include "Interaction.hpp"
 #include "Input.hpp"
 
+#include <hyprland/src/helpers/AnimatedVariable.hpp>
+
 #include <memory>
 #include <optional>
 #include <expected>
+#include <functional>
 
 namespace hyprspace {
     class COverview;
@@ -35,6 +38,43 @@ namespace hyprspace {
         }
     };
 
+    struct SWorkspacePreviewWindow {
+        PHLWINDOWREF         window;
+        SBoxF                box, clip;
+        float                visibility = 1;
+        bool                 fullscreen = false, blur = false;
+        SP<Render::ITexture> texture;
+    };
+
+    struct SWorkspaceDragPreview {
+        SBoxF                                cell;
+        std::vector<SWorkspacePreviewWindow> windows;
+        std::string                          label;
+        float                                progress = 1;
+    };
+
+    struct SWorkspaceDrag {
+        PHLWORKSPACE          workspace;
+        SWorkspaceIdentity    identity;
+        PHLMONITORREF         sourceMonitor, targetMonitor;
+        PHLMONITORREF         focusedMonitor;
+        PHLWINDOWREF          focusedWindow;
+        Vector2D              pickup, offset;
+        SBoxF                 box;
+        double                threshold = 0;
+        bool                  moved     = false;
+        SWorkspaceDragPreview preview;
+        std::function<bool()> connectionsValid;
+    };
+
+    // Released cards keep a picture, never a button or command target.
+    struct SWorkspaceSettle {
+        PHLWORKSPACE          workspace;
+        SWorkspaceIdentity    identity;
+        PHLMONITORREF         monitor;
+        SWorkspaceDragPreview from;
+    };
+
     class COverviewSession {
       public:
         COverviewSession();
@@ -42,11 +82,16 @@ namespace hyprspace {
         std::vector<std::unique_ptr<COverview>> views;
         CTargetSelection<SOverviewTarget>       selection;
         SOverviewDrag                           drag;
+        std::optional<SWorkspaceDrag>           workspaceDrag;
+        std::optional<SWorkspaceSettle>         workspaceSettle;
         // A released resize is still pictured while the native controller
         // flushes its final motion. It no longer owns a pressed button.
         std::optional<SOverviewDrag> pendingResize;
 
-        bool                    live() const;
+        bool live() const;
+        bool gestureActive() const {
+            return drag.active() || workspaceDrag.has_value();
+        }
         void                    begin();
         void                    stopInput();
         void                    restoreVisibility();
@@ -85,23 +130,29 @@ namespace hyprspace {
         bool panning() const {
             return m_pan && m_pan->started;
         }
-        bool                           panAvailable() const;
-        bool                           zoomHeld() const;
-        bool                           zoomLocked() const;
-        std::optional<SOverviewTarget> zoomTarget() const;
-        bool                           zoomEdgeReady(const COverview& view) const;
-        std::optional<EDirection>      zoomEdgePending() const;
-        void                           followKeyboardFocus();
-        bool                           button(uint32_t button, bool pressed, uint32_t mods);
-        void                           cancelDrag();
-        void                           finishPlacement();
-        void                           monitorRemoved(PHLMONITOR monitor);
-        void                           damage();
-        PHLWORKSPACE                   workspace(const SOverviewTarget& target) const;
-        Vector2D                       desktopPoint(const SOverviewTarget& target) const;
-        void                           establishTarget();
-        void                           ownCursor(bool own);
-        bool                           cursorOwned() const {
+        bool                                 panAvailable() const;
+        bool                                 zoomHeld() const;
+        bool                                 zoomLocked() const;
+        std::optional<SOverviewTarget>       zoomTarget() const;
+        bool                                 zoomEdgeReady(const COverview& view) const;
+        std::optional<EDirection>            zoomEdgePending() const;
+        void                                 followKeyboardFocus();
+        bool                                 button(uint32_t button, bool pressed, uint32_t mods);
+        void                                 cancelDrag();
+        void                                 cancelWorkspaceDrag();
+        void                                 validateWorkspaceDrag();
+        void                                 cancelWorkspaceSettle();
+        void                                 validateWorkspaceSettle();
+        float                                workspaceSettleProgress() const;
+        std::optional<SWorkspaceDragPreview> workspaceSettlePreview() const;
+        void                                 finishPlacement();
+        void                                 monitorRemoved(PHLMONITOR monitor);
+        void                                 damage();
+        PHLWORKSPACE                         workspace(const SOverviewTarget& target) const;
+        Vector2D                             desktopPoint(const SOverviewTarget& target) const;
+        void                                 establishTarget();
+        void                                 ownCursor(bool own);
+        bool                                 cursorOwned() const {
             return m_cursorOwned;
         }
         SP<Render::ITexture>           dragTexture() const;
@@ -109,6 +160,11 @@ namespace hyprspace {
         std::optional<SOverviewTarget> hit(const Vector2D& pos) const;
 
       private:
+        bool                                     workspaceDragValid() const;
+        PHLMONITOR                               workspaceDropMonitor(const Vector2D& point) const;
+        bool                                     beginWorkspaceDrag();
+        void                                     finishWorkspaceDrag();
+        void                                     beginWorkspaceSettle(SWorkspaceDrag gesture, PHLMONITOR destination);
         void                                     syncSelection();
         void                                     updateZoom();
         void                                     retargetSelection(COverview& view);
@@ -137,19 +193,21 @@ namespace hyprspace {
             SWorkspaceIdentity source, destination;
             PHLMONITORREF      monitor;
         };
-        CZoomEdgeHover                  m_zoomEdgeHover;
-        std::optional<SZoomEdgeIntent>  m_zoomEdgeIntent;
-        CZoomHoldState                  m_zoomHolds;
-        CZoomHoldState                  m_panHolds;
-        uint64_t                        m_zoomGeneration = 0;
-        std::optional<SOverviewTarget>  m_zoomTarget;
-        std::optional<SInspectionPan>   m_pan;
-        CVisibilityLedger<PHLWINDOWREF> m_visibility;
-        SP<Render::ITexture>            m_dragTexture;
-        std::vector<SPreparedWorkspace> m_preparedWorkspaces;
-        bool                            m_emptyButtonPressed = false;
-        bool                            m_cursorOwned        = false;
-        Vector2D                        m_pointer;
+        CZoomEdgeHover                                     m_zoomEdgeHover;
+        std::optional<SZoomEdgeIntent>                     m_zoomEdgeIntent;
+        CZoomHoldState                                     m_zoomHolds;
+        CZoomHoldState                                     m_panHolds;
+        uint64_t                                           m_zoomGeneration = 0;
+        std::optional<SOverviewTarget>                     m_zoomTarget;
+        std::optional<SInspectionPan>                      m_pan;
+        CVisibilityLedger<PHLWINDOWREF>                    m_visibility;
+        SP<Render::ITexture>                               m_dragTexture;
+        SP<Hyprutils::Animation::SAnimationPropertyConfig> m_workspaceSettleConfig;
+        PHLANIMVAR<float>                                  m_workspaceSettleProgress;
+        std::vector<SPreparedWorkspace>                    m_preparedWorkspaces;
+        bool                                               m_emptyButtonPressed = false;
+        bool                                               m_cursorOwned        = false;
+        Vector2D                                           m_pointer;
     };
 
     extern std::unique_ptr<COverviewSession> g_overviewSession;
