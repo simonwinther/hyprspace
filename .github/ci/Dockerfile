@@ -1,4 +1,5 @@
-FROM archlinux:base-devel@sha256:b21289eb1954872de0dc9f88976627e38611b1817be75e50946c83ab7b9c474d
+# Use Arch's registry to avoid Docker Hub's unauthenticated pull limit.
+FROM ghcr.io/archlinux/archlinux:base-devel-20260901.0.583369@sha256:c6728f9c62ebb58749fe34e884d24b2d331a79a552f5519ab3fdb1e10c9e9146
 
 # Keep the compositor and its libraries together at a tested Arch snapshot.
 RUN printf 'Server = https://archive.archlinux.org/repos/2026/09/01/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist \
