@@ -100,7 +100,8 @@ and explicit version selection, plus the Nix build, package-content checks and
 private compositor loading with the matching Nix compositor. Record evidence in
 [the installation verification record](verification/stable-install.md).
 
-The Arch CI image pins its dependency snapshot. The flake pins the supported
+The Arch CI image pins an official base image from Arch's GHCR registry and its
+dependency snapshot. The flake pins the supported
 compositor commit and its dependencies. Update those pins only with successful
 compatibility testing, including library ABI agreement. Explicit hyprpm release
 tags take precedence over repository commit pins, so stable installation does

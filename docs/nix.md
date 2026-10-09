@@ -22,7 +22,7 @@ In your system flake, add:
 
 ```nix
 inputs.hyprland.url = "github:hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f";
-inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.0.2";
+inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.5.0";
 inputs.hyprspace.inputs.hyprland.follows = "hyprland";
 ```
 
