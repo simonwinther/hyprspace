@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/simonwinther/hyprspace/compare/v1.4.0...v1.5.0) (2026-10-09)
+
+
+### Features
+
+* add workspace dragging between monitors ([01767b6](https://github.com/simonwinther/hyprspace/commit/01767b6fd87d668bf2fdac3ab69f630d9c28024a))
+
 ## [1.4.0](https://github.com/simonwinther/hyprspace/compare/v1.3.1...v1.4.0) (2026-10-08)
 
 - Add empty workspace shortcuts and simplify the button.
