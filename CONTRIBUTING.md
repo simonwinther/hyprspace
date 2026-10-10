@@ -111,6 +111,20 @@ the private display server. `--plugin` requires a fresh session and cannot be
 combined with `--runtime`. See [Nix checks](docs/nix.md#package-contents-and-verification)
 and the [installation evidence](docs/verification/stable-install.md).
 
+The experimental grouping checks run with `--only window_views`. They cover
+global previews, native focus/actions, Unicode search, key leases, inspection,
+output loss, locking and unload. `--only performance` measures both overview
+and window-board workloads and runs 100 cleanup cycles for each. To reproduce
+the grouping screenshots and video using copied project source and disposable
+notes in a private compositor:
+
+```bash
+python3 test/integration/window_views_demo.py --output build/window-views-demo
+```
+
+The capture script requires Ghostty, Neovim, Files, Python GTK, grim and ffmpeg.
+It samples only the private Wayland output at 15 fps.
+
 For rendering, focus or input changes, check
 opening and closing both overlays, Escape, selection by keyboard and mouse,
 fullscreen and maximized windows, and more than one workspace. Check window

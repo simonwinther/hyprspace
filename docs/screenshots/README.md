@@ -17,6 +17,13 @@ The images have no added labels or composited interface elements.
 | [zoom-pan.png](zoom-pan.png) | Right-button pan with the grabbing cursor |
 | [zoom-pan.gif](zoom-pan.gif) | Animated 640 x 360 preview of zooming, panning and returning |
 | [zoom-pan.mp4](zoom-pan.mp4) | Full-resolution 1920 x 1080 video of the same sequence |
+| [window-views-flat.png](window-views-flat.png) | Six windows from three outputs on one flat board |
+| [window-views-app.png](window-views-app.png) | Files, Ghostty and Notes grouped in columns |
+| [window-views-workspace.png](window-views-workspace.png) | The same windows grouped by native workspace |
+| [window-views-monitor.png](window-views-monitor.png) | Grouping by native output |
+| [window-views-search.png](window-views-search.png) | Filtering by a window title |
+| [window-views-workspaces.png](window-views-workspaces.png) | The default workspace overview before entering the board |
+| [window-views.mp4](window-views.mp4) | A 15 fps demo of grouping, search, window inspection and returning |
 
 Files displays a temporary folder containing copies of the project files.
 Neovim displays the switcher layout, bindings, regression test and Makefile.
@@ -37,6 +44,21 @@ with the right button held, scrolls back to the fitted minimum, then releases Z
 to return to the grid. The capture checked both hand cursor states, the exact
 minimum and unchanged native window geometry. It used revision `6af06c7` and
 plugin SHA-256 `dab94626b8dfc4e6a9efdeeb99b7416f75f388bb8eab269eb6e8d90ab808bb40`.
+
+The window-view media was captured on 2026-10-10 in a private background
+Hyprland 0.56.2 session. The primary output is 1920 × 1080 at scale 1, with
+additional fractional and rotated outputs supplying remote windows. Ghostty
+and Neovim display copied project source; Files displays temporary folders;
+disposable GTK windows display example notes. A private desktop entry gives
+those notes their app identity. No personal windows or desktop content are
+included. The PNGs preserve the original primary-output pixels. The video
+samples the private Wayland output with grim and encodes it with ffmpeg,
+retaining the elapsed time when a capture waits for a frame. It has no added
+labels or composited interface elements. Binary and compositor details are in
+[`window-views-capture.json`](window-views-capture.json).
+
+To reproduce these captures, build the integration fixtures and run
+`python3 test/integration/window_views_demo.py --output build/window-views-demo`.
 
 ## Capture replacements
 

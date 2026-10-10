@@ -1686,6 +1686,7 @@ def main():
             "keyboard",
             "lifecycle",
             "overview",
+            "window_views",
             "zoom",
             "transitions",
             "resize",
@@ -1845,6 +1846,10 @@ def main():
             import overview
 
             overview.lifecycle(suite, wait_for)
+        if args.only in ("all", "window_views"):
+            import window_views
+
+            window_views.run(suite, wait_for)
         if args.only in ("all", "zoom"):
             import zoom
 

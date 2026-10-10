@@ -58,6 +58,7 @@ static void section(const char* name) {
 #include "test_launch_geometry.hpp"
 #include "test_capture_geometry.hpp"
 #include "test_empty_workspace.hpp"
+#include "test_window_views.hpp"
 
 // ---------------------------------------------------------------- layout ----
 
@@ -1453,6 +1454,8 @@ int main(int argc, char** argv) {
         const std::string group = argv[1];
         if (group == "desktop")
             testDesktopPrecedence();
+        else if (group == "window_views")
+            testWindowViews();
         else if (group == "resources") {
             testImageCache();
             testRasterBounds();
@@ -1501,6 +1504,7 @@ int main(int argc, char** argv) {
     testZoomInput();
     testZoomEdgeHover();
     testZoomGeometry();
+    testWindowViews();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

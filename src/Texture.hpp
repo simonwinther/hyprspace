@@ -60,6 +60,11 @@ namespace hyprspace {
 
     CTextureCache& textures();
 
+    struct SAppIdentity {
+        std::string id, name;
+    };
+    SAppIdentity appIdentity(const std::string& windowClass);
+
     // Desktop files and icon themes are filesystem work, so prepare them away
     // from Hyprland's compositor thread. `finishIconDiscovery` joins that work
     // before the plugin is unloaded.

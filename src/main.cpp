@@ -4,7 +4,7 @@
 //   * hyprspace:overview  - full-screen live overview of all windows/workspaces
 //   * hyprspace:switch    - GNOME-style Alt+Tab switcher
 //
-// There is deliberately no launcher, no search field and no text input anywhere.
+// The optional window board owns its search field; launching stays native.
 
 #include "globals.hpp"
 
@@ -15,6 +15,7 @@
 #include "Input.hpp"
 #include "Overview.hpp"
 #include "OverviewSession.hpp"
+#include "WindowBoard.hpp"
 #include "OverlayPolicy.hpp"
 #include "CompositorHooks.hpp"
 #include "Launch.hpp"
@@ -711,6 +712,8 @@ namespace {
                 g_switcher->onScroll(SCROLL);
         } else if (session().zoomScroll(SCROLL, g_pInputManager->getMouseCoordsInternal())) {
             return;
+        } else if (session().windowViewActive()) {
+            session().windowBoard()->scroll(SCROLL, g_pInputManager->getMouseCoordsInternal());
         } else if (auto* o = pointerOverview()) {
             o->onScroll(SCROLL);
         }
@@ -868,7 +871,7 @@ namespace {
         // whether blur optimizations are enabled.
         if (stage == RENDER_POST_WALLPAPER) {
             if (const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock()) {
-                if (const auto* o = overviewOn(MONITOR); o && o->needsBlur())
+                if (const auto* o = overviewOn(MONITOR); o && (o->needsBlur() || (session().windowBoard() && session().windowBoard()->needsBlur(MONITOR))))
                     MONITOR->m_blurFBShouldRender = true;
             }
             return;
@@ -887,9 +890,17 @@ namespace {
         // backdrop rect directly; it cannot disappear because a custom wrapper
         // was simplified or never expanded.
         if (auto* o = overviewOn(MONITOR)) {
-            auto elements = o->buildPass();
-            for (auto& element : elements)
-                g_pHyprRenderer->m_renderPass.add(std::move(element));
+            auto* board = session().windowBoard();
+            if (!board || !board->rendering() || board->progress() < 0.999F || o->closing()) {
+                auto elements = o->buildPass();
+                for (auto& element : elements)
+                    g_pHyprRenderer->m_renderPass.add(std::move(element));
+            }
+            if (board && board->rendering()) {
+                auto elements = board->buildPass(MONITOR);
+                for (auto& element : elements)
+                    g_pHyprRenderer->m_renderPass.add(std::move(element));
+            }
         }
 
         if (g_switcher && g_switcher->monitor() == MONITOR)
@@ -934,6 +945,10 @@ namespace {
 
         if (overviewLive()) {
             if (args != "on") {
+                if (session().windowViewActive()) {
+                    session().commitWindowView();
+                    return {.success = true};
+                }
                 // Snapshot the destination's displayed camera before input
                 // teardown releases held zoom or a pan grip.
                 if (!session().gestureActive() && session().selection.command()) {
@@ -1019,6 +1034,10 @@ namespace {
         return session().emptyWorkspace();
     }
 
+    SDispatchResult dispatchWindowView(std::string args) {
+        return session().windowView(args);
+    }
+
     SDispatchResult dispatchLayoutCycle(std::string) {
         if (overviewLive() && !foregroundKeyboard())
             if (const auto target = session().selection.command())
@@ -1101,12 +1120,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:close", dispatchClose);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:layoutcycle", dispatchLayoutCycle);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:emptyworkspace", dispatchEmptyWorkspace);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:windowview", dispatchWindowView);
 
     if (Config::mgr()->type() == Config::CONFIG_LUA) {
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "overview", [](lua_State* state) { return dispatchFromLua(state, dispatchOverview); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "switch", [](lua_State* state) { return dispatchFromLua(state, dispatchSwitch); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "layoutcycle", [](lua_State* state) { return dispatchFromLua(state, dispatchLayoutCycle); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "emptyworkspace", [](lua_State* state) { return dispatchFromLua(state, dispatchEmptyWorkspace); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "windowview", [](lua_State* state) { return dispatchFromLua(state, dispatchWindowView); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "close", [](lua_State* state) { return dispatchFromLua(state, dispatchClose); });
     }
 

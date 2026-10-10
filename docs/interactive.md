@@ -16,6 +16,28 @@ Empty named normal workspaces can be reused; new workspaces receive numeric IDs.
 Special, remote and incompatible monitor-bound workspaces are excluded;
 unsupported conditional monitor assignments prevent fresh allocation.
 
+The experimental **G** view shows a global window board on one covered output.
+Its presentation host is independent of the selected window's native monitor
+and workspace. All windows, Apps, Workspaces and Monitors are different layouts
+of the same weak window identities, with search and optional frozen recency
+order. Rendering reuses each source output's existing capture; it does not
+create a second capture cache. Native dispatchers, launches and commits retain
+the original window/workspace and mapped desktop point.
+
+The board owns printable input only while its search field has focus. Reserved
+presses keep per-device leases through repeats, remapping, dismissal and
+foreground handoff. Navigation and Backspace repeat at the keyboard's configured
+rate; G, grouping changes, recent order, Enter and Escape act once per press.
+Generations prevent an old held key from editing a reopened board. Inspection
+uses the existing bounded zoom/pan model fitted to the selected window. Window
+and workspace drags remain in the workspace view. N and middle-click return to
+that view before preparing an empty destination.
+
+The local `status` reply includes `window_board` with the display output,
+grouping, order, search, selected native window, viewport, scroll position and
+preview geometry. See the [controls](guide.md#experimental-window-board) and
+[experiment verification](verification/2026-10-10-window-views.md).
+
 Pointer motion selects a destination. Over a foreground layer or a gap, commands
 retain the last valid destination. Dropping in a gap cancels the move. Keyboard
 focus navigation selects its resulting window until pointer motion resumes.
@@ -240,7 +262,7 @@ fixture. They are not installed into the desktop session.
 `--only transitions` checks numeric selection across outputs, the growing
 destination's rendered stacking and desktop handoff, empty and fresh bound
 workspaces, single-output overview scope and empty special workspace ownership.
-`--only robustness` checks bounded/frozen launch placement, exact drag thresholds, panel ownership and large captures. `--only performance` measures 3/12/36-window workloads and 100 cleanup cycles, writing `performance.json`; input timing ends at compositor `RENDER_POST` and excludes GPU completion and display presentation.
+`--only robustness` checks bounded/frozen launch placement, exact drag thresholds, panel ownership and large captures. `--only window_views` checks grouping, search, remote native actions, inspection, output loss, locking, unload and source pixels. `--only performance` measures 3/12/36-window workloads in both workspace and window views and runs 100 cleanup cycles for each, writing `performance.json`; input timing ends at compositor `RENDER_POST` and excludes GPU completion and display presentation.
 
 `--only audit` runs the input/visibility/launch regressions, and `--only scrolling`
 runs viewport controls across all directions and outputs. `--only switcher`

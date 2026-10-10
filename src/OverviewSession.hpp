@@ -13,6 +13,7 @@
 
 namespace hyprspace {
     class COverview;
+    class CWindowBoard;
 
     struct SOverviewTarget {
         SWorkspaceIdentity workspace;
@@ -88,8 +89,15 @@ namespace hyprspace {
         // flushes its final motion. It no longer owns a pressed button.
         std::optional<SOverviewDrag> pendingResize;
 
-        bool live() const;
-        bool gestureActive() const {
+        bool          live() const;
+        CWindowBoard* windowBoard() const {
+            return m_windowBoard.get();
+        }
+        bool            windowViewActive() const;
+        SDispatchResult windowView(const std::string& args);
+        void            commitWindowView();
+        void            selectBoardTarget(std::optional<SOverviewTarget> target, bool pointer = false);
+        bool            gestureActive() const {
             return drag.active() || workspaceDrag.has_value();
         }
         void                    begin();
@@ -194,6 +202,7 @@ namespace hyprspace {
             PHLMONITORREF      monitor;
         };
         CZoomEdgeHover                                     m_zoomEdgeHover;
+        std::unique_ptr<CWindowBoard>                      m_windowBoard;
         std::optional<SZoomEdgeIntent>                     m_zoomEdgeIntent;
         CZoomHoldState                                     m_zoomHolds;
         CZoomHoldState                                     m_panHolds;

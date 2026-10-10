@@ -222,6 +222,21 @@ def lifecycle(s, wait_for):
         assert s.data("activewindow")["address"] == s.windows()["hs-B"]["address"]
         s.check(f"Lua {phase} Super+A commits the hovered workspace through the overview dispatcher")
 
+    def window_views(phase):
+        prepare(True)
+        selected = s.status()["target"]["window"]
+        for mode in ("flat", "app", "workspace", "monitor"):
+            s.ctl("eval", f'local result = hl.plugin.hyprspace.windowview("{mode}"); assert(result.ok, result.error)')
+            board = s.status()["window_board"]
+            assert board["active"] and board["grouping"] == mode and board["count"] == 2
+            assert board["selected_window"] == selected
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.windowview("bad"); assert(not result.ok)')
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.windowview("off"); assert(result.ok, result.error)')
+        assert s.status()["live"] and not s.status()["window_board"]["active"]
+        s.close()
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.windowview(); assert(not result.ok and result.error:find("overview"))')
+        s.check(f"Lua {phase} windowview exposes every grouping, preserves native selection and rejects inactive calls")
+
     try:
         for phase in ("startup", "reload-1", "reload-2"):
             if phase != "startup":
@@ -230,6 +245,7 @@ def lifecycle(s, wait_for):
             route(phase, "exec")
             empty_workspace(phase)
             toggle_selection(phase)
+            window_views(phase)
         # Invalid configurations must not poison the next valid Lua state.
         reload("local invalid = )\n", error="syntax")
         reload()
@@ -237,12 +253,14 @@ def lifecycle(s, wait_for):
         route("syntax-recovery", "exec")
         empty_workspace("syntax-recovery")
         toggle_selection("syntax-recovery")
+        window_views("syntax-recovery")
         reload('error("hyprspace-test-runtime")\n', error="runtime")
         reload()
         route("runtime-recovery", "workspace")
         route("runtime-recovery", "exec")
         empty_workspace("runtime-recovery")
         toggle_selection("runtime-recovery")
+        window_views("runtime-recovery")
         s.close()
         count = s.reload_count()
         s.config.write_text(s.config_text(plugin=False))

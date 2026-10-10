@@ -7,7 +7,10 @@ import sys
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk
+from gi.repository import Gtk, GLib
+
+if os.environ.get("HS_APP_ID"):
+    GLib.set_prgname(os.environ["HS_APP_ID"])
 
 windows = []
 log = Path(os.environ.get("HS_INPUT_LOG", "/dev/null"))
@@ -40,4 +43,14 @@ for title in sys.argv[1:]:
     window.connect("destroy", lambda w: Gtk.main_quit())
     window.show_all()
     windows.append(window)
+
+if os.environ.get("HS_TITLE_FILE"):
+    def update_title():
+        path = Path(os.environ["HS_TITLE_FILE"])
+        if path.exists():
+            windows[0].set_title(path.read_text().strip())
+        return True
+
+    GLib.timeout_add(50, update_title)
+
 Gtk.main()

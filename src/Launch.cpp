@@ -7,6 +7,7 @@
 
 #include "CompositorHooks.hpp"
 #include "Overview.hpp"
+#include "WindowBoard.hpp"
 #include "OverviewSession.hpp"
 
 #include <hyprland/src/Compositor.hpp>
@@ -323,6 +324,38 @@ namespace hyprspace::launch {
                 result["zoom"]["pan_available"] = session().panAvailable();
                 result["cursor_shape"]          = hooks::cursorShape();
                 result["pending_resize"]        = session().pendingResize.has_value();
+                result["window_board"]          = nullptr;
+                if (const auto* board = session().windowBoard()) {
+                    const auto host    = board->monitor();
+                    const auto chosen  = board->selectedTarget();
+                    const auto boxJSON = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
+                    auto&      state   = result["window_board"];
+                    state              = {{"active", board->active()},
+                                          {"monitor", host ? host->m_name : ""},
+                                          {"grouping", windowGroupingName(board->grouping())},
+                                          {"sort", board->recent() ? "recent" : "location"},
+                                          {"query", board->query()},
+                                          {"search_focused", board->searchFocused()},
+                                          {"count", board->layout().cards.size()},
+                                          {"scroll", board->scrollOffset()},
+                                          {"viewport", boxJSON(board->viewport())},
+                                          {"selected_window", std::format("0x{:x}", reinterpret_cast<uintptr_t>(chosen ? chosen->window.lock().get() : nullptr))},
+                                          {"inspecting", board->inspecting()},
+                                          {"inspection_factor", board->inspectionFactor()},
+                                          {"inspection_goal", board->inspectionGoal()},
+                                          {"groups", nlohmann::json::array()},
+                                          {"previews", nlohmann::json::array()}};
+                    for (const auto& heading : board->layout().headings)
+                        state["groups"].push_back({{"label", heading.label}, {"count", heading.count}});
+                    for (const auto& target : board->inspectTargets()) {
+                        auto box              = boxJSON(target.preview);
+                        box["window"]         = std::format("0x{:x}", reinterpret_cast<uintptr_t>(target.window.lock().get()));
+                        box["workspace"]      = target.workspace.id;
+                        const auto source     = target.monitor.lock();
+                        box["source_monitor"] = source ? source->m_name : "";
+                        state["previews"].push_back(std::move(box));
+                    }
+                }
                 if (session().drag.active()) {
                     const auto& drag    = session().drag;
                     const auto  boxJSON = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };

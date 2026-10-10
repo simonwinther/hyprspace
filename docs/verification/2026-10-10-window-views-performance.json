@@ -1,0 +1,290 @@
+{
+  "measurement": "input event to compositor RENDER_POST (CPU render submission); excludes GPU completion and display presentation",
+  "platform": "Linux-7.1.9-arch1-2-x86_64-with-glibc2.44",
+  "cpu": "AMD Ryzen 5 PRO 4650U with Radeon Graphics",
+  "compositor": {
+    "branch": "v0.56.2",
+    "commit": "efb50993780079460b0cbed1363e2166a2de1d9f",
+    "version": "0.56.2",
+    "dirty": false,
+    "commit_message": "[gha] Nix: update inputs",
+    "commit_date": "Wed Aug 5 14:13:21 2026",
+    "tag": "v0.56.2",
+    "commits": "7661",
+    "buildAquamarine": "0.14.0",
+    "buildHyprlang": "0.6.8",
+    "buildHyprutils": "0.14.0",
+    "buildHyprcursor": "0.1.13",
+    "buildHyprgraphics": "0.5.1",
+    "systemAquamarine": "0.14.0",
+    "systemHyprlang": "0.6.8",
+    "systemHyprutils": "0.14.1",
+    "systemHyprcursor": "0.1.13",
+    "systemHyprgraphics": "0.5.1",
+    "abiHash": "efb50993780079460b0cbed1363e2166a2de1d9f_aq_0.14_hu_0.14_hg_0.5_hc_0.1_hlg_0.6",
+    "flags": []
+  },
+  "outputs": [
+    {
+      "id": 0,
+      "name": "WAYLAND-1",
+      "description": "",
+      "make": "",
+      "model": "",
+      "serial": "",
+      "width": 960,
+      "height": 600,
+      "physicalWidth": 0,
+      "physicalHeight": 0,
+      "refreshRate": 60.0,
+      "x": 0,
+      "y": 0,
+      "activeWorkspace": {
+        "id": 1,
+        "name": "1"
+      },
+      "specialWorkspace": {
+        "id": 0,
+        "name": ""
+      },
+      "reserved": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "scale": 1,
+      "transform": 0,
+      "focused": true,
+      "dpmsStatus": true,
+      "vrr": false,
+      "solitary": "0",
+      "solitaryBlockedBy": [
+        "NOTIFICATION",
+        "WINDOWED",
+        "CANDIDATE"
+      ],
+      "activelyTearing": false,
+      "tearingBlockedBy": [
+        "NOT_TORN",
+        "USER",
+        "SUPPORT",
+        "CANDIDATE",
+        "HW_CURSOR"
+      ],
+      "directScanoutTo": "0",
+      "directScanoutBlockedBy": [
+        "USER",
+        "CANDIDATE"
+      ],
+      "disabled": false,
+      "currentFormat": "XRGB8888",
+      "mirrorOf": "none",
+      "availableModes": [],
+      "colorManagementPreset": "srgb",
+      "sdrBrightness": 1,
+      "sdrSaturation": 1,
+      "sdrMinLuminance": 0.2,
+      "sdrMaxLuminance": 80,
+      "hardwareCursorsInUse": true
+    },
+    {
+      "id": 1,
+      "name": "WAYLAND-2",
+      "description": "",
+      "make": "",
+      "model": "",
+      "serial": "",
+      "width": 960,
+      "height": 600,
+      "physicalWidth": 0,
+      "physicalHeight": 0,
+      "refreshRate": 60.0,
+      "x": -1000,
+      "y": -200,
+      "activeWorkspace": {
+        "id": 2,
+        "name": "2"
+      },
+      "specialWorkspace": {
+        "id": 0,
+        "name": ""
+      },
+      "reserved": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "scale": 1.25,
+      "transform": 1,
+      "focused": false,
+      "dpmsStatus": true,
+      "vrr": false,
+      "solitary": "0",
+      "solitaryBlockedBy": [
+        "NOTIFICATION",
+        "WINDOWED",
+        "CANDIDATE"
+      ],
+      "activelyTearing": false,
+      "tearingBlockedBy": [
+        "NOT_TORN",
+        "USER",
+        "SUPPORT",
+        "CANDIDATE",
+        "HW_CURSOR"
+      ],
+      "directScanoutTo": "0",
+      "directScanoutBlockedBy": [
+        "USER",
+        "CANDIDATE"
+      ],
+      "disabled": false,
+      "currentFormat": "XRGB8888",
+      "mirrorOf": "none",
+      "availableModes": [],
+      "colorManagementPreset": "srgb",
+      "sdrBrightness": 1,
+      "sdrSaturation": 1,
+      "sdrMinLuminance": 0.2,
+      "sdrMaxLuminance": 80,
+      "hardwareCursorsInUse": true
+    },
+    {
+      "id": 2,
+      "name": "WAYLAND-3",
+      "description": "",
+      "make": "",
+      "model": "",
+      "serial": "",
+      "width": 960,
+      "height": 600,
+      "physicalWidth": 0,
+      "physicalHeight": 0,
+      "refreshRate": 60.0,
+      "x": 2200,
+      "y": 100,
+      "activeWorkspace": {
+        "id": 3,
+        "name": "3"
+      },
+      "specialWorkspace": {
+        "id": 0,
+        "name": ""
+      },
+      "reserved": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "scale": 1.5,
+      "transform": 0,
+      "focused": false,
+      "dpmsStatus": true,
+      "vrr": false,
+      "solitary": "0",
+      "solitaryBlockedBy": [
+        "NOTIFICATION",
+        "WINDOWED",
+        "CANDIDATE"
+      ],
+      "activelyTearing": false,
+      "tearingBlockedBy": [
+        "NOT_TORN",
+        "USER",
+        "SUPPORT",
+        "CANDIDATE",
+        "HW_CURSOR"
+      ],
+      "directScanoutTo": "0",
+      "directScanoutBlockedBy": [
+        "USER",
+        "CANDIDATE"
+      ],
+      "disabled": false,
+      "currentFormat": "XRGB8888",
+      "mirrorOf": "none",
+      "availableModes": [],
+      "colorManagementPreset": "srgb",
+      "sdrBrightness": 1,
+      "sdrSaturation": 1,
+      "sdrMinLuminance": 0.2,
+      "sdrMaxLuminance": 80,
+      "hardwareCursorsInUse": true
+    }
+  ],
+  "workloads": [
+    {
+      "windows": 3,
+      "stress": false,
+      "samples": 925,
+      "input_samples": 95,
+      "input_p95_ms": 17.213582,
+      "prepare_p95_ms": 0.439024,
+      "render_p95_ms": 2.944313,
+      "capture_p95_ms": 0.238229,
+      "two_refresh_intervals_ms": 33.333333333333336
+    },
+    {
+      "windows": 12,
+      "stress": false,
+      "samples": 928,
+      "input_samples": 104,
+      "input_p95_ms": 16.487719,
+      "prepare_p95_ms": 0.67055,
+      "render_p95_ms": 2.492019,
+      "capture_p95_ms": 0.479254,
+      "two_refresh_intervals_ms": 33.333333333333336
+    },
+    {
+      "windows": 36,
+      "stress": true,
+      "samples": 1020,
+      "input_samples": 105,
+      "input_p95_ms": 16.449517,
+      "prepare_p95_ms": 1.544198,
+      "render_p95_ms": 3.432507,
+      "capture_p95_ms": 1.1984830000000002,
+      "two_refresh_intervals_ms": 33.333333333333336
+    }
+  ],
+  "window_boards": [
+    {
+      "windows": 3,
+      "stress": false,
+      "samples": 132,
+      "input_samples": 81,
+      "input_p95_ms": 14.849656,
+      "prepare_p95_ms": 0.281811,
+      "render_p95_ms": 2.280888,
+      "capture_p95_ms": 0.145899,
+      "two_refresh_intervals_ms": 33.333333333333336
+    },
+    {
+      "windows": 12,
+      "stress": false,
+      "samples": 135,
+      "input_samples": 80,
+      "input_p95_ms": 14.128612,
+      "prepare_p95_ms": 0.628365,
+      "render_p95_ms": 3.359312,
+      "capture_p95_ms": 0.45201500000000006,
+      "two_refresh_intervals_ms": 33.333333333333336
+    },
+    {
+      "windows": 36,
+      "stress": true,
+      "samples": 146,
+      "input_samples": 80,
+      "input_p95_ms": 14.778767,
+      "prepare_p95_ms": 1.364007,
+      "render_p95_ms": 4.137138,
+      "capture_p95_ms": 1.011444,
+      "two_refresh_intervals_ms": 33.333333333333336
+    }
+  ],
+  "window_board_cleanup_cycles": 100,
+  "cleanup_cycles": 100
+}

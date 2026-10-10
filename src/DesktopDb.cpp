@@ -278,6 +278,13 @@ namespace hyprspace {
         return "";
     }
 
+    const SDesktopEntry* CDesktopDb::entryForClass(const std::string& cls) const {
+        for (const auto& key : classCandidates(cls))
+            if (auto it = m_byClass.find(key); it != m_byClass.end())
+                return &m_entries[it->second.entry];
+        return nullptr;
+    }
+
     // Pull a physical pixel size out of an icon theme path segment, including
     // scaled directories such as "48x48@2" and "48x48@2x". Scalable sorts as
     // "perfect at any size".

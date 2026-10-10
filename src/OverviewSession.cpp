@@ -5,6 +5,7 @@
 #include "EmptyWorkspace.hpp"
 #include "LaunchGeometry.hpp"
 #include "Overview.hpp"
+#include "WindowBoard.hpp"
 #include "OverlayPolicy.hpp"
 
 #include <hyprland/src/config/ConfigValue.hpp>
@@ -46,11 +47,106 @@ namespace hyprspace {
         return std::ranges::any_of(views, [](const auto& view) { return !view->closing(); });
     }
 
+    bool COverviewSession::windowViewActive() const {
+        return m_windowBoard && m_windowBoard->active();
+    }
+
+    SDispatchResult COverviewSession::windowView(const std::string& args) {
+        std::optional<EWindowGrouping> grouping;
+        if (args == "flat")
+            grouping = EWindowGrouping::FLAT;
+        else if (args == "app")
+            grouping = EWindowGrouping::APP;
+        else if (args == "workspace")
+            grouping = EWindowGrouping::WORKSPACE;
+        else if (args == "monitor")
+            grouping = EWindowGrouping::MONITOR;
+        else if (!args.empty() && args != "toggle" && args != "off")
+            return {.success = false, .error = "hyprspace: windowview expects toggle, off, flat, app, workspace or monitor"};
+        if (!overlaysAllowed() || !live())
+            return {.success = false, .error = "hyprspace: windowview requires an open overview"};
+        if (gestureActive() || pendingResize)
+            return {.success = false, .error = "hyprspace: finish the current gesture before changing views"};
+        if (args == "off" || (!grouping && windowViewActive())) {
+            if (!windowViewActive())
+                return {};
+            const auto target = m_windowBoard->selectedTarget();
+            m_windowBoard->leave();
+            cancelZoom();
+            m_zoomTarget.reset();
+            if (target) {
+                selection.keyboard(*target);
+                syncSelection();
+                if (auto* view = keyboardView())
+                    if (auto restored = view->selectedTarget())
+                        selection.keyboard(*restored);
+            }
+            damage();
+            return {};
+        }
+        if (windowViewActive()) {
+            m_windowBoard->setGrouping(*grouping);
+            return {};
+        }
+        auto* view = keyboardView();
+        if (!view || !view->monitor())
+            return {.success = false, .error = "hyprspace: no output for window view"};
+        cancelZoom();
+        m_zoomTarget.reset();
+        cancelWorkspaceSettle();
+        if (!m_windowBoard)
+            m_windowBoard = std::make_unique<CWindowBoard>(*this);
+        m_windowBoard->enter(view->monitor(), grouping);
+        return {};
+    }
+
+    void COverviewSession::selectBoardTarget(std::optional<SOverviewTarget> target, bool pointer) {
+        if (!target) {
+            selection.clear();
+            return;
+        }
+        if (pointer)
+            selection.pointer(target, true);
+        else
+            selection.keyboard(*target);
+        if (zoomHeld()) {
+            if (m_pan && (!m_zoomTarget || m_zoomTarget->window != target->window))
+                cancelPan();
+            m_zoomTarget = *target;
+        }
+        syncSelection();
+    }
+
+    void COverviewSession::commitWindowView() {
+        if (!windowViewActive())
+            return;
+        const auto target = m_windowBoard->selectedTarget();
+        if (!target)
+            return;
+        COverview* destination = nullptr;
+        for (const auto& view : views)
+            if (!view->closing() && view->monitor() == target->monitor) {
+                destination = view.get();
+                break;
+            }
+        if (!destination)
+            return;
+        destination->refreshWorkspaceLayout();
+        destination->selectTarget(*target);
+        selection.keyboard(*target);
+        m_windowBoard->leave();
+        destination->close(true);
+        for (const auto& view : views)
+            view->close(false);
+        stopInput();
+    }
+
     void COverviewSession::begin() {
         cancelWorkspaceSettle();
         m_emptyButtonPressed = false;
         cancelZoom();
         m_zoomTarget.reset();
+        m_windowBoard = std::make_unique<CWindowBoard>(*this);
         selection.clear();
         if (!config::followMouse() && covers(Desktop::focusState()->monitor()))
             followKeyboardFocus();
@@ -63,6 +159,8 @@ namespace hyprspace {
     }
 
     void COverviewSession::stopInput() {
+        if (m_windowBoard)
+            m_windowBoard->leave();
         cancelWorkspaceSettle();
         cancelZoom();
         cancelDrag();
@@ -192,6 +290,8 @@ namespace hyprspace {
     SDispatchResult COverviewSession::emptyWorkspace(PHLMONITOR monitor) {
         if (!overlaysAllowed() || !live())
             return {.success = false, .error = "hyprspace: empty workspace requires an open overview"};
+        if (windowViewActive())
+            (void)windowView("off");
         auto* view = emptyWorkspaceView(monitor);
         if (!view)
             return {.success = false, .error = "hyprspace: no open overview on the target monitor"};
@@ -247,6 +347,8 @@ namespace hyprspace {
     }
 
     std::optional<SOverviewTarget> COverviewSession::hit(const Vector2D& pos) const {
+        if (windowViewActive())
+            return m_windowBoard->targetAt(pos);
         if (emptyWorkspaceButtonView(pos))
             return std::nullopt;
         for (const auto& view : views)
@@ -272,6 +374,12 @@ namespace hyprspace {
         // mapped to the desktop. Those are not overview pointer coordinates.
         if (hooks::mappingPointer())
             return;
+        if (windowViewActive()) {
+            m_pointer = pos;
+            m_windowBoard->pointer(pos, userMotion);
+            updateCursor();
+            return;
+        }
         const auto delta     = pos - m_pointer;
         const bool userMoved = userMotion && pos != m_pointer;
         m_pointer            = pos;
@@ -390,6 +498,15 @@ namespace hyprspace {
             return std::nullopt;
         if (zoomHeld())
             return m_zoomHolds.press();
+        if (windowViewActive()) {
+            if (!m_windowBoard->beginInspection())
+                return std::nullopt;
+            m_zoomTarget     = m_windowBoard->selectedTarget();
+            const auto token = m_zoomHolds.press();
+            m_zoomGeneration = token;
+            damage();
+            return token;
+        }
         auto* view = keyboardView();
         if (!view)
             return std::nullopt;
@@ -410,6 +527,8 @@ namespace hyprspace {
 
     void COverviewSession::zoomRelease(uint64_t token) {
         if (m_zoomHolds.release(token) && !zoomHeld()) {
+            if (m_windowBoard)
+                m_windowBoard->endInspection();
             cancelPan();
             cancelZoomEdge();
             for (const auto& view : views)
@@ -420,6 +539,8 @@ namespace hyprspace {
     }
 
     void COverviewSession::cancelZoom() {
+        if (m_windowBoard)
+            m_windowBoard->endInspection();
         cancelPan();
         cancelZoomEdge();
         m_zoomHolds.cancel();
@@ -429,6 +550,11 @@ namespace hyprspace {
     }
 
     bool COverviewSession::zoomScroll(const SScrollInput& event, const Vector2D& pos) {
+        if (windowViewActive() && zoomHeld()) {
+            m_windowBoard->scroll(event, pos);
+            updateCursor();
+            return true;
+        }
         if (m_pan) {
             updateZoom();
             if (m_pan)
@@ -450,6 +576,8 @@ namespace hyprspace {
     }
 
     bool COverviewSession::panAvailable() const {
+        if (windowViewActive())
+            return live() && m_cursorOwned && config::overviewWheelZoom() && m_windowBoard->panAvailable(m_pointer);
         const auto* view = zoomView();
         return live() && m_cursorOwned && zoomHeld() && !gestureActive() && view && view->inspectionPanAvailable(m_pointer);
     }
@@ -457,6 +585,11 @@ namespace hyprspace {
     void COverviewSession::zoomStep(int direction) {
         if (!live() || !m_cursorOwned || !zoomHeld() || !config::overviewWheelZoom() || gestureActive() || m_pan || hooks::mappingPointer())
             return;
+        if (windowViewActive()) {
+            m_windowBoard->zoomStep(direction);
+            updateCursor();
+            return;
+        }
         cancelZoomEdge();
         updateZoom();
         if (auto* view = zoomView())
@@ -467,6 +600,11 @@ namespace hyprspace {
     void COverviewSession::panKey(const Vector2D& delta) {
         if (!live() || !m_cursorOwned || !zoomHeld() || !config::overviewWheelZoom() || gestureActive() || m_pan || hooks::mappingPointer())
             return;
+        if (windowViewActive()) {
+            m_windowBoard->panKey(delta);
+            updateCursor();
+            return;
+        }
         cancelZoomEdge();
         updateZoom();
         if (auto* view = zoomView())
@@ -477,6 +615,13 @@ namespace hyprspace {
     std::optional<uint64_t> COverviewSession::panPress() {
         if (!live() || !m_cursorOwned || !zoomHeld() || !config::overviewWheelZoom() || gestureActive() || hooks::mappingPointer() || (m_pan && !m_pan->keyboard))
             return std::nullopt;
+        if (windowViewActive()) {
+            if (!m_zoomTarget || !m_windowBoard->beginPan(m_pointer, true))
+                return std::nullopt;
+            m_pan = SInspectionPan{m_zoomTarget->workspace, m_zoomTarget->monitor, true, true};
+            updateCursor();
+            return m_panHolds.press();
+        }
         auto* view = zoomView();
         if (!view || !m_zoomTarget || !view->inspectionPanHit(m_pointer) || (view->inspectionGoal() <= 1 && view->inspectionFactor() <= 1))
             return std::nullopt;
@@ -508,6 +653,8 @@ namespace hyprspace {
     }
 
     void COverviewSession::cancelPan() {
+        if (m_windowBoard)
+            m_windowBoard->endPan();
         m_panHolds.cancel();
         if (!m_pan)
             return;
@@ -519,6 +666,12 @@ namespace hyprspace {
     void COverviewSession::updatePan() {
         if (!m_pan)
             return;
+        if (windowViewActive()) {
+            if (!live() || !m_cursorOwned || !zoomHeld() || !config::overviewWheelZoom() || !m_zoomTarget || m_pan->workspace != m_zoomTarget->workspace ||
+                m_pan->monitor != m_zoomTarget->monitor)
+                cancelPan();
+            return;
+        }
         auto* view = zoomView();
         if (!live() || !m_cursorOwned || !zoomHeld() || gestureActive() || !config::overviewWheelZoom() || !m_zoomTarget || m_pan->workspace != m_zoomTarget->workspace ||
             m_pan->monitor != m_zoomTarget->monitor || !view) {
@@ -542,6 +695,8 @@ namespace hyprspace {
     }
 
     COverview* COverviewSession::zoomView() const {
+        if (windowViewActive())
+            return nullptr;
         if (m_zoomTarget)
             for (const auto& view : views)
                 if (!view->closing() && view->monitor() == m_zoomTarget->monitor)
@@ -593,6 +748,13 @@ namespace hyprspace {
     }
 
     void COverviewSession::updateZoom() {
+        if (windowViewActive()) {
+            if (zoomHeld())
+                m_zoomTarget = m_windowBoard->selectedTarget();
+            else
+                m_zoomTarget.reset();
+            return;
+        }
         if (!m_zoomTarget)
             return;
         if (zoomHeld() && !gestureActive()) {
@@ -616,6 +778,13 @@ namespace hyprspace {
     }
 
     void COverviewSession::refreshPointerTarget(PHLMONITOR renderedMonitor) {
+        if (windowViewActive()) {
+            m_windowBoard->refresh();
+            updateZoom();
+            updatePan();
+            updateCursor();
+            return;
+        }
         if (workspaceDrag) {
             validateWorkspaceDrag();
             if (workspaceDrag) {
@@ -725,6 +894,8 @@ namespace hyprspace {
         target.desktopBox = {pos.x, pos.y, size.x, size.y};
         target.desktop    = pos + size / 2;
         selection.keyboard(target);
+        if (windowViewActive() && w)
+            m_windowBoard->selectWindow(w);
         for (const auto& view : views)
             if (view->monitor() == target.monitor)
                 view->selectTarget(target);
@@ -1011,6 +1182,23 @@ namespace hyprspace {
     }
 
     bool COverviewSession::button(uint32_t button, bool pressed, uint32_t mods) {
+        if (windowViewActive()) {
+            if (button == 0x112) {
+                if (pressed && mods == 0)
+                    (void)emptyWorkspace();
+                return true;
+            }
+            if (button == 0x111 && mods == 0 && zoomHeld() && config::overviewWheelZoom()) {
+                if (pressed && m_zoomTarget && m_windowBoard->beginPan(m_pointer, false))
+                    m_pan = SInspectionPan{m_zoomTarget->workspace, m_zoomTarget->monitor, true, false};
+                else if (!pressed)
+                    cancelPan();
+                updateCursor();
+                return true;
+            }
+            m_windowBoard->button(button, pressed, mods, m_pointer);
+            return true;
+        }
         if (pressed)
             cancelWorkspaceSettle();
         if (workspaceDrag) {

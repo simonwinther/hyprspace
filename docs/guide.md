@@ -141,6 +141,66 @@ that must be held on pickup. It accepts case-insensitive Hyprland modifier names
 separated by spaces or `+`, and requires Super plus at least one of Alt, Ctrl or
 Shift. Unknown names are rejected. An empty value disables the gesture.
 
+### Experimental window board
+
+Press **G** while the overview is open to replace its workspace tiles with a
+window board on the currently selected output. It gathers windows from every
+output covered by the overview. Other outputs remain dimmed. The usual overview
+still opens first, and G returns to it.
+
+| Control | Action |
+|---|---|
+| Toolbar / Shift+G | Choose All windows, Apps, Workspaces or Monitors |
+| R / Recent | Switch between location order and recent-first order within each group |
+| / / search field | Search titles, app names/classes, workspace names/numbers and monitor names |
+| Backspace / Ctrl+U | Delete one Unicode character / clear the query |
+| Arrows, h/j/k/l, Tab / Shift+Tab | Select a window; navigation scrolls it into view |
+| Home / End | Select the first / last result |
+| Wheel, two-finger scroll, Page Up / Page Down | Scroll the window board |
+| Enter, S, Space or click | Focus the selected source window and close the overview |
+| Hold Z | Fit the selected window; the existing 1–4× zoom and pan controls apply |
+| Escape | Clear and leave search, return to workspaces, then dismiss |
+| N / middle-click | Return to workspaces and prepare an empty destination |
+| 1–9 / 0 | Return to workspaces and open that workspace |
+
+While search has focus, all printable keys become literal text, including G,
+R, S, Z, N, spaces and digits. Search ignores case, supports Danish characters,
+and requires every space-separated term to match somewhere in the window's
+metadata. Enter with no matches keeps the board open. Modified Hyprland
+shortcuts still act on the selected native window, including windows on another
+output. Foreground launchers keep their own keyboard input.
+
+App groups use desktop-file identity where available and normalized window
+class otherwise. Workspace groups also include monitor identity. Each card
+shows its title and native location; fullscreen/maximized badges describe the
+source window. Grouping never moves windows or changes layout/fullscreen state.
+Mapped windows that a crowded native layout has collapsed to zero size remain
+searchable and selectable with an icon placeholder.
+Window move, resize and workspace drag gestures belong to the workspace view.
+Changing groups animates the cards, retains selection and scrolls rather than
+shrinking previews below their readable minimum. Titles and window membership
+update while the board is open. Losing its display output relocates the board
+to another covered output.
+
+Recent order is captured when entering the board. Hovering and navigation do
+not reorder it. Group and order preferences survive G toggles during one open
+overview; a new overview starts with All windows and location order. Search is
+cleared when leaving the board. Manual project collections are outside this
+experiment.
+
+Set `overview:window_view_key` to an XKB key name or an empty value to disable
+the shortcut. The existing zoom and empty-workspace keys take precedence if
+they share its key. The toolbar hints follow your key mapping.
+`hyprspace:windowview` accepts `toggle` (the default), `off`, `flat`, `app`,
+`workspace` or `monitor`, and requires an open overview. In Lua use
+`hl.plugin.hyprspace.windowview("app")` with the same arguments. For example:
+
+```ini
+bind = SUPER, G, hyprspace:windowview, app
+```
+
+### Workspace destinations
+
 Middle-click without modifiers, press **N**, or click **+ Empty workspace** on a
 monitor to prepare an empty destination there. This uses the pointer's monitor
 even when keyboard navigation selected a tile on another output or `follow_mouse = false`.
@@ -401,6 +461,7 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:gap` | int | `28` | Gap between workspace tiles |
 | `overview:zoom_key` | string | `z` | Unmodified hold-to-zoom key; empty disables it. Use an XKB key name that does not conflict with overview navigation or system keys |
 | `overview:empty_workspace_key` | string | `n` | Unmodified key that selects an empty workspace on the pointer's monitor; empty disables it. Zoom takes precedence if both keys match |
+| `overview:window_view_key` | string | `g` | Toggle the global window board inside the overview; Shift cycles groups. Empty disables it. Zoom and empty-workspace keys take precedence |
 | `overview:workspace_drag_modifiers` | string | `SUPER ALT` | Exact modifiers for left-dragging a regular workspace to another monitor; requires Super plus Alt, Ctrl or Shift. Empty disables it |
 | `overview:wheel_zoom` | bool | `true` | Extra wheel, vertical touchpad and keyboard magnification/panning while the zoom key is held; bounds are 1–4 times the normal held fit. Disable to retain previous scrolling behavior |
 | `overview:band_gap` | int | `28` | Deprecated compatibility key; ignored. `overview:gap` controls both axes |

@@ -177,6 +177,13 @@ namespace hyprspace {
         }
     }
 
+    SAppIdentity appIdentity(const std::string& windowClass) {
+        if (const auto* db = desktopDbIfReady())
+            if (const auto* entry = db->entryForClass(windowClass))
+                return {entry->id, entry->name};
+        return {normaliseClass(windowClass), windowClass};
+    }
+
     void finishIconDiscovery() {
         auto& state = desktopDbState();
         if (state.db || !state.pending.valid())

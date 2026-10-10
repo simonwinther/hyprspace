@@ -40,6 +40,7 @@ namespace hyprspace::config {
             SP<Config::Values::CStringValue> overviewFont;
             SP<Config::Values::CStringValue> overviewZoomKey;
             SP<Config::Values::CStringValue> overviewEmptyWorkspaceKey;
+            SP<Config::Values::CStringValue> overviewWindowViewKey;
             SP<Config::Values::CStringValue> overviewWorkspaceDragModifiers;
             SP<Config::Values::CBoolValue>   overviewWheelZoom;
             SP<Config::Values::CColorValue>  overviewFullscreenBorder;
@@ -148,6 +149,9 @@ namespace hyprspace::config {
         g_values.overviewEmptyWorkspaceKey =
             reg<CStringValue>("plugin:hyprspace:overview:empty_workspace_key", "unmodified XKB key to select an empty workspace on the pointer's monitor; empty disables",
                               "n", SStringValueOptions{.validator = hooks::validateEmptyWorkspaceKey});
+        g_values.overviewWindowViewKey =
+            reg<CStringValue>("plugin:hyprspace:overview:window_view_key", "unmodified XKB key to toggle the global window board; empty disables", "g",
+                              SStringValueOptions{.validator = hooks::validateWindowViewKey});
         g_values.overviewWorkspaceDragModifiers =
             reg<CStringValue>("plugin:hyprspace:overview:workspace_drag_modifiers", "exact modifiers for left-dragging a workspace to another monitor; empty disables",
                               "SUPER ALT", SStringValueOptions{.validator = validateWorkspaceDragModifiers});
@@ -253,6 +257,13 @@ namespace hyprspace::config {
         // Preserve existing custom zoom keys when the new shortcut shares one.
         // Validation of either setting is independent, avoiding recursive reads.
         return sym == overviewZoomKey() ? XKB_KEY_NoSymbol : sym;
+    }
+    xkb_keysym_t overviewWindowViewKey() {
+        const auto name = g_values.overviewWindowViewKey ? g_values.overviewWindowViewKey->value() : "g";
+        if (name.empty() || !hooks::validateWindowViewKey(name))
+            return XKB_KEY_NoSymbol;
+        const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+        return sym == overviewZoomKey() || sym == overviewEmptyWorkspaceKey() ? XKB_KEY_NoSymbol : sym;
     }
     uint32_t overviewWorkspaceDragModifiers() {
         const auto name = g_values.overviewWorkspaceDragModifiers ? g_values.overviewWorkspaceDragModifiers->value() : "SUPER ALT";
