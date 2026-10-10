@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -1617,18 +1618,30 @@ runner = [
         finally:
             if getattr(self, "background", None):
                 self.background.finish()
-        (self.root / "results.json").write_text(
-            json.dumps({"passed": self.checks, "group": self.group,
-                        "status": "timed-out" if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)) or error and "timed out" in str(error)
-                                  else "failed" if error else "passed",
-                        "error": repr(error) if error else None,
-                        "started": self.started, "finished": time.time(),
-                        "compositor": self.compositor_identity,
-                        "compositor_pid": getattr(self, "compositor_pid", None),
-                        "generation": self.snapshot.record if self.snapshot else None}, indent=2)
-        )
-        if self.owns_snapshot and self.snapshot:
-            self.snapshot.finish(failed=error is not None)
+        try:
+            (self.root / "results.json").write_text(
+                json.dumps({"passed": self.checks, "group": self.group,
+                            "status": "timed-out" if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)) or error and "timed out" in str(error)
+                                      else "failed" if error else "passed",
+                            "error": repr(error) if error else None,
+                            "started": self.started, "finished": time.time(),
+                            "compositor": self.compositor_identity,
+                            "compositor_pid": getattr(self, "compositor_pid", None),
+                            "generation": self.snapshot.record if self.snapshot else None}, indent=2)
+            )
+        finally:
+            # Even a full tmpfs preventing results.json from being written must
+            # not leave the large binary copies and application caches behind.
+            try:
+                if self.owns_snapshot and self.snapshot:
+                    self.snapshot.finish()
+            finally:
+                if self.owned or self.owns_snapshot:
+                    for name in ("cache", "data", "firefox-profile", "discord-profile",
+                                 "discord-config", "discord-cache", "discord-data", "discord-tmp"):
+                        directory = self.root / name
+                        if directory.exists():
+                            shutil.rmtree(directory)
         print("Artifacts:", self.root, flush=True)
 
 

@@ -100,17 +100,34 @@ class ArtifactsTests(unittest.TestCase):
             self.snapshot()
 
     def test_completed_cleanup_retains_manifest_and_failure_diagnostics(self):
-        good = self.snapshot("good")
-        good.finish(False)
-        self.assertFalse(good.root.exists())
-        self.assertTrue((good.root.parent / "generation.json").exists())
+        for name in ("good", "failed"):
+            with self.subTest(name=name):
+                snapshot = self.snapshot(name)
+                diagnostics = snapshot.root.parent / "failure.json"
+                diagnostics.write_text('{"error": "test failure"}')
+                snapshot.finish()
+                self.assertFalse(snapshot.root.exists())
+                self.assertTrue((snapshot.root.parent / "generation.json").exists())
+                self.assertEqual(diagnostics.read_text(), '{"error": "test failure"}')
+
+    def test_pruning_legacy_completed_snapshots_preserves_active_runs_and_logs(self):
         failed = self.snapshot("hs-i.failed")
-        failed.finish(True)
+        (failed.root / "finished").write_text("completed")
+        log = failed.root.parent / "compositor.log"
+        log.write_text("failure diagnostics")
+        active = self.snapshot("hs-i.active")
         prune_snapshots(self.root)
-        self.assertTrue(failed.path("hyprspace.so").is_file())
-        with patch("artifacts.time.time", return_value=failed.record["created"] + 8 * 86400):
-            prune_snapshots(self.root)
         self.assertFalse(failed.root.exists())
+        self.assertTrue(active.path("hyprspace.so").is_file())
+        self.assertTrue((failed.root.parent / "generation.json").exists())
+        self.assertEqual(log.read_text(), "failure diagnostics")
+
+    def test_pruning_does_not_follow_symlinks_to_another_snapshot(self):
+        snapshot = self.snapshot()
+        (snapshot.root / "finished").write_text("completed")
+        (self.root / "hs-i.link").symlink_to(snapshot.root.parent, target_is_directory=True)
+        prune_snapshots(self.root)
+        self.assertTrue(snapshot.path("hyprspace.so").is_file())
 
     def test_packaged_install_copies_requested_plugin_without_loading_build_fixtures(self):
         plugin = self.root / "packaged library.so"
@@ -134,6 +151,10 @@ class ArtifactsTests(unittest.TestCase):
             self.assertEqual(digest(snapshot.path("companions/" + name)), record["binaries"][name])
         with self.assertRaisesRegex(ValueError, "disagrees with compatibility record"):
             self.snapshot("mixed-companions", companions=directory)
+        snapshot.finish()
+        self.assertFalse(snapshot.root.exists())
+        for path in paths.values():
+            self.assertTrue(path.is_file())
 
     def test_changed_companion_manifest_cannot_mix_with_its_previous_binaries(self):
         directory = self.root / "companions"

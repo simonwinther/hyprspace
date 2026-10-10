@@ -2,7 +2,9 @@
 """Check compositor isolation and cleanup without touching a running desktop."""
 
 import contextlib
+import errno
 import io
+import json
 import os
 from pathlib import Path
 import socket
@@ -11,10 +13,11 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "integration"))
 from background import BackgroundDisplay, stop_process_group
+from artifacts import Snapshot
 from run import Suite, validate_runtime
 
 
@@ -203,6 +206,124 @@ class IsolationTests(unittest.TestCase):
                 return
             time.sleep(0.02)
         self.fail("child remains running after cleanup")
+
+
+class CleanupTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="hs-cleanup-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def suite(self, name, *, snapshot=None, owned=True, owns_snapshot=True):
+        suite = Suite.__new__(Suite)
+        suite.root = self.root / name
+        suite.root.mkdir()
+        if snapshot is None:
+            artifacts = suite.root / "artifacts"
+            artifacts.mkdir()
+            (artifacts / "hyprspace.so").write_text("copied binary")
+            snapshot = Snapshot(artifacts, {"generation": name, "files": {}})
+        suite.snapshot = snapshot
+        suite.owns_snapshot = owns_snapshot
+        suite.owned = owned
+        suite.connected = False
+        suite.group = "cleanup"
+        suite.started = time.time()
+        suite.compositor_identity = None
+        suite.processes = []
+        suite.checks = []
+        for relative in ("cache/elephant/files.db", "data/application.db",
+                         "firefox-profile/cache2/entries/cache", "discord-profile/GPUCache/data",
+                         "discord-config/discord/updater", "discord-cache/gpu",
+                         "discord-data/store", "discord-tmp/download"):
+            path = suite.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("temporary application data")
+        (suite.root / "generation.json").write_text(json.dumps(snapshot.record))
+        (suite.root / "compositor.log").write_text("compositor diagnostics")
+        (suite.root / "failure.json").write_text('{"error": "test failure"}')
+        return suite
+
+    def assert_cleaned(self, suite):
+        self.assertFalse(suite.snapshot.root.exists())
+        for name in ("cache", "data", "firefox-profile", "discord-profile",
+                     "discord-config", "discord-cache", "discord-data", "discord-tmp"):
+            self.assertFalse((suite.root / name).exists(), name)
+        self.assertEqual((suite.root / "compositor.log").read_text(), "compositor diagnostics")
+        self.assertEqual((suite.root / "failure.json").read_text(), '{"error": "test failure"}')
+        self.assertEqual(json.loads((suite.root / "generation.json").read_text()), suite.snapshot.record)
+
+    def test_finish_releases_files_on_success_failure_timeout_and_interruption(self):
+        outcomes = ((None, "passed"), (AssertionError("test failed"), "failed"),
+                    (subprocess.TimeoutExpired("fixture", 1), "timed-out"),
+                    (KeyboardInterrupt(), "failed"), (SystemExit(143), "failed"))
+        for index, (error, status) in enumerate(outcomes):
+            with self.subTest(error=type(error).__name__), contextlib.redirect_stdout(io.StringIO()):
+                suite = self.suite(str(index))
+                try:
+                    if error is not None:
+                        raise error
+                except BaseException:
+                    suite.finish()
+                else:
+                    suite.finish()
+                self.assert_cleaned(suite)
+                self.assertEqual(json.loads((suite.root / "results.json").read_text())["status"], status)
+
+    def test_cleanup_waits_for_test_process_teardown(self):
+        suite = self.suite("teardown")
+
+        def still_present(*args, **kwargs):
+            self.assertTrue(suite.snapshot.root.is_dir())
+            self.assertTrue((suite.root / "cache").is_dir())
+
+        process = Mock()
+        process.poll.return_value = None
+        process.terminate.side_effect = still_present
+        process.wait.side_effect = still_present
+        suite.processes = [process]
+        suite.compositor = Mock()
+        suite.background = Mock()
+        suite.background.finish.side_effect = still_present
+        with patch("run.stop_process_group", side_effect=still_present) as stop, contextlib.redirect_stdout(io.StringIO()):
+            suite.finish()
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=3)
+        stop.assert_called_once_with(suite.compositor)
+        suite.background.finish.assert_called_once()
+        self.assert_cleaned(suite)
+
+    def test_full_tmpfs_does_not_prevent_cleanup(self):
+        suite = self.suite("full")
+        write_text = Path.write_text
+
+        def full(path, *args, **kwargs):
+            if path == suite.root / "results.json":
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return write_text(path, *args, **kwargs)
+
+        with patch.object(Path, "write_text", full), self.assertRaises(OSError) as caught:
+            suite.finish()
+        self.assertEqual(caught.exception.errno, errno.ENOSPC)
+        self.assert_cleaned(suite)
+
+    def test_shared_snapshot_survives_child_cleanup(self):
+        parent = self.suite("parent")
+        child = self.suite("child", snapshot=parent.snapshot, owns_snapshot=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            child.finish()
+        self.assertTrue(parent.snapshot.root.is_dir())
+        self.assertTrue((parent.root / "cache").is_dir())
+        self.assertFalse((child.root / "cache").exists())
+        self.assertTrue((child.root / "results.json").is_file())
+
+    def test_attached_runtime_keeps_its_owner_files(self):
+        suite = self.suite("attached", owned=False, owns_snapshot=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            suite.finish()
+        self.assertTrue(suite.snapshot.root.is_dir())
+        self.assertTrue((suite.root / "cache/elephant/files.db").is_file())
+        self.assertTrue((suite.root / "firefox-profile").is_dir())
 
 
 if __name__ == "__main__":

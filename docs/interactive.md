@@ -276,7 +276,14 @@ cover empty destinations, workspace transfers and cancellation on window/output
 removal. Diagnostics also check for duplicate native layout membership.
 
 Results, screenshots and failure diagnostics remain in the printed temporary
-directory. A run without `--companions` does not verify the Walker/Elephant UI.
+directory. After stopping its test processes, the runner removes copied binaries,
+application caches and temporary browser profiles on success, failure or
+interruption. It also removes completed binary snapshots left by older runners
+before starting a fresh session. Shared snapshots and sessions reused through
+`--runtime` remain available to their owner. Logs and generation metadata remain
+for diagnosis; failed runs no longer retain binary copies for seven days, since
+`/tmp` may use RAM and swap.
+A run without `--companions` does not verify the Walker/Elephant UI.
 Host sanitizers cover the host harness, not the compositor's loaded plugin.
 The [background verification record](verification/2026-09-06-background-tests.md)
 records the tested display host, coverage and cancellation checks.

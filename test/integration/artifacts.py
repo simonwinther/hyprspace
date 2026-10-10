@@ -152,19 +152,24 @@ class Snapshot:
             raise FileNotFoundError(f"Required snapshot artifact is missing: {name}")
         return self.root / name
 
-    def finish(self, failed):
-        if failed:
-            # Failure binaries accompany logs for seven days. A later runner
-            # prunes only completed, expired snapshots, never an active run.
-            (self.root / "finished").write_text(str(time.time()))
-        else:
-            shutil.rmtree(self.root)
+    def finish(self):
+        # Logs and generation metadata live outside this directory. Release the
+        # binary copies after every run, including failures, because /tmp may
+        # be backed by RAM.
+        shutil.rmtree(self.root)
 
 
 def prune_snapshots(parent):
+    # Older runners retained failed binaries. Their completion marker is only
+    # written after teardown, so they can be removed without waiting seven days.
     for marker in parent.glob("hs-i.*/artifacts/finished"):
-        if marker.stat().st_uid == os.getuid() and time.time() - marker.stat().st_mtime > 7 * 86400:
-            shutil.rmtree(marker.parent)
+        try:
+            if (not marker.parent.parent.is_symlink() and not marker.parent.is_symlink()
+                    and not marker.is_symlink() and marker.stat().st_uid == os.getuid()):
+                shutil.rmtree(marker.parent)
+        except FileNotFoundError:
+            # Another runner may already have removed this completed snapshot.
+            pass
 
 
 if __name__ == "__main__":

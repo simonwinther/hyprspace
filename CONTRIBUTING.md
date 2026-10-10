@@ -90,10 +90,12 @@ the checkout's C++ fixture plugins.
 
 Each artifact directory contains `generation.json` and `results.json`, recording
 the revision, dirty state, binary hashes, generation, compositor ABI, test group
-and outcome. Successful runs remove binary copies after teardown and retain the
-records and logs. Failed runs retain binaries for diagnostics; subsequent runs
-remove completed failure snapshots older than seven days. `--runtime` requires
-the original snapshot to remain present and verifies its hashes before attaching.
+and outcome. After teardown, successful, failed and interrupted runs remove their
+binary copies and private application caches while retaining records and logs.
+Fresh sessions also prune completed binary snapshots left by older runners.
+Shared snapshots and sessions attached through `--runtime` remain available to
+their owner. `--runtime` requires the original snapshot to remain present and
+verifies its hashes before attaching.
 
 For a packaged library, run the runner directly so validation does not rebuild
 the plugin in the checkout. The compositor and its `hyprctl` must be on `PATH`
