@@ -35,6 +35,95 @@ def search(s, text):
     s.run("wtype", text)
 
 
+def danish_search(s, wait_for):
+    # wtype installs a keymap for its requested symbols. Use physical keycodes
+    # with the user's Danish layout to exercise Shift+7 rather than a US slash.
+    opened(s, wait_for)
+    before = placement(s)
+    log = s.root / "input.log"
+    log.write_text("")
+    keyboard = s.spawn(
+        ["env", "HS_KEYBOARD_LAYOUT=dk", "HS_KEYBOARD_VARIANT=nodeadkeys",
+         str(s.artifact("test-pointer"))],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    )
+    assert reply(keyboard) == "ready"
+
+    def key(code, state):
+        keyboard.stdin.write(f"key {code} {state}\n")
+        keyboard.stdin.flush()
+        assert reply(keyboard) == "ok"
+
+    def press(code):
+        key(code, 1)
+        key(code, 0)
+
+    try:
+        key(SHIFT, 1)
+        key(8, 1)  # Danish / is Shift+7.
+        wait_for(lambda: board(s)["search_focused"])
+        key(8, 1)  # A repeat of the opening press must not type 7 or /.
+        time.sleep(.7)
+        assert board(s)["query"] == "" and board(s)["count"] == 3
+        assert placement(s) == before
+        key(8, 0)
+        key(SHIFT, 0)
+        key(SHIFT, 1)
+        press(8)  # Once focused, another / is literal search text.
+        key(SHIFT, 0)
+        for code in (39, 40, 26):  # Danish æ, ø, å.
+            press(code)
+        key(SHIFT, 1)
+        press(G)
+        key(SHIFT, 0)
+        press(8)
+        assert board(s)["query"] == "/æøåG7", board(s)
+        assert board(s)["active"] and board(s)["count"] == 0
+        assert not log.read_text(), log.read_text()
+        press(1)  # Escape clears the search without leaving the board.
+        assert not board(s)["search_focused"] and board(s)["query"] == ""
+        assert board(s)["count"] == 3 and placement(s) == before
+
+        # A modified slash must still reach Hyprland's native binding matcher.
+        s.ctl("keyword", "bind", "CTRL SHIFT,7,togglefloating")
+        try:
+            selected = board(s)["selected_window"]
+
+            def floating():
+                return next(w["floating"] for w in s.windows().values() if w["address"] == selected)
+
+            original_floating = floating()
+            key(29, 1)  # Ctrl
+            key(SHIFT, 1)
+            press(8)
+            key(SHIFT, 0)
+            key(29, 0)
+            wait_for(lambda: floating() != original_floating)
+            assert not board(s)["search_focused"]
+            key(SHIFT, 1)
+            press(8)
+            key(SHIFT, 0)
+            assert board(s)["search_focused"] and board(s)["query"] == ""
+            key(29, 1)
+            key(SHIFT, 1)
+            press(8)
+            key(SHIFT, 0)
+            key(29, 0)
+            wait_for(lambda: floating() == original_floating)
+            assert board(s)["search_focused"] and board(s)["query"] == ""
+        finally:
+            s.ctl("keyword", "unbind", "CTRL SHIFT,7")
+        press(1)
+        s.close()
+        s.check("Danish Shift+7 opens search once; / and Danish letters type literally; modified shortcuts retain native routing")
+    finally:
+        for code in (8, SHIFT, 29):
+            if keyboard.poll() is None:
+                key(code, 0)
+        keyboard.terminate()
+        keyboard.wait(timeout=3)
+
+
 def run(s, wait_for):
     s.setup("dwindle", 0, 1)
     original = placement(s)
@@ -93,6 +182,8 @@ def run(s, wait_for):
     s.run("wtype", "g")
     wait_for(lambda: " 103" in log.read_text())
     s.check("search owns ordinary letters, spaces and digits; empty results cannot commit; Escape unwinds search and views")
+
+    danish_search(s, wait_for)
 
     # A separate program identity supplies a second app group, with Unicode titles.
     title_file = s.root / "window-title"

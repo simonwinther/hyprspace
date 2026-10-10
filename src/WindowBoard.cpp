@@ -28,6 +28,14 @@ namespace hyprspace {
     namespace {
         uint64_t nextBoardGeneration = 0;
 
+        bool searchShortcut(xkb_keysym_t sym, uint32_t mods, const std::string& text) {
+            if (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META))
+                return false;
+            // Navigation uses unshifted symbols, but / can require Shift or
+            // AltGr. Prefer the character produced by the keyboard's layout.
+            return text == "/" || (text.empty() && mods == 0 && sym == XKB_KEY_slash);
+        }
+
         SBoxF intersection(const SBoxF& a, const SBoxF& b) {
             const double x = std::max(a.x, b.x), y = std::max(a.y, b.y);
             return {x, y, std::max(0.0, std::min(a.x + a.w, b.x + b.w) - x), std::max(0.0, std::min(a.y + a.h, b.y + b.h) - y)};
@@ -381,6 +389,8 @@ namespace hyprspace {
             return true;
         if (m_searchFocused && (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0 && !text.empty())
             return true;
+        if (!m_searchFocused && searchShortcut(sym, mods, text))
+            return true;
         if (mods == HL_MODIFIER_SHIFT)
             return sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab;
         if (mods != 0)
@@ -399,7 +409,6 @@ namespace hyprspace {
         case XKB_KEY_Page_Up:
         case XKB_KEY_Page_Down:
         case XKB_KEY_BackSpace:
-        case XKB_KEY_slash:
         case XKB_KEY_r:
             return true;
         default:
@@ -440,6 +449,10 @@ namespace hyprspace {
             refresh();
             return;
         }
+        if (searchShortcut(sym, mods, text)) {
+            focusSearch();
+            return;
+        }
         if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) {
             (void)m_session.windowView("off");
             if (auto* view = m_session.keyboardView()) {
@@ -448,10 +461,6 @@ namespace hyprspace {
                     other->close(false);
                 m_session.stopInput();
             }
-            return;
-        }
-        if (sym == XKB_KEY_slash) {
-            focusSearch();
             return;
         }
         if (sym == XKB_KEY_r) {

@@ -163,6 +163,9 @@ still opens first, and G returns to it.
 | N / middle-click | Return to workspaces and prepare an empty destination |
 | 1–9 / 0 | Return to workspaces and open that workspace |
 
+The / shortcut follows your keyboard layout, including **Shift+7** on a Danish
+keyboard. Holding the opening key does not add text to the query.
+
 While search has focus, all printable keys become literal text, including G,
 R, S, Z, N, spaces and digits. Search ignores case, supports Danish characters,
 and requires every space-separated term to match somewhere in the window's

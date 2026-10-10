@@ -81,6 +81,23 @@ cycles release captures, text/icon textures and input ownership. These are
 local measurements with disposable GTK clients, not a GPU presentation or
 real-application benchmark. See the [timing record](2026-10-10-window-views-performance.json).
 
+### Keyboard-layout follow-up
+
+The original slash shortcut failed with the installed Danish `dk/nodeadkeys`
+layout: Shift+7 was interpreted as an unshifted 7. Search now recognizes the
+resolved / character before digit shortcuts, preserves literal typing once
+focused, and keeps Ctrl/Alt/Super shortcuts in the native binding matcher.
+
+A physical-keycode regression with a Danish virtual keyboard reproduces the
+failure against the original experiment binary and passes against
+`836ec628144b701f108f54e69f8a1270240c14aab08f94762763e42db8653176`.
+It covers Shift+7, held/repeated activation, literal /, æ/ø/å, shifted letters,
+digits, Escape, input isolation and native Ctrl+Shift+7 actions before and during
+search. All 22 window-view checks and `make check release-check test` pass for
+this binary. The earlier benchmark and screenshots retain their original hashes.
+The follow-up is committed locally on the experiment branch; no publication or
+merge is performed.
+
 ## Visual evidence
 
 [All windows](../screenshots/window-views-flat.png),

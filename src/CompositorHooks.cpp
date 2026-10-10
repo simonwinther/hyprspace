@@ -604,7 +604,8 @@ namespace hyprspace::hooks {
                     it->boardMods            = mods;
                     it->oneShot =
                         sym == XKB_KEY_Escape || sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter ||
-                        (!searching && (sym == XKB_KEY_r || sym == XKB_KEY_slash || sym == XKB_KEY_s || sym == XKB_KEY_space || (sym >= XKB_KEY_0 && sym <= XKB_KEY_9)));
+                        (!searching && (text == "/" || sym == XKB_KEY_r || sym == XKB_KEY_slash || sym == XKB_KEY_s || sym == XKB_KEY_space ||
+                                        (sym >= XKB_KEY_0 && sym <= XKB_KEY_9)));
                     board->onKey(sym, mods, text);
                     if (!it->oneShot)
                         startReservedRepeat(keyboard, e.keycode);

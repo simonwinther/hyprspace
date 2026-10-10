@@ -224,5 +224,51 @@
     "plugin_sha256": "e21aae2424608c282126b70ebc5222bd6a2173bf7844dfe5a9eb59e70c77bae0",
     "error": "AssertionError()",
     "followup": "The existing animation timing assertion passed in the final-build isolated zoom suite with capture and compilation stopped."
+  },
+  "keyboard_layout_followup": {
+    "layout": "dk",
+    "variant": "nodeadkeys",
+    "shortcut": "Shift+7",
+    "baseline_reproduction": {
+      "plugin_sha256": "0c4fa27367f0dfdedfd6d24da8ee807ef2487c01470ea10a989eec891c0937c6",
+      "status": "timed-out",
+      "failure": "Shift+7 fails to focus board search",
+      "checks_before_failure": 3
+    },
+    "plugin_sha256": "836ec628144b701f108f54e69f8a1270240c14aab08f94762763e42db8653176",
+    "group": "window_views",
+    "status": "passed",
+    "checks": 22,
+    "cases": [
+      "plugin loads with exact ABI and clean configuration",
+      "global board includes every covered window; grouping preserves native placement and recency stays frozen",
+      "search owns ordinary letters, spaces and digits; empty results cannot commit; Escape unwinds search and views",
+      "Danish Shift+7 opens search once; / and Danish letters type literally; modified shortcuts retain native routing",
+      "canonical app groups separate applications; Danish search/editing and live title changes work",
+      "native modified shortcuts and keyboard commits act on the remote source window without moving the board",
+      "a global card click focuses its real window on the other output",
+      "window inspection reuses bounded zoom, keyboard grip and mouse pan without changing native geometry",
+      "one global board renders and commits on every fractional-scale output",
+      "destroying a selected window removes its card without stale selection or focus",
+      "remapped toggle keys act once and their held repeats remain captured across close/reopen",
+      "held Backspace repeats, release stops it, and old holds cannot edit a reopened board",
+      "foreground layers own typing and Escape; closing them restores board search without leaking keys",
+      "losing the board output relocates cards to a covered output and cancels inspection safely",
+      "session locking closes the board and releases its capture, texture and input resources",
+      "unloading an inspected board restores input and resources; reload starts with clean preferences",
+      "zoom and empty-workspace keys retain precedence; disabling the shortcut keeps dispatchers available",
+      "N, middle-click and workspace digits return to the native workspace controls",
+      "the global board respects the overview's covered-output scope",
+      "grouping preserves native fullscreen and follows scratchpad inclusion settings",
+      "remote cards render the actual source pixels and track native workspace/monitor changes without losing selection",
+      "every window view releases captures, text/icon textures and input ownership on dismissal"
+    ],
+    "compositor_commit": "efb50993780079460b0cbed1363e2166a2de1d9f",
+    "host_checks": 842123,
+    "host_failures": 0,
+    "abi": "passed",
+    "release_metadata": "passed",
+    "make_test": "passed",
+    "publication": "local experiment branch only"
   }
 }

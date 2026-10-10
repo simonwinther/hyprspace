@@ -28,6 +28,8 @@ The board owns printable input only while its search field has focus. Reserved
 presses keep per-device leases through repeats, remapping, dismissal and
 foreground handoff. Navigation and Backspace repeat at the keyboard's configured
 rate; G, grouping changes, recent order, Enter and Escape act once per press.
+Search activation uses the layout's resolved / character, including Danish
+Shift+7, before interpreting an unshifted digit as a workspace shortcut.
 Generations prevent an old held key from editing a reopened board. Inspection
 uses the existing bounded zoom/pan model fitted to the selected window. Window
 and workspace drags remain in the workspace view. N and middle-click return to
