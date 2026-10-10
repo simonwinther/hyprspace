@@ -22,6 +22,7 @@ The images have no added labels or composited interface elements.
 | [window-views-workspace.png](window-views-workspace.png) | The same windows grouped by native workspace |
 | [window-views-monitor.png](window-views-monitor.png) | Grouping by native output |
 | [window-views-search.png](window-views-search.png) | Filtering by a window title |
+| [window-views-search-field.png](window-views-search-field.png) | Search text with a separately drawn caret |
 | [window-views-workspaces.png](window-views-workspaces.png) | The default workspace overview before entering the board |
 | [window-views.mp4](window-views.mp4) | A 15 fps demo of grouping, search, window inspection and returning |
 
@@ -59,6 +60,13 @@ labels or composited interface elements. Binary and compositor details are in
 
 To reproduce these captures, build the integration fixtures and run
 `python3 test/integration/window_views_demo.py --output build/window-views-demo`.
+
+The search-field crop comes from the 2026-10-10 input regression in a private
+960 × 600 Hyprland 0.56.2 session at scale 1. It preserves the original pixels
+of the field's left edge, with no labels or composited elements. The input's
+rendering and cursor positions are also checked at scales 1.2, 1.25, 1.5 and 2.
+Its binary hash and checks are recorded under `search_field_followup` in
+[`2026-10-10-window-views.json`](../verification/2026-10-10-window-views.json).
 
 ## Capture replacements
 

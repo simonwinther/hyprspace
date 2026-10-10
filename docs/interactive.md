@@ -30,6 +30,12 @@ foreground handoff. Navigation and Backspace repeat at the keyboard's configured
 rate; G, grouping changes, recent order, Enter and Escape act once per press.
 Search activation uses the layout's resolved / character, including Danish
 Shift+7, before interpreting an unshifted digit as a workspace shortcut.
+The field keeps UTF-8 cursor and selection offsets, and uses Pango's shaped
+positions for its caret and pointer hit testing. Input text is clipped and
+scrolled instead of ellipsised. A timer owned by the board blinks the caret without
+recreating text textures, stops on blur/dismissal/unload, and paints only while
+the board owns keyboard input. Left/Right and Home/End edit the focused query;
+Up/Down and Tab continue browsing results.
 Generations prevent an old held key from editing a reopened board. Inspection
 uses the existing bounded zoom/pan model fitted to the selected window. Window
 and workspace drags remain in the workspace view. N and middle-click return to

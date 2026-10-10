@@ -124,6 +124,81 @@ def danish_search(s, wait_for):
         keyboard.wait(timeout=3)
 
 
+def search_field(s, wait_for):
+    opened(s, wait_for)
+    search(s, "hs-")
+    assert board(s)["search_cursor"] == 3
+    selected = board(s)["selected_window"]
+    s.run("wtype", "-k", "Left", "X")
+    assert board(s)["query"] == "hsX-" and board(s)["search_cursor"] == 3
+    assert board(s)["selected_window"] == selected or board(s)["count"] == 0
+    s.run("wtype", "-k", "BackSpace", "-k", "Delete")
+    assert board(s)["query"] == "hs" and board(s)["search_cursor"] == 2
+    s.run("wtype", "-k", "Home", "æ", "-M", "shift", "-k", "End", "-m", "shift")
+    assert board(s)["search_selection"] == [2, 4]
+    s.run("wtype", "ø")
+    assert board(s)["query"] == "æø" and board(s)["search_cursor"] == 4
+    s.run("wtype", "-M", "ctrl", "a", "-m", "ctrl", "hs-")
+    assert board(s)["query"] == "hs-" and board(s)["count"] == 3
+    before = board(s)
+    s.run("wtype", "-k", "Tab")
+    assert board(s)["selected_window"] != before["selected_window"]
+    assert board(s)["query"] == before["query"] and board(s)["search_cursor"] == before["search_cursor"]
+    s.run("wtype", "-M", "ctrl", "a", "-m", "ctrl", "æøå", "-k", "Home", "-k", "Right")
+    caret = board(s)["search_caret"]
+    host = next(m for m in s.data("monitors") if m["name"] == board(s)["monitor"])
+    s.run("wtype", "-k", "End")
+    s.move((host["x"] + caret["x"] + caret["w"] / 2, host["y"] + caret["y"] + caret["h"] / 2))
+    assert s.status()["cursor_shape"] == "text"
+    s.button(1)
+    s.button(0)
+    assert board(s)["search_cursor"] == 2
+    s.run("wtype", "G")
+    assert board(s)["query"] == "æGøå"
+    assert board(s)["search_caret_visible"]
+    wait_for(lambda: not board(s)["search_caret_visible"])
+    wait_for(lambda: board(s)["search_caret_visible"])
+    s.run("wtype", "-M", "ctrl", "a", "-m", "ctrl", "gh")
+    s.run("grim", "-s", "1", "-o", host["name"], str(s.root / "search-field-short.png"))
+    s.run("wtype", "-M", "ctrl", "a", "-m", "ctrl")
+    s.run("grim", "-s", "1", "-o", host["name"], str(s.root / "search-field-selection.png"))
+    s.close()
+    s.check("search has a shaped blinking caret, insertion, Unicode selection/deletion, click placement and independent result navigation")
+
+    for output in range(3):
+        s.ctl("dispatch", "focusmonitor", s.names[output])
+        s.ctl("keyword", "plugin:hyprspace:follow_mouse", "false")
+        opened(s, wait_for)
+        search(s, "W" * 256)
+        state = board(s)
+        field, caret = state["search_box"], state["search_caret"]
+        assert state["search_offset"] > 0 and caret["w"] > 0
+        assert field["x"] + 12 <= caret["x"] <= field["x"] + field["w"] - 13 + .001
+        assert field["y"] + 6 <= caret["y"] and caret["y"] + caret["h"] <= field["y"] + field["h"] - 6 + .001
+        s.run("wtype", "-k", "Home")
+        assert board(s)["search_offset"] == 0
+        s.run("wtype", "-k", "End")
+        assert board(s)["search_offset"] > 0
+        if output == 0:
+            s.run("grim", "-s", "1", "-o", s.names[output], str(s.root / "search-field-long.png"))
+        s.close()
+    s.ctl("keyword", "plugin:hyprspace:follow_mouse", "true")
+    s.check("long search queries scroll their text and keep the caret inside the field on all fractional-scale outputs")
+
+    opened(s, wait_for)
+    search(s, "pending blink")
+    assert board(s)["search_caret_visible"]
+    s.ctl("plugin", "unload", str(s.plugin))
+    time.sleep(1.1)  # Let a cancelled blink deadline pass after the code unloads.
+    assert len(s.data("monitors")) == 3
+    assert not any(p["name"] == "hyprspace" for p in json.loads(s.ctl("-j", "plugin", "list")))
+    s.ctl("plugin", "load", str(s.plugin))
+    s.ctl("reload")
+    assert not s.status()["views"] and not s.status()["keyboard_owned"]
+    assert s.ctl("configerrors") == ""
+    s.check("unloading a focused search cancels its blink callback and reload restores clean input ownership")
+
+
 def run(s, wait_for):
     s.setup("dwindle", 0, 1)
     original = placement(s)
@@ -184,6 +259,7 @@ def run(s, wait_for):
     s.check("search owns ordinary letters, spaces and digits; empty results cannot commit; Escape unwinds search and views")
 
     danish_search(s, wait_for)
+    search_field(s, wait_for)
 
     # A separate program identity supplies a second app group, with Unicode titles.
     title_file = s.root / "window-title"

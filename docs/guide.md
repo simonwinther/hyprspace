@@ -153,7 +153,9 @@ still opens first, and G returns to it.
 | Toolbar / Shift+G | Choose All windows, Apps, Workspaces or Monitors |
 | R / Recent | Switch between location order and recent-first order within each group |
 | / / search field | Search titles, app names/classes, workspace names/numbers and monitor names |
-| Backspace / Ctrl+U | Delete one Unicode character / clear the query |
+| Backspace / Delete / Ctrl+U | Delete before / after the text cursor, or clear the query |
+| Left / Right, Home / End while searching | Move the text cursor; hold Shift to select text |
+| Ctrl+A while searching | Select the query; typing replaces the selection |
 | Arrows, h/j/k/l, Tab / Shift+Tab | Select a window; navigation scrolls it into view |
 | Home / End | Select the first / last result |
 | Wheel, two-finger scroll, Page Up / Page Down | Scroll the window board |
@@ -166,12 +168,16 @@ still opens first, and G returns to it.
 The / shortcut follows your keyboard layout, including **Shift+7** on a Danish
 keyboard. Holding the opening key does not add text to the query.
 
+The search field has a blinking caret. Click to position it; long queries scroll
+inside the field. Up/Down and Tab still browse results while editing.
+
 While search has focus, all printable keys become literal text, including G,
 R, S, Z, N, spaces and digits. Search ignores case, supports Danish characters,
 and requires every space-separated term to match somewhere in the window's
 metadata. Enter with no matches keeps the board open. Modified Hyprland
-shortcuts still act on the selected native window, including windows on another
-output. Foreground launchers keep their own keyboard input.
+shortcuts, except the search editing keys above, still act on the selected native
+window, including windows on another output. Foreground launchers keep their own
+keyboard input.
 
 App groups use desktop-file identity where available and normalized window
 class otherwise. Workspace groups also include monitor identity. Each card

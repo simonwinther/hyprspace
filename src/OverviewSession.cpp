@@ -642,13 +642,16 @@ namespace hyprspace {
     void COverviewSession::updateCursor() {
         if (!m_cursorOwned)
             return;
-        const auto shape = workspaceDrag                                                 ? "grabbing"
-                           : drag.active()                                               ? (drag.mode == SOverviewDrag::MOVE ? "grabbing"
-                                                                                            : drag.resizeTop                 ? (drag.resizeLeft ? "nw-resize" : "ne-resize")
-                                                                                                                             : (drag.resizeLeft ? "sw-resize" : "se-resize"))
-                           : panning()                                                   ? "grabbing"
-                           : panAvailable() && g_pInputManager->getModsFromAllKBs() == 0 ? "grab"
-                                                                                         : "default";
+        const auto boardMonitor = windowViewActive() ? m_windowBoard->monitor() : nullptr;
+        const bool overSearch   = boardMonitor && m_windowBoard->searchBox().contains(m_pointer.x - boardMonitor->m_position.x, m_pointer.y - boardMonitor->m_position.y);
+        const auto shape        = workspaceDrag                                                 ? "grabbing"
+                                  : drag.active()                                               ? (drag.mode == SOverviewDrag::MOVE ? "grabbing"
+                                                                                                   : drag.resizeTop                 ? (drag.resizeLeft ? "nw-resize" : "ne-resize")
+                                                                                                                                    : (drag.resizeLeft ? "sw-resize" : "se-resize"))
+                                  : panning()                                                   ? "grabbing"
+                                  : overSearch                                                  ? "text"
+                                  : panAvailable() && g_pInputManager->getModsFromAllKBs() == 0 ? "grab"
+                                                                                                : "default";
         hooks::setCursor(shape);
     }
 

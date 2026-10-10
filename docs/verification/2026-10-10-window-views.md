@@ -98,6 +98,21 @@ this binary. The earlier benchmark and screenshots retain their original hashes.
 The follow-up is committed locally on the experiment branch; no publication or
 merge is performed.
 
+### Search field follow-up
+
+The displayed query no longer contains a spaced-out cursor glyph. The field
+draws a thin blinking caret using the shaped text positions, supports insertion,
+deletion, Shift selection, Ctrl+A and click placement, and scrolls long queries
+inside its padding. Up/Down and Tab continue selecting results.
+The [field crop](../screenshots/window-views-search-field.png) shows the actual
+private compositor output.
+
+Binary `2c15f71ac51b3662d1c6e0224c23f1a59ed4b532507227211c8f7ee4ab317a45`
+passes all 25 window-view checks, including focused-search unload after a pending
+blink deadline. The host suite passes 842,364 checks, including under both
+sanitizers; `make check release-check test` also passes. This follow-up is kept
+on the local experiment branch.
+
 ## Visual evidence
 
 [All windows](../screenshots/window-views-flat.png),

@@ -17,6 +17,7 @@
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/render/pass/BorderPassElement.hpp>
 #include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
@@ -75,6 +76,10 @@ namespace hyprspace {
         m_lensProgress->setValueAndWarp(1.F);
     }
 
+    CWindowBoard::~CWindowBoard() {
+        stopCaret();
+    }
+
     const CWindowBoard::SItem* CWindowBoard::item(uint64_t key) const {
         const auto found = std::ranges::find_if(m_items, [&](const auto& candidate) { return candidate.input.key == key; });
         return found == m_items.end() ? nullptr : &*found;
@@ -86,7 +91,7 @@ namespace hyprspace {
         m_monitor    = monitor;
         m_active     = true;
         m_generation = ++nextBoardGeneration;
-        m_query.clear();
+        m_search.clear();
         m_searchFocused = false;
         m_scroll        = 0;
         m_recency.clear();
@@ -119,9 +124,9 @@ namespace hyprspace {
     void CWindowBoard::leave() {
         if (!m_active)
             return;
-        m_active        = false;
-        m_searchFocused = false;
-        m_query.clear();
+        m_active = false;
+        blurSearch();
+        m_search.clear();
         endPan();
         endInspection();
         *m_openness = 0.F;
@@ -208,7 +213,7 @@ namespace hyprspace {
         for (const auto& card : m_layout.cards)
             from[card.key] = gridBox(card);
         m_from   = std::move(from);
-        m_layout = layoutWindowViews(m_input, groupWindowViews(m_input, m_grouping, m_recent, m_query), m_viewport, m_gap);
+        m_layout = layoutWindowViews(m_input, groupWindowViews(m_input, m_grouping, m_recent, query()), m_viewport, m_gap);
         if (std::ranges::find(m_layout.cards, m_selected, &SWindowViewCard::key) == m_layout.cards.end())
             m_selected = m_layout.cards.empty() ? 0 : m_layout.cards[std::min(ordinal, m_layout.cards.size() - 1)].key;
         m_scroll = std::clamp(m_scroll, 0.0, std::max(0.0, m_layout.height - m_viewport.h));
@@ -372,21 +377,68 @@ namespace hyprspace {
     void CWindowBoard::focusSearch() {
         m_session.cancelZoom();
         m_searchFocused = true;
+        resetCaret();
         m_session.damage();
     }
 
-    void CWindowBoard::clearSearch() {
-        m_query.clear();
+    void CWindowBoard::blurSearch() {
         m_searchFocused = false;
-        m_dirty         = true;
+        stopCaret();
+    }
+
+    void CWindowBoard::clearSearch() {
+        m_search.clear();
+        m_searchOffset = 0;
+        blurSearch();
+        m_dirty = true;
         refresh();
+    }
+
+    void CWindowBoard::resetCaret() {
+        m_caretVisible = true;
+        if (!m_caretTimer) {
+            m_caretTimer = makeShared<CEventLoopTimer>(
+                std::nullopt,
+                [this](SP<CEventLoopTimer> self, void*) {
+                    if (!m_active || !m_searchFocused) {
+                        self->cancel();
+                        return;
+                    }
+                    m_caretVisible = !m_caretVisible;
+                    if (hooks::keyboardOwned())
+                        m_session.damage();
+                    self->updateTimeout(std::chrono::milliseconds(530));
+                },
+                nullptr);
+            g_pEventLoopManager->addTimer(m_caretTimer);
+        }
+        m_caretTimer->updateTimeout(std::chrono::milliseconds(530));
+    }
+
+    void CWindowBoard::stopCaret() {
+        if (m_caretTimer) {
+            m_caretTimer->cancel();
+            g_pEventLoopManager->removeTimer(m_caretTimer);
+        }
+        m_caretTimer.reset();
+        m_caretVisible = false;
+    }
+
+    bool CWindowBoard::searchCaretVisible() const {
+        return m_active && m_searchFocused && m_caretVisible && hooks::keyboardOwned();
     }
 
     bool CWindowBoard::reservesKey(xkb_keysym_t sym, uint32_t mods, const std::string& text) const {
         if (!m_active)
             return false;
-        if (m_searchFocused && mods == HL_MODIFIER_CTRL && sym == XKB_KEY_u)
-            return true;
+        if (m_searchFocused) {
+            if (mods == HL_MODIFIER_CTRL && (sym == XKB_KEY_u || sym == XKB_KEY_a))
+                return true;
+            if (mods == 0 && sym == XKB_KEY_Delete)
+                return true;
+            if (mods == HL_MODIFIER_SHIFT && (sym == XKB_KEY_Left || sym == XKB_KEY_Right || sym == XKB_KEY_Home || sym == XKB_KEY_End))
+                return true;
+        }
         if (m_searchFocused && (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0 && !text.empty())
             return true;
         if (!m_searchFocused && searchShortcut(sym, mods, text))
@@ -425,7 +477,7 @@ namespace hyprspace {
         if (!m_active)
             return;
         if (sym == XKB_KEY_Escape) {
-            if (m_searchFocused || !m_query.empty())
+            if (m_searchFocused || !query().empty())
                 clearSearch();
             else
                 (void)m_session.windowView("off");
@@ -436,17 +488,34 @@ namespace hyprspace {
             return;
         }
         if (m_searchFocused) {
+            const auto before = query();
             if (sym == XKB_KEY_BackSpace)
-                windowSearchBackspace(m_query);
+                m_search.backspace();
+            else if (sym == XKB_KEY_Delete)
+                m_search.eraseForward();
             else if (mods == HL_MODIFIER_CTRL && sym == XKB_KEY_u)
-                m_query.clear();
-            else if (!text.empty() && (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0 && m_query.size() + text.size() <= 1024)
-                m_query += text;
+                m_search.clear();
+            else if (mods == HL_MODIFIER_CTRL && sym == XKB_KEY_a)
+                m_search.selectAll();
+            else if (sym == XKB_KEY_Left)
+                m_search.left(mods == HL_MODIFIER_SHIFT);
+            else if (sym == XKB_KEY_Right)
+                m_search.right(mods == HL_MODIFIER_SHIFT);
+            else if (sym == XKB_KEY_Home)
+                m_search.home(mods == HL_MODIFIER_SHIFT);
+            else if (sym == XKB_KEY_End)
+                m_search.end(mods == HL_MODIFIER_SHIFT);
+            else if (!text.empty() && (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0)
+                m_search.insert(text);
             else
                 goto navigation;
-            m_dirty  = true;
-            m_scroll = 0;
-            refresh();
+            resetCaret();
+            if (query() != before) {
+                m_dirty  = true;
+                m_scroll = 0;
+                refresh();
+            } else
+                m_session.damage();
             return;
         }
         if (searchShortcut(sym, mods, text)) {
@@ -620,6 +689,47 @@ namespace hyprspace {
     SBoxF CWindowBoard::searchBox() const {
         return {m_viewport.x, m_viewport.y - 48, m_viewport.w, 36};
     }
+
+    SBoxF CWindowBoard::searchContentBox() const {
+        const auto box = searchBox();
+        return {box.x + 12, box.y + 6, std::max(0.0, box.w - 24), box.h - 12};
+    }
+
+    const STextCursor& CWindowBoard::searchMetrics() const {
+        const auto mon = monitor();
+        if (!mon)
+            return m_searchMetrics;
+        const auto font = config::overviewFont();
+        if (m_measuredText != query() || m_measuredFont != font || m_measuredCursor != searchCursor() || m_measuredScale != mon->m_scale) {
+            m_measuredText   = query();
+            m_measuredFont   = font;
+            m_measuredCursor = searchCursor();
+            m_measuredScale  = mon->m_scale;
+            m_searchMetrics  = measureTextCursor(query(), font, searchCursor(), mon->m_scale);
+        }
+        const double width = searchContentBox().w, caret = m_searchMetrics.x / mon->m_scale;
+        if (caret < m_searchOffset)
+            m_searchOffset = caret;
+        else if (caret > m_searchOffset + width - 1)
+            m_searchOffset = caret - width + 1;
+        m_searchOffset = std::clamp(m_searchOffset, 0.0, std::max(0.0, m_searchMetrics.width / mon->m_scale + 1 - width));
+        return m_searchMetrics;
+    }
+
+    double CWindowBoard::searchOffset() const {
+        searchMetrics();
+        return m_searchOffset;
+    }
+
+    SBoxF CWindowBoard::searchCaretBox() const {
+        const auto mon = monitor();
+        if (!mon)
+            return {};
+        const auto& metrics = searchMetrics();
+        const auto  content = searchContentBox();
+        return intersection(content, {content.x + metrics.x / mon->m_scale - m_searchOffset,
+                                      content.cy() - metrics.height / (2 * mon->m_scale) + metrics.y / mon->m_scale, 1, metrics.caretHeight / mon->m_scale});
+    }
     SBoxF CWindowBoard::returnBox() const {
         return {m_viewport.x + std::max(0.0, m_viewport.w - 146), m_viewport.y - 132, std::min(146.0, m_viewport.w), 30};
     }
@@ -657,20 +767,22 @@ namespace hyprspace {
             return;
         }
         if (searchBox().contains(local.x, local.y)) {
+            searchMetrics();
+            m_search.setCursor(textIndexAtX(query(), config::overviewFont(), local.x - searchContentBox().x + m_searchOffset, monitor()->m_scale));
             focusSearch();
             return;
         }
         if (recentBox().contains(local.x, local.y)) {
-            m_recent        = !m_recent;
-            m_searchFocused = false;
-            m_dirty         = true;
+            m_recent = !m_recent;
+            blurSearch();
+            m_dirty = true;
             refresh();
             return;
         }
         const auto boxes = groupingBoxes();
         for (size_t i = 0; i < boxes.size(); ++i)
             if (boxes[i].contains(local.x, local.y)) {
-                m_searchFocused = false;
+                blurSearch();
                 setGrouping(static_cast<EWindowGrouping>(i));
                 return;
             }
@@ -739,7 +851,7 @@ namespace hyprspace {
         if (monitor() != mon)
             return out;
 
-        text(std::format("Windows · {}{}", m_layout.cards.size(), m_query.empty() ? "" : std::format(" of {}", m_items.size())),
+        text(std::format("Windows · {}{}", m_layout.cards.size(), query().empty() ? "" : std::format(" of {}", m_items.size())),
              {m_viewport.x, m_viewport.y - 132, std::max(1.0, m_viewport.w - 158), 30}, ink, opacity);
         rect(returnBox(), fade(config::overviewTitleBgColor(), opacity * 0.65F), 8);
         text(viewKey.empty() ? "Workspaces" : viewKey + "  Workspaces", returnBox(), ink, opacity, true);
@@ -761,8 +873,18 @@ namespace hyprspace {
         const auto search = searchBox();
         rect(search, fade(config::overviewTitleBgColor(), opacity * 0.85F), 9);
         border(search, fade(m_searchFocused ? accent : config::overviewTileBorderColor(), opacity), m_searchFocused ? 2 : 1, 9);
-        text(m_query.empty() ? (m_searchFocused ? "Type to find a window…" : "/  Search titles, apps, workspaces and monitors") : m_query + (m_searchFocused ? " │" : ""),
-             {search.x + 12, search.y, search.w - 24, search.h}, m_query.empty() ? fade(ink, 0.6F) : ink, opacity);
+        const auto content = searchContentBox();
+        searchMetrics();
+        const auto [from, to] = m_searchFocused && hooks::keyboardOwned() ? m_search.selection() : std::pair<size_t, size_t>{0, 0};
+        const auto input = query().empty() ? textures().text("Search windows…", font, fade(ink, 0.5F), static_cast<int>(content.w), scale)
+                                           : textures().inputText(query(), font, ink, static_cast<int>(content.w), m_searchOffset, scale, from, to, fade(accent, 0.28F));
+        if (input) {
+            const auto                   size = input->m_size / scale;
+            CTexPassElement::SRenderData data{.tex = input, .box = px({content.x, content.cy() - size.y / 2, size.x, size.y}), .a = opacity, .clipBox = px(content)};
+            out.emplace_back(makeUnique<CTexPassElement>(std::move(data)));
+        }
+        if (searchCaretVisible())
+            rect(searchCaretBox(), fade(ink, opacity));
 
         const float inspection = std::clamp(m_inspectionMix->value(), 0.F, 1.F);
         for (const auto& heading : m_layout.headings) {
@@ -840,7 +962,7 @@ namespace hyprspace {
 
         if (m_layout.cards.empty()) {
             text(m_items.empty() ? "No windows on these outputs" : "No matching windows", {m_viewport.x, m_viewport.cy() - 20, m_viewport.w, 40}, ink, opacity, true);
-            if (!m_query.empty())
+            if (!query().empty())
                 text("Escape clears the search", {m_viewport.x, m_viewport.cy() + 20, m_viewport.w, 28}, fade(ink, 0.6F), opacity, true);
         }
         const auto hints = m_inspecting ? std::format("Release {} to return · Wheel / + − zoom · Space or right-drag to pan", zoomKey)

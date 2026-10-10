@@ -1,8 +1,11 @@
 #pragma once
 
 #include "OverviewSession.hpp"
+#include "Raster.hpp"
+#include "SearchInput.hpp"
 #include "WindowViewModel.hpp"
 
+#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
 #include <xkbcommon/xkbcommon.h>
 #include <unordered_map>
@@ -13,6 +16,7 @@ namespace hyprspace {
     class CWindowBoard {
       public:
         explicit CWindowBoard(COverviewSession& owner);
+        ~CWindowBoard();
         bool active() const {
             return m_active;
         }
@@ -38,8 +42,18 @@ namespace hyprspace {
             return m_recent;
         }
         const std::string& query() const {
-            return m_query;
+            return m_search.text();
         }
+        size_t searchCursor() const {
+            return m_search.cursor();
+        }
+        std::pair<size_t, size_t> searchSelection() const {
+            return m_search.selection();
+        }
+        SBoxF                    searchBox() const;
+        SBoxF                    searchCaretBox() const;
+        double                   searchOffset() const;
+        bool                     searchCaretVisible() const;
         const SWindowViewLayout& layout() const {
             return m_layout;
         }
@@ -102,9 +116,13 @@ namespace hyprspace {
         void                           ensureVisible();
         void                           updateScroll(double offset);
         void                           focusSearch();
+        void                           blurSearch();
         void                           clearSearch();
+        void                           resetCaret();
+        void                           stopCaret();
+        const STextCursor&             searchMetrics() const;
+        SBoxF                          searchContentBox() const;
         void                           commit();
-        SBoxF                          searchBox() const;
         SBoxF                          returnBox() const;
         SBoxF                          recentBox() const;
         std::array<SBoxF, 4>           groupingBoxes() const;
@@ -115,7 +133,13 @@ namespace hyprspace {
         bool                                 m_mousePan = false, m_keyboardPan = false;
         uint64_t                             m_generation = 0, m_nextKey = 1, m_selected = 0, m_hovered = 0;
         EWindowGrouping                      m_grouping = EWindowGrouping::FLAT;
-        std::string                          m_query;
+        CSearchInput                         m_search;
+        SP<CEventLoopTimer>                  m_caretTimer;
+        bool                                 m_caretVisible = false;
+        mutable std::string                  m_measuredText, m_measuredFont;
+        mutable size_t                       m_measuredCursor = std::numeric_limits<size_t>::max();
+        mutable double                       m_measuredScale = 0, m_searchOffset = 0;
+        mutable STextCursor                  m_searchMetrics;
         std::vector<SItem>                   m_items;
         std::vector<SWindowViewInput>        m_input;
         std::unordered_map<uint64_t, size_t> m_recency;

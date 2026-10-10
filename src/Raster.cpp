@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #include <cairo/cairo.h>
 #include <pango/pangocairo.h>
@@ -133,6 +134,90 @@ namespace hyprspace {
         SImage out = fromSurface(surf);
         cairo_surface_destroy(surf);
         return out;
+    }
+
+    STextCursor measureTextCursor(const std::string& text, const std::string& font, size_t cursor, double scale) {
+        STextCursor result;
+        if (!std::isfinite(scale) || scale <= 0)
+            return result;
+        const auto       line   = boundedText(text);
+        cairo_surface_t* tmp    = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        cairo_t*         cr     = cairo_create(tmp);
+        auto*            layout = makeLayout(cr, line, font, 0, scale);
+        cursor                  = std::min(cursor, line.size());
+        while (cursor && cursor < line.size() && (static_cast<unsigned char>(line[cursor]) & 0xc0) == 0x80)
+            --cursor;
+        PangoRectangle caret{};
+        pango_layout_get_pixel_size(layout, &result.width, &result.height);
+        pango_layout_get_cursor_pos(layout, static_cast<int>(cursor), &caret, nullptr);
+        result.x           = static_cast<double>(caret.x) / PANGO_SCALE;
+        result.y           = static_cast<double>(caret.y) / PANGO_SCALE;
+        result.caretHeight = static_cast<double>(caret.height) / PANGO_SCALE;
+        g_object_unref(layout);
+        cairo_destroy(cr);
+        cairo_surface_destroy(tmp);
+        return result;
+    }
+
+    size_t textIndexAtX(const std::string& text, const std::string& font, double x, double scale) {
+        if (text.empty() || !std::isfinite(x) || !std::isfinite(scale) || scale <= 0)
+            return 0;
+        const auto       line   = boundedText(text);
+        cairo_surface_t* tmp    = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        cairo_t*         cr     = cairo_create(tmp);
+        auto*            layout = makeLayout(cr, line, font, 0, scale);
+        int              index = 0, trailing = 0;
+        const int        px = static_cast<int>(
+            std::clamp(x * scale * PANGO_SCALE, static_cast<double>(std::numeric_limits<int>::min()), static_cast<double>(std::numeric_limits<int>::max())));
+        pango_layout_xy_to_index(layout, px, 0, &index, &trailing);
+        size_t result = std::clamp(index, 0, static_cast<int>(line.size()));
+        while (trailing-- > 0 && result < line.size())
+            result = g_utf8_next_char(line.data() + result) - line.data();
+        g_object_unref(layout);
+        cairo_destroy(cr);
+        cairo_surface_destroy(tmp);
+        return result;
+    }
+
+    SImage renderInputText(const std::string& text, const std::string& font, const SRgba& color, int width, double offset, double scale, size_t selectionStart,
+                           size_t selectionEnd, const SRgba& selectionColor) {
+        if (text.empty() || width <= 0 || !std::isfinite(offset) || !std::isfinite(scale) || scale <= 0)
+            return {};
+        const auto       line         = boundedText(text);
+        cairo_surface_t* tmp          = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        cairo_t*         cr           = cairo_create(tmp);
+        auto*            layout       = makeLayout(cr, line, font, 0, scale);
+        int              naturalWidth = 0, h = 0;
+        pango_layout_get_pixel_size(layout, &naturalWidth, &h);
+        cairo_destroy(cr);
+        cairo_surface_destroy(tmp);
+        const int w = static_cast<int>(std::min(width * scale, static_cast<double>(MAX_RASTER_DIMENSION)));
+        if (!boundedRaster(w, h)) {
+            g_object_unref(layout);
+            return {};
+        }
+        auto* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+        cr         = cairo_create(surf);
+        cairo_translate(cr, -offset * scale, 0);
+        pango_cairo_update_layout(cr, layout);
+        if (selectionStart < selectionEnd) {
+            int* ranges = nullptr;
+            int  count  = 0;
+            pango_layout_line_get_x_ranges(pango_layout_get_line_readonly(layout, 0), static_cast<int>(std::min(selectionStart, line.size())),
+                                           static_cast<int>(std::min(selectionEnd, line.size())), &ranges, &count);
+            cairo_set_source_rgba(cr, selectionColor.r, selectionColor.g, selectionColor.b, selectionColor.a);
+            for (int i = 0; i < count; ++i)
+                cairo_rectangle(cr, static_cast<double>(ranges[2 * i]) / PANGO_SCALE, 0, static_cast<double>(ranges[2 * i + 1] - ranges[2 * i]) / PANGO_SCALE, h);
+            cairo_fill(cr);
+            g_free(ranges);
+        }
+        cairo_set_source_rgba(cr, color.r, color.g, color.b, color.a);
+        pango_cairo_show_layout(cr, layout);
+        g_object_unref(layout);
+        cairo_destroy(cr);
+        auto result = fromSurface(surf);
+        cairo_surface_destroy(surf);
+        return result;
     }
 
     static SImage loadSvg(const std::string& path, int size) {

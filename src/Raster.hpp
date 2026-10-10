@@ -44,6 +44,18 @@ namespace hyprspace {
     // Measure without rasterising.
     void measureText(const std::string& text, const std::string& font, int& outW, int& outH, double scale = 1.0);
 
+    struct STextCursor {
+        int    width = 0, height = 0;
+        double x = 0, y = 0, caretHeight = 0;
+    };
+
+    // Shape the full line, returning physical-pixel metrics and UTF-8 byte
+    // positions. Editable text is clipped to a viewport rather than ellipsised.
+    STextCursor measureTextCursor(const std::string& text, const std::string& font, size_t cursor, double scale = 1.0);
+    size_t      textIndexAtX(const std::string& text, const std::string& font, double x, double scale = 1.0);
+    SImage      renderInputText(const std::string& text, const std::string& font, const SRgba& color, int width, double offset, double scale, size_t selectionStart,
+                                size_t selectionEnd, const SRgba& selectionColor);
+
     // Load an icon file (svg/svgz via librsvg, everything else via gdk-pixbuf)
     // scaled to fit size x size, centred, preserving aspect ratio.
     SImage loadIcon(const std::string& path, int size);

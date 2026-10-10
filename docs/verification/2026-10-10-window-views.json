@@ -270,5 +270,63 @@
     "release_metadata": "passed",
     "make_test": "passed",
     "publication": "local experiment branch only"
+  },
+  "search_field_followup": {
+    "plugin_sha256": "2c15f71ac51b3662d1c6e0224c23f1a59ed4b532507227211c8f7ee4ab317a45",
+    "group": "window_views",
+    "status": "passed",
+    "checks": 25,
+    "cases": [
+      "plugin loads with exact ABI and clean configuration",
+      "global board includes every covered window; grouping preserves native placement and recency stays frozen",
+      "search owns ordinary letters, spaces and digits; empty results cannot commit; Escape unwinds search and views",
+      "Danish Shift+7 opens search once; / and Danish letters type literally; modified shortcuts retain native routing",
+      "search has a shaped blinking caret, insertion, Unicode selection/deletion, click placement and independent result navigation",
+      "long search queries scroll their text and keep the caret inside the field on all fractional-scale outputs",
+      "unloading a focused search cancels its blink callback and reload restores clean input ownership",
+      "canonical app groups separate applications; Danish search/editing and live title changes work",
+      "native modified shortcuts and keyboard commits act on the remote source window without moving the board",
+      "a global card click focuses its real window on the other output",
+      "window inspection reuses bounded zoom, keyboard grip and mouse pan without changing native geometry",
+      "one global board renders and commits on every fractional-scale output",
+      "destroying a selected window removes its card without stale selection or focus",
+      "remapped toggle keys act once and their held repeats remain captured across close/reopen",
+      "held Backspace repeats, release stops it, and old holds cannot edit a reopened board",
+      "foreground layers own typing and Escape; closing them restores board search without leaking keys",
+      "losing the board output relocates cards to a covered output and cancels inspection safely",
+      "session locking closes the board and releases its capture, texture and input resources",
+      "unloading an inspected board restores input and resources; reload starts with clean preferences",
+      "zoom and empty-workspace keys retain precedence; disabling the shortcut keeps dispatchers available",
+      "N, middle-click and workspace digits return to the native workspace controls",
+      "the global board respects the overview's covered-output scope",
+      "grouping preserves native fullscreen and follows scratchpad inclusion settings",
+      "remote cards render the actual source pixels and track native workspace/monitor changes without losing selection",
+      "every window view releases captures, text/icon textures and input ownership on dismissal"
+    ],
+    "compositor_commit": "efb50993780079460b0cbed1363e2166a2de1d9f",
+    "host_checks": 842364,
+    "host_failures": 0,
+    "address_sanitizer": "passed",
+    "undefined_behavior_sanitizer": "passed",
+    "abi": "passed",
+    "release_metadata": "passed",
+    "make_test": "passed",
+    "capture": {
+      "file": "docs/screenshots/window-views-search-field.png",
+      "sha256": "d88fd12f377083ed3bd2120ead12c63fa7aaedb44a882503f2b616c5c59180cd",
+      "output": [
+        960,
+        600
+      ],
+      "scale": 1,
+      "crop": [
+        38,
+        120,
+        360,
+        181
+      ],
+      "source": "grim capture of the private compositor regression"
+    },
+    "publication": "local experiment branch only"
   }
 }

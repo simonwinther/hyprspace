@@ -1,8 +1,10 @@
 #pragma once
 
 #include "../src/WindowViewModel.hpp"
+#include "test_search_input.hpp"
 
 static void testWindowViews() {
+    testSearchInput();
     section("window views: identities, Unicode search, stable grouping and frozen recency");
     std::vector<SWindowViewInput> input{
         {.key           = 1,

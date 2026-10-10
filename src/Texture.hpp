@@ -35,6 +35,8 @@ namespace hyprspace {
         // glyphs are rasterised at native resolution. The returned texture's
         // m_size is therefore in physical px.
         SP<Render::ITexture> text(const std::string& str, const std::string& font, const CHyprColor& color, int maxWidth = 0, double scale = 1.0);
+        SP<Render::ITexture> inputText(const std::string& str, const std::string& font, const CHyprColor& color, int width, double offset, double scale,
+                                       size_t selectionStart, size_t selectionEnd, const CHyprColor& selectionColor);
 
         // `size` is in physical px.
         SIconTexture icon(const std::string& windowClass, int size);
