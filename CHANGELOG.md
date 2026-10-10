@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/simonwinther/hyprspace/compare/v1.5.0...v1.5.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* release integration runner artifacts after teardown ([8611bec](https://github.com/simonwinther/hyprspace/commit/8611bec3bfabad1e4cd6c2656680daaa7de601b7))
+
 ## [1.5.0](https://github.com/simonwinther/hyprspace/compare/v1.4.0...v1.5.0) (2026-10-09)
 
 - Move regular workspaces between monitors with Super+Alt+left-drag.
