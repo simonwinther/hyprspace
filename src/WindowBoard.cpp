@@ -820,18 +820,23 @@ namespace hyprspace {
                 box = intersection(box, m_viewport);
             if (box.w <= 0 || box.h <= 0)
                 return;
-            out.emplace_back(makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = px(box), .color = color, .round = static_cast<int>(round * scale)}));
+            // Fractional boxes lose their last row/column when the native
+            // border region is converted to integer pixels. Snap the fill and
+            // outline identically so every edge and rounded corner survives.
+            out.emplace_back(
+                makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = px(box).round(), .color = color, .round = static_cast<int>(std::round(round * scale))}));
         };
         auto border = [&](SBoxF box, CHyprColor color, double width, double round, bool clip = false) {
             if (clip)
                 box = intersection(box, m_viewport);
             if (box.w <= 0 || box.h <= 0)
                 return;
-            out.emplace_back(makeUnique<CBorderPassElement>(CBorderPassElement::SBorderData{.box        = px(box),
+            // Hyprland scales borderSize itself; the box and radius are physical.
+            // Let it derive the outer radius from that actual scaled width.
+            out.emplace_back(makeUnique<CBorderPassElement>(CBorderPassElement::SBorderData{.box        = px(box).round(),
                                                                                             .grad1      = Config::CGradientValueData(color),
-                                                                                            .round      = static_cast<int>(round * scale),
-                                                                                            .borderSize = static_cast<float>(width * scale),
-                                                                                            .outerRound = static_cast<int>((round + width) * scale)}));
+                                                                                            .round      = static_cast<int>(std::round(round * scale)),
+                                                                                            .borderSize = std::max(1, static_cast<int>(std::round(width)))}));
         };
         auto text = [&](const std::string& label, const SBoxF& box, CHyprColor color, float alpha, bool centered = false, bool clip = false) {
             if (box.w <= 1 || box.h <= 1)

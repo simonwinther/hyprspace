@@ -113,6 +113,20 @@ blink deadline. The host suite passes 842,364 checks, including under both
 sanitizers; `make check release-check test` also passes. This follow-up is kept
 on the local experiment branch.
 
+### Border follow-up (2026-10-11)
+
+At scale 1.2, fractional button bounds clipped the bottom and right strokes.
+The board now snaps fills and outlines to identical physical pixels, passes
+logical border widths to Hyprland, and derives the outer corner radius from
+the actual stroke width. The same fix applies to search and card outlines.
+
+Private captures matching the desktop's monitor offset and 56-pixel panel
+reservation reproduce both missing edges before the fix. Afterward, all four
+straight strokes are continuous at scales 1, 1.2, 1.25, 1.5 and 2; rounded
+corners and focused search borders were also inspected. Binary
+`54922be758fcfbeee9a0adf61fbb7b374c420a66db7d24aa4ab3c426ea3b84ae`
+passes all 25 window-view checks and `make check release-check`.
+
 ## Visual evidence
 
 [All windows](../screenshots/window-views-flat.png),

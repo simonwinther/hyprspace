@@ -328,5 +328,76 @@
       "source": "grim capture of the private compositor regression"
     },
     "publication": "local experiment branch only"
+  },
+  "border_followup": {
+    "date": "2026-10-11",
+    "plugin_sha256": "54922be758fcfbeee9a0adf61fbb7b374c420a66db7d24aa4ab3c426ea3b84ae",
+    "abi": "passed",
+    "release_metadata": "passed",
+    "window_views": {
+      "status": "passed",
+      "checks": 25
+    },
+    "pixel_checks": {
+      "monitor_position": [
+        160,
+        1080
+      ],
+      "reserved_top_logical_px": 56,
+      "before_scale_1_2": {
+        "top": 1.0,
+        "bottom": 0.0,
+        "left": 1.0,
+        "right": 0.0
+      },
+      "after": [
+        {
+          "scale": 1,
+          "edge_coverage": {
+            "top": 1.0,
+            "bottom": 1.0,
+            "left": 1.0,
+            "right": 1.0
+          }
+        },
+        {
+          "scale": 1.2,
+          "edge_coverage": {
+            "top": 1.0,
+            "bottom": 1.0,
+            "left": 1.0,
+            "right": 1.0
+          }
+        },
+        {
+          "scale": 1.25,
+          "edge_coverage": {
+            "top": 1.0,
+            "bottom": 1.0,
+            "left": 1.0,
+            "right": 1.0
+          }
+        },
+        {
+          "scale": 1.5,
+          "edge_coverage": {
+            "top": 1.0,
+            "bottom": 1.0,
+            "left": 1.0,
+            "right": 1.0
+          }
+        },
+        {
+          "scale": 2,
+          "edge_coverage": {
+            "top": 1.0,
+            "bottom": 1.0,
+            "left": 1.0,
+            "right": 1.0
+          }
+        }
+      ],
+      "rounded_corners_and_focused_search": "visually inspected"
+    }
   }
 }
