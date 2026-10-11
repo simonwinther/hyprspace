@@ -399,5 +399,69 @@
       ],
       "rounded_corners_and_focused_search": "visually inspected"
     }
+  },
+  "overview_startup_followup": {
+    "date": "2026-10-11",
+    "plugin_sha256": "d6956175829b1d95c33b403b1583da67027068c8823fd85adb0ce8ee8c2f78ce",
+    "abi": "passed",
+    "release_metadata": "passed",
+    "host_checks": 842364,
+    "host_failures": 0,
+    "before": {
+      "plugin_sha256": "54922be758fcfbeee9a0adf61fbb7b374c420a66db7d24aa4ab3c426ea3b84ae",
+      "status": "failed",
+      "regression": "AssertionError(('empty tile', 0, {'name': '21', 'window': '0x0', 'workspace': 21, 'x': 480.61224489795916, 'y': 300.0}))"
+    },
+    "compositor_suites": [
+      {
+        "group": "overview",
+        "status": "passed",
+        "checks": 17,
+        "cases": [
+          "plugin loads with exact ABI and clean configuration",
+          "stationary cursor on empty tile: rapid toggles preserve focus, workspaces and cursor, animations=False",
+          "stationary cursor on another tile: rapid toggles preserve focus, workspaces and cursor, animations=False",
+          "stationary cursor on another output: rapid toggles preserve focus, workspaces and cursor, animations=False",
+          "stationary cursor on empty tile: rapid toggles preserve focus, workspaces and cursor, animations=True",
+          "stationary cursor on another tile: rapid toggles preserve focus, workspaces and cursor, animations=True",
+          "stationary cursor on another output: rapid toggles preserve focus, workspaces and cursor, animations=True",
+          "real pointer movement selects and commits an empty tile after opening",
+          "keyboard navigation still commits a different selection through the overview toggle",
+          "an explicit click commits the pointed-at tile without requiring prior motion",
+          "an empty active workspace remains selected through an unchanged toggle",
+          "a single-output overview seeds that output's active workspace and an unchanged toggle retains original focus",
+          "an unchanged toggle preserves focus and cursor with native input:follow_mouse=1",
+          "populated overview survives empty refresh and restores selection on every output",
+          "120 rapid Control+A and Super+A toggles restore input and visibility, animations=False",
+          "120 rapid Control+A and Super+A toggles restore input and visibility, animations=True",
+          "application keyboard input works after rapid overview toggles"
+        ]
+      },
+      {
+        "group": "selection",
+        "status": "passed",
+        "checks": 7
+      },
+      {
+        "group": "window_views",
+        "status": "passed",
+        "checks": 25
+      },
+      {
+        "group": "zoom",
+        "status": "passed",
+        "checks": 81
+      },
+      {
+        "group": "transitions",
+        "status": "passed",
+        "checks": 14
+      },
+      {
+        "group": "configuration",
+        "status": "passed",
+        "checks": 7
+      }
+    ]
   }
 }

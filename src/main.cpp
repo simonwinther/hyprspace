@@ -953,7 +953,9 @@ namespace {
                 // teardown releases held zoom or a pan grip.
                 if (!session().gestureActive() && session().selection.command()) {
                     if (auto* destination = session().keyboardView())
-                        destination->close(true);
+                        // An unchanged toggle is a peek: retain native focus
+                        // and the pointer instead of committing/warping again.
+                        destination->close(!session().selectionUnchanged());
                     for (const auto& view : session().views)
                         view->close(false);
                     session().stopInput();

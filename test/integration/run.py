@@ -1845,6 +1845,7 @@ def main():
         if args.only in ("all", "overview"):
             import overview
 
+            overview.startup_selection(suite, wait_for)
             overview.lifecycle(suite, wait_for)
         if args.only in ("all", "window_views"):
             import window_views

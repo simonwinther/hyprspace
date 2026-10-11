@@ -127,6 +127,27 @@ corners and focused search borders were also inspected. Binary
 `54922be758fcfbeee9a0adf61fbb7b374c420a66db7d24aa4ab3c426ea3b84ae`
 passes all 25 window-view checks and `make check release-check`.
 
+### Opening selection follow-up (2026-10-11)
+
+Opening now selects the focused window and its workspace without moving the
+cursor. Stationary pointer events and animation frames retain that selection;
+real motion resumes pointer selection. An unchanged second toggle dismisses
+without recommitting or warping the cursor. Clicks, Enter and a different
+keyboard selection retain their existing commit behavior. A session on an
+output outside native focus starts on that output's active workspace.
+
+The new compositor regression fails against the previous binary: an opening
+Super+A selects empty workspace 21 under the stationary pointer instead of
+the focused window on workspace 11. It passes against binary
+`d6956175829b1d95c33b403b1583da67027068c8823fd85adb0ce8ee8c2f78ce`.
+The overview group passes 17 checks, including animated rapid toggles,
+stationary cursors on another output, empty active workspaces, explicit clicks,
+keyboard navigation, single-output scope and native `input:follow_mouse=1`.
+Selection, window views, zoom, transitions and configuration groups pass
+7, 25, 81, 14 and 7 checks respectively. `make check release-check test` passes,
+including the existing 842,364 host checks. All compositor tests use private
+background sessions; this follow-up remains local to the experiment branch.
+
 ## Visual evidence
 
 [All windows](../screenshots/window-views-flat.png),

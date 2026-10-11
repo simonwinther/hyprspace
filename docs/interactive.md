@@ -46,6 +46,12 @@ grouping, order, search, selected native window, viewport, scroll position and
 preview geometry. See the [controls](guide.md#experimental-window-board) and
 [experiment verification](verification/2026-10-10-window-views.md).
 
+Opening seeds the command selection from the focused window without warping the
+cursor. A stationary pointer cannot change that identity as the tiles animate
+or redraw. When focus is outside a single-output session, its output's active
+workspace supplies the initial selection. Actual pointer motion resumes
+selection when `follow_mouse` is enabled.
+
 Pointer motion selects a destination. Over a foreground layer or a gap, commands
 retain the last valid destination. Dropping in a gap cancels the move. Keyboard
 focus navigation selects its resulting window until pointer motion resumes.
@@ -117,6 +123,8 @@ The overview toggle commits the command selection using the same displayed
 destination close camera as Enter. It snapshots that camera before cancelling
 held inputs and closes every output together. Explicit off, close and Escape
 retain dismissal behavior; a toggle during a provisional window drag dismisses.
+If the selection and pointer remain at their opening values, the toggle dismisses
+without committing or warping the cursor. Explicit clicks and Enter still commit.
 Edge arrows reveal the closest hidden column using native fit/center behavior.
 Page Up/Page Down select the previous/next column in screen order, keeping that
 window selected until the pointer moves. Enter focuses it and closes. Workspace

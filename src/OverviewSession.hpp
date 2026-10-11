@@ -101,6 +101,7 @@ namespace hyprspace {
             return drag.active() || workspaceDrag.has_value();
         }
         void                    begin();
+        bool                    selectionUnchanged() const;
         void                    stopInput();
         void                    restoreVisibility();
         void                    reconcileVisibility();
@@ -217,6 +218,8 @@ namespace hyprspace {
         bool                                               m_emptyButtonPressed = false;
         bool                                               m_cursorOwned        = false;
         Vector2D                                           m_pointer;
+        Vector2D                                           m_initialPointer;
+        std::optional<SOverviewTarget>                     m_initialTarget;
     };
 
     extern std::unique_ptr<COverviewSession> g_overviewSession;

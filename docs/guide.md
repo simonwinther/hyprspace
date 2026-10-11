@@ -82,6 +82,13 @@ update.
 `hyprspace:close` works over the hyprctl socket even while an overlay holds the
 keyboard grab, which makes it a reliable escape hatch.
 
+The overview starts with the focused window and its workspace selected, keeping
+the cursor in place. With `follow_mouse = true`, selection follows the mouse
+after you move it. Pressing the overview binding again without changing the
+selection or moving the cursor returns to the desktop with focus, workspaces
+and cursor position preserved.
+A session limited to one output starts on that output's active workspace.
+
 ### Controls
 
 **Overview**

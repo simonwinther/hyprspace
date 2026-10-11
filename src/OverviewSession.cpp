@@ -148,14 +148,30 @@ namespace hyprspace {
         m_zoomTarget.reset();
         m_windowBoard = std::make_unique<CWindowBoard>(*this);
         selection.clear();
-        if (!config::followMouse() && covers(Desktop::focusState()->monitor()))
-            followKeyboardFocus();
         m_pointer = g_pInputManager->getMouseCoordsInternal();
+        // Opening is a keyboard selection. A stationary pointer must not pick
+        // an unrelated tile as the overview animates underneath it.
+        if (covers(Desktop::focusState()->monitor()))
+            followKeyboardFocus();
+        if (!selection.command())
+            for (const auto& view : views)
+                if (view->monitor() && view->monitor()->logicalBox().containsPoint(m_pointer)) {
+                    keyboard(*view);
+                    break;
+                }
+        if (auto* view = keyboardView())
+            keyboard(*view);
+        m_initialTarget  = selection.command();
+        m_initialPointer = m_pointer;
         pointer(m_pointer);
-        if (!selection.command() && !views.empty())
-            keyboard(*views.front());
         ownCursor(true);
         hooks::syncKeyboardFocus();
+    }
+
+    bool COverviewSession::selectionUnchanged() const {
+        const auto& target = selection.command();
+        return target && m_initialTarget && m_pointer == m_initialPointer && target->workspace == m_initialTarget->workspace &&
+               target->monitor == m_initialTarget->monitor && target->window == m_initialTarget->window;
     }
 
     void COverviewSession::stopInput() {
