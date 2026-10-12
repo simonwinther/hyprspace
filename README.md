@@ -11,7 +11,7 @@ separate compatibility testing.
 
 Use **hyprpm** on Arch and other Linux setups with the supported Hyprland build,
 or the **tagged flake** on Nix. [Published releases](https://github.com/simonwinther/hyprspace/releases)
-are the stable-version list. The commands below select `v1.5.0`. An unversioned
+are the stable-version list. The commands below select `v1.6.0`. An unversioned
 repository install tracks development.
 
 ### Arch Linux and hyprpm
@@ -22,7 +22,7 @@ and select the release explicitly:
 ```bash
 sudo pacman -S --needed hyprland base-devel git cmake cpio cairo pango gdk-pixbuf2 librsvg libei nlohmann-json jq python
 hyprpm update
-hyprpm add https://github.com/simonwinther/hyprspace.git v1.5.0
+hyprpm add https://github.com/simonwinther/hyprspace.git v1.6.0
 hyprpm enable hyprspace
 hyprpm reload
 ```
@@ -66,7 +66,7 @@ Add these inputs to your system flake:
 
 ```nix
 inputs.hyprland.url = "github:hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f";
-inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.5.0";
+inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.6.0";
 inputs.hyprspace.inputs.hyprland.follows = "hyprland";
 ```
 
@@ -119,6 +119,8 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | Arrows or Tab / Shift+Tab, then Enter or S | Select and open a workspace |
 | N or + Empty workspace | Select an empty workspace on the monitor under the pointer |
 | Middle-click | Select an empty workspace on that monitor and keep the overview open |
+| ? | Open searchable help; / searches and Escape returns to the current view |
+| F while holding Z | Toggle cursor-follow; the choice survives restarts |
 | Hold Z | Fit the selected workspace or board window; release to return to the grid |
 | Wheel / vertical two-finger scroll while holding Z | Zoom around the pointer; scroll back to the fitted view |
 | + / − while holding Z | Zoom around the center; hold to repeat (`=` and keypad + / − also work) |
@@ -134,7 +136,7 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | Release Alt | Focus the selected window |
 | Escape | Step back from board search/grouping; dismiss the workspace overview or switcher |
 
-On this experimental branch, press **G** inside the overview to browse a single
+Press **G** inside the overview to browse a single
 board containing windows from every covered monitor. The toolbar groups them by
 app, workspace or monitor; **All windows** gives a flat grid. Grouping changes
 the previews while your native windows keep their workspace, layout and size.
@@ -149,7 +151,7 @@ returns to workspaces, then closes the overview. Window moves and resizes use
 the workspace view; **N** and middle-click return there to prepare an empty
 workspace.
 
-![The experimental global window board grouped by app](docs/screenshots/window-views-app.png)
+![The global window board grouped by app](docs/screenshots/window-views-app.png)
 
 [Watch grouping and search](docs/screenshots/window-views.mp4).
 
