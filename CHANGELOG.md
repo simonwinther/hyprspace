@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.6.0](https://github.com/simonwinther/hyprspace/compare/v1.5.0...v1.6.0) (2026-10-12)
+
+
+### Features
+
+* add cursor follow and searchable help ([0c0aeb9](https://github.com/simonwinther/hyprspace/commit/0c0aeb9fda2b54d4efb19bfb4429e9aec2e2dbbc))
+* add experimental grouped window views ([bc6b8eb](https://github.com/simonwinther/hyprspace/commit/bc6b8eb3d91675ee66e8394901700371974ec49a))
+* add window views, cursor follow and help ([7c3bcf1](https://github.com/simonwinther/hyprspace/commit/7c3bcf1b48ba05319a33817e08d516c518f31466))
+
+
+### Bug Fixes
+
+* activate board search with shifted keyboard layouts ([d96a241](https://github.com/simonwinther/hyprspace/commit/d96a2418a55e3160671b398802c264ecb61e1c95))
+* give board search a proper caret and text editing ([2097a1d](https://github.com/simonwinther/hyprspace/commit/2097a1d02bf7fce0d70759c6bcb1cfe517556ff4))
+* keep window board outlines intact at fractional scales ([5704ac1](https://github.com/simonwinther/hyprspace/commit/5704ac16f950d5085a0d328b0c670a4a5d5c2e46))
+* preserve opening selection through rapid overview toggles ([1a0dc59](https://github.com/simonwinther/hyprspace/commit/1a0dc5918b28b2b3958276e887a17e4d55938868))
+* release integration runner artifacts after teardown ([8611bec](https://github.com/simonwinther/hyprspace/commit/8611bec3bfabad1e4cd6c2656680daaa7de601b7))
+
 ## [1.5.0](https://github.com/simonwinther/hyprspace/compare/v1.4.0...v1.5.0) (2026-10-09)
 
 - Move regular workspaces between monitors with Super+Alt+left-drag.
