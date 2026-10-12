@@ -16,7 +16,13 @@ GtkLayerShell.init_for_window(window)
 GtkLayerShell.set_namespace(
     window, sys.argv[2] if len(sys.argv) > 2 else "hs-foreground"
 )
-GtkLayerShell.set_monitor(window, Gdk.Display.get_default().get_monitor(0))
+display = Gdk.Display.get_default()
+monitor = display.get_monitor(0)
+if len(sys.argv) > 4:
+    x, y = map(int, sys.argv[4].split(","))
+    monitor = next(display.get_monitor(i) for i in range(display.get_n_monitors())
+                   if (display.get_monitor(i).get_geometry().x, display.get_monitor(i).get_geometry().y) == (x, y))
+GtkLayerShell.set_monitor(window, monitor)
 GtkLayerShell.set_layer(window, GtkLayerShell.Layer.OVERLAY)
 GtkLayerShell.set_keyboard_mode(window, GtkLayerShell.KeyboardMode.EXCLUSIVE)
 GtkLayerShell.set_anchor(window, GtkLayerShell.Edge.TOP, True)
@@ -62,6 +68,17 @@ elif len(sys.argv) > 3 and sys.argv[3] == "pointer":
     # Pointer-only overlays occupy usable output space without reserving it or
     # taking keyboard ownership away from an in-progress overview gesture.
     GtkLayerShell.set_keyboard_mode(window, GtkLayerShell.KeyboardMode.NONE)
+elif len(sys.argv) > 3 and sys.argv[3] == "panel":
+    GtkLayerShell.set_layer(window, GtkLayerShell.Layer.TOP)
+    GtkLayerShell.set_keyboard_mode(window, GtkLayerShell.KeyboardMode.NONE)
+    GtkLayerShell.set_anchor(window, GtkLayerShell.Edge.RIGHT, True)
+    GtkLayerShell.set_margin(window, GtkLayerShell.Edge.TOP, 0)
+    GtkLayerShell.set_margin(window, GtkLayerShell.Edge.LEFT, 0)
+    entry.set_margin_top(10)
+    entry.set_margin_bottom(10)
+    window.set_default_size(1, 112)
+    window.set_size_request(1, 112)
+    GtkLayerShell.auto_exclusive_zone_enable(window)
 
 
 def key(widget, event):

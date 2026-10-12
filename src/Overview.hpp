@@ -101,8 +101,10 @@ namespace hyprspace {
         bool                              inspectionTransitioning() const;
         bool                              inspectionPanHit(const Vector2D& globalPos) const;
         bool                              inspectionPanAvailable(const Vector2D& globalPos) const;
+        bool                              inspectionFollowAvailable(const Vector2D& globalPos) const;
         bool                              beginInspectionPan(const Vector2D& globalPos);
         void                              panInspection(const Vector2D& delta);
+        bool                              followInspection(CInspectionFollow& follow, CInspectionFollow::Clock::time_point now);
         double                            inspectionFactor() const;
         double                            inspectionGoal() const;
         std::optional<EDirection>         zoomEdgeAt(const Vector2D& globalPos) const;
@@ -114,6 +116,7 @@ namespace hyprspace {
             bool               pending = false;
         };
         std::vector<SZoomEdgeHint> zoomEdgeHints() const;
+        std::optional<SBoxF>       cursorFollowHintBox() const;
         void                       freezeZoom();
         SBoxF                      workspaceCell(const SWorkspaceIdentity& workspace) const;
         SP<Render::ITexture>       textureFor(PHLWINDOW window) const {
@@ -212,8 +215,14 @@ namespace hyprspace {
         };
         const SEmptyWorkspaceButtonText&                 emptyWorkspaceButtonText(double scale) const;
         mutable std::optional<SEmptyWorkspaceButtonText> m_emptyWorkspaceButtonText;
-        std::vector<SEntry>                              m_entries;
-        std::vector<STile>                               m_tiles;
+        struct SCursorFollowHintText {
+            std::string font, label;
+            double      scale;
+            Vector2D    size;
+        };
+        mutable std::optional<SCursorFollowHintText> m_cursorFollowHintText;
+        std::vector<SEntry>                          m_entries;
+        std::vector<STile>                           m_tiles;
 
         struct STileLayoutKey {
             SBoxF  usable;

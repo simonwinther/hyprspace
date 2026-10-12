@@ -9,7 +9,7 @@ from protocol import reply
 from resize import area, inside, window_box
 
 
-Z, X, TAB, SHIFT, SUPER = 44, 45, 15, 42, 125
+Z, X, F, TAB, SHIFT, SUPER = 44, 45, 33, 15, 42, 125
 PAN_BUTTON = 273
 
 
@@ -75,6 +75,54 @@ def wheel(s, detents):
 def relative_to(s, point):
     cursor = s.data("cursorpos")
     s.motion(point[0] - cursor["x"], point[1] - cursor["y"])
+
+
+def assert_follow_framing(fitted, followed, pointer, factor=4):
+    for axis, size in (("x", "w"), ("y", "h")):
+        anchor = min(fitted[axis] + fitted[size], max(fitted[axis], pointer[axis]))
+        expected = fitted[axis] * factor + anchor * (1 - factor)
+        assert abs(followed[axis] - expected) < .1, (fitted, followed, pointer, axis, expected)
+
+
+def follow_corners(s, wait_for, monitor, fitted, preview, prefix):
+    output = area({**next(m for m in s.data("monitors") if m["name"] == monitor), "reserved": [0, 0, 0, 0]})
+    for name, x, y in (("bottom-left", 2, output["h"] - 2), ("bottom-right", output["w"] - 2, output["h"] - 2),
+                       ("top-right", output["w"] - 2, 2), ("top-left", 2, 2)):
+        relative_to(s, (output["x"] + x, output["y"] + y))
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        wait_for(lambda: not s.status()["zoom"]["cursor_follow_settling"])
+        assert s.status()["cursor_owned"]
+        assert_follow_framing(fitted, preview(), s.data("cursorpos"))
+        if name == "bottom-right":
+            s.run("grim", "-s", "1", "-o", monitor, str(s.root / (prefix + "-corners.png")))
+    relative_to(s, center(fitted))
+    wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+    wait_for(lambda: not s.status()["zoom"]["cursor_follow_settling"])
+    assert_follow_framing(fitted, preview(), s.data("cursorpos"))
+
+
+def follow_during_zoom(s, wait_for, fitted, preview):
+    """One quick motion must visibly steer an unfinished zoom, without another event."""
+    pointer = s.data("cursorpos")
+    s.ctl("keyword", "animations:enabled", "true")
+    s.ctl("keyword", "animation", "windowsMove,1,8,default")
+    wheel(s, 2)
+    s.motion(40, 20)
+    zoom = s.status()["zoom"]
+    goal = 4 / 1.15 ** 2
+    assert zoom["inspection_transitioning"] and zoom["cursor_follow_settling"], zoom
+    assert abs(zoom["extra_goal"] - goal) < .0001
+
+    def steered():
+        value = preview()
+        factor = value["w"] / fitted["w"]
+        pivot_x = (fitted["x"] * factor - value["x"]) / (factor - 1)
+        pivot_y = (fitted["y"] * factor - value["y"]) / (factor - 1)
+        return s.status()["zoom"]["inspection_transitioning"] and pivot_x > pointer["x"] + 1 and pivot_y > pointer["y"] + 1
+
+    wait_for(steered)
+    inspection(s, wait_for, goal)
+    assert_follow_framing(fitted, preview(), s.data("cursorpos"), goal)
 
 
 def overview_cursor(s, wait_for, expected):
@@ -152,6 +200,16 @@ def edge_browsing(s, wait_for):
         "left": 24, "right": 26, "up": 21, "down": 28,
     }
     enlarged = tile(s, 25)
+    follow_hint = next(v["cursor_follow_hint"] for v in s.status()["views"] if v["monitor"] == monitor)
+    assert follow_hint["x"] == work["x"] + 12 and follow_hint["y"] == work["y"] + 12
+    assert follow_hint["y"] + follow_hint["h"] < enlarged["y"]
+    assert all(not (h["x"] < follow_hint["x"] + follow_hint["w"] and h["x"] + h["w"] > follow_hint["x"]
+                    and h["y"] < follow_hint["y"] + follow_hint["h"] and h["y"] + h["h"] > follow_hint["y"])
+               for h in zoom_edges(s, monitor))
+    s.move(center(follow_hint))
+    time.sleep(.4)
+    assert s.status()["zoom"]["workspace"] == 25
+    s.check("the upper-left follow hint stays above the fitted preview and cannot trigger or cover edge navigation")
     s.move(center(enlarged))
     s.run("grim", "-s", "1", "-o", monitor, str(s.root / "zoom-edge-hints.png"))
     for direction, destination in (("left", 24), ("right", 26), ("up", 21), ("down", 28)):
@@ -659,6 +717,7 @@ def lifecycle(s, wait_for):
         s.ctl("keyword", "plugin:hyprspace:overview:wheel_zoom", "true")
         s.ctl("keyword", "plugin:hyprspace:overview:include_special", "false")
         laptop_controls(s, wait_for)
+        cursor_follow(s, wait_for)
         s.setup("dwindle", 0, 1)
         for workspace in range(21, 30):
             s.ctl("keyword", "workspace", f"{workspace},monitor:{s.names[0]},persistent:true,layout:dwindle")
@@ -917,6 +976,426 @@ def reload_and_removal(s, wait_for):
     s.check("removing the enlarged inactive persistent workspace cancels zoom and retains a valid command destination")
     s.close()
     s.ctl("keyword", "workspace", f"21,monitor:{s.names[0]},persistent:true,layout:dwindle")
+
+
+def cursor_follow(s, wait_for):
+    fixture = load_overview_fixture(s, wait_for)
+    panel = None
+
+    def tap(code):
+        s.key(code, 1)
+        s.key(code, 0)
+
+    def settle():
+        wait_for(lambda: not s.status()["zoom"]["cursor_follow_settling"])
+
+    try:
+        s.setup("dwindle", 0, 1)
+        primary_destinations(s)
+        opened(s, wait_for)
+        native = s.geometry()
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        fitted = tile(s, 11)
+        s.move(center(fitted))
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        s.key(F, 1)
+        s.key(F, 1)
+        time.sleep(.35)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        s.key(F, 0)
+        s.motion(20, 0)
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        assert same_geometry({0: fitted}, {0: tile(s, 11)})
+        s.check("F toggles once per physical press and can arm cursor-follow at the fitted minimum without moving it")
+
+        s.move(center(fitted))
+        wheel(s, -32)
+        inspection(s, wait_for, 4)
+        baseline = tile(s, 11)
+        s.ctl("keyword", "plugin:hyprspace:follow_mouse", "false")
+        command = s.status()["target"]["window"]
+        for _ in range(3):
+            s.motion(1, 0)
+        time.sleep(.12)
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        assert same_geometry({0: baseline}, {0: tile(s, 11)})
+        destination = (fitted["x"] + fitted["w"] * .85, fitted["y"] + fitted["h"] * .75)
+        relative_to(s, destination)
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        assert not s.status()["zoom"]["camera_settled"]
+        settle()
+        pointer = s.data("cursorpos")
+        followed = tile(s, 11)
+        assert abs(followed["x"] - (fitted["x"] * 4 - pointer["x"] * 3)) < .1, (fitted, followed, pointer)
+        assert abs(followed["y"] - (fitted["y"] * 4 - pointer["y"] * 3)) < .1
+        assert followed["x"] < baseline["x"] and followed["y"] < baseline["y"]
+        assert s.status()["target"]["window"] == command and s.geometry() == native
+        s.run("grim", "-s", "1", "-o", s.names[0], str(s.root / "cursor-follow-workspace.png"))
+        s.check("cursor-follow ignores tiny motion, smoothly reveals right/bottom content and works independently of follow_mouse")
+
+        follow_corners(s, wait_for, s.names[0], fitted, lambda: tile(s, 11), "cursor-follow-workspace")
+        s.check("workspace follow reaches every full-output corner and reverses smoothly into the preview without losing input")
+
+        relative_to(s, destination)
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        tap(F)
+        stopped = tile(s, 11)
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        s.motion(-40, -30)
+        time.sleep(.2)
+        assert same_geometry({0: stopped}, {0: tile(s, 11)})
+        tap(F)
+        time.sleep(.12)
+        assert same_geometry({0: stopped}, {0: tile(s, 11)})
+        s.move(center(fitted))
+        time.sleep(.12)
+        assert same_geometry({0: stopped}, {0: tile(s, 11)})
+        s.motion(10, 0)
+        settle()
+        s.check("turning follow off freezes the displayed camera; enabling it and synthetic cursor warps do not reposition content")
+
+        s.button(1, PAN_BUTTON)
+        grip = tile(s, 11)
+        s.motion(20, 10)
+        dragged = tile(s, 11)
+        assert abs(dragged["x"] - grip["x"] - 20) < .1
+        assert abs(dragged["y"] - grip["y"] - 10) < .1
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        s.button(0, PAN_BUTTON)
+        time.sleep(.12)
+        assert same_geometry({0: dragged}, {0: tile(s, 11)})
+        s.key(SHIFT, 1)
+        s.key(106, 1)
+        keyed = tile(s, 11)
+        s.motion(12, 0)
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        assert same_geometry({0: keyed}, {0: tile(s, 11)})
+        s.key(106, 0)
+        s.key(SHIFT, 0)
+        s.key(57, 1)
+        s.motion(-10, -10)
+        assert not s.status()["zoom"]["cursor_follow_settling"] and s.status()["zoom"]["panning"]
+        s.key(57, 0)
+        s.check("right-drag, Space-pan and held keyboard panning take priority without snapping back afterward")
+
+        relative_to(s, destination)
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        s.move(center(area(next(m for m in s.data("monitors") if m["name"] == s.names[1]))))
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        remote = tile(s, 11)
+        time.sleep(.12)
+        assert same_geometry({0: remote}, {0: tile(s, 11)})
+        s.move(center(fitted))
+        s.motion(20, 0)
+        settle()
+        panel = s.spawn(["python3", str(s.artifact("layer.py")), str(s.root / "cursor-follow-panel"), "cursor-follow-panel", "pointer", "0,0"])
+        box = wait_for(lambda: (value if (value := s.layer("cursor-follow-panel")) and value["w"] > 0 and value["h"] > 0 else None))
+        relative_to(s, center(box))
+        wait_for(lambda: not s.status()["cursor_owned"])
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        handed_off = tile(s, 11)
+        s.move(center(fitted))
+        wait_for(lambda: s.status()["cursor_owned"])
+        time.sleep(.12)
+        assert same_geometry({0: handed_off}, {0: tile(s, 11)})
+        s.check("crossing outputs and foreground pointer handoff stop follow and require fresh device motion to resume")
+        panel.terminate()
+        panel.wait(timeout=3)
+        panel = None
+
+        namespace = "waybar-cursor-follow-pointer"
+        entry = s.root / namespace
+        panel = s.spawn(["python3", str(s.artifact("layer.py")), str(entry), namespace, "pointer", "0,0"])
+        box = wait_for(lambda: (value if (value := s.layer(namespace)) and value["w"] > 0 and value["h"] > 0 else None))
+        relative_to(s, center(box))
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        settle()
+        assert s.status()["cursor_owned"] and s.status()["keyboard_owned"]
+        assert s.status()["cursor_shape"] != "text"
+        assert_follow_framing(fitted, tile(s, 11), s.data("cursorpos"))
+        tap(F)
+        wait_for(lambda: not s.status()["cursor_owned"])
+        s.move((box["x"] + 70, box["y"] + box["h"] / 2))
+        s.button(1)
+        s.button(0)
+        wait_for(lambda: entry.with_suffix(".click").exists())
+        assert s.status()["keyboard_owned"]
+        tap(F)
+        wait_for(lambda: s.status()["cursor_owned"])
+        s.motion(20, 0)
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        settle()
+        assert s.status()["cursor_owned"]
+        s.check("active follow retains the overview cursor over Waybar; disabling and re-enabling restores native panel input and immediate following")
+        panel.terminate()
+        panel.wait(timeout=3)
+        panel = None
+
+        s.key(Z, 0)
+        s.close()
+        namespace = "waybar-cursor-follow-reserved"
+        panel = s.spawn(["python3", str(s.artifact("layer.py")), str(s.root / namespace), namespace, "panel", "0,0"])
+        wait_for(lambda: (value if (value := s.layer(namespace)) and value["w"] > 0 and value["h"] > 0 else None))
+        wait_for(lambda: next(m for m in s.data("monitors") if m["name"] == s.names[0])["reserved"][1] >= 112)
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        panel_fit = tile(s, 11)
+        s.move(center(panel_fit))
+        s.run("grim", "-s", "1", "-o", s.names[0], str(s.root / "cursor-follow-panel-fit.png"))
+        wheel(s, -32)
+        inspection(s, wait_for, 4)
+        follow_corners(s, wait_for, s.names[0], panel_fit, lambda: tile(s, 11), "cursor-follow-panel")
+        relative_to(s, (500, 40))
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        settle()
+        assert s.status()["cursor_owned"] and s.status()["keyboard_owned"]
+        assert_follow_framing(panel_fit, tile(s, 11), s.data("cursorpos"))
+        s.run("grim", "-s", "1", "-o", s.names[0], str(s.root / "cursor-follow-over-panel.png"))
+        s.key(Z, 0)
+        released(s, wait_for)
+        wait_for(lambda: not s.status()["cursor_owned"])
+        s.check("follow covers reserved Waybar space and all corners, then restores ordinary panel ownership when inspection ends")
+        s.close()
+        panel.terminate()
+        panel.wait(timeout=3)
+        panel = None
+        wait_for(lambda: next(m for m in s.data("monitors") if m["name"] == s.names[0])["reserved"][1] == 0)
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        s.move(center(tile(s, 11)))
+        wheel(s, -32)
+        inspection(s, wait_for, 4)
+
+        follow_during_zoom(s, wait_for, fitted, lambda: tile(s, 11))
+        s.check("a single immediate mouse movement steers an unfinished workspace zoom and settles without a second motion or changing magnification")
+
+        wheel(s, 32)
+        inspection(s, wait_for, 1)
+        s.move(center(fitted))
+        wheel(s, -4)
+        s.motion(40, 20)
+        assert s.status()["zoom"]["cursor_follow_settling"] and s.status()["zoom"]["inspection_transitioning"]
+        s.scroll(delta=-15, discrete=0, source=1)
+        assert s.status()["zoom"]["cursor_follow_settling"]
+        inspection(s, wait_for, 1.15 ** 5)
+        assert_follow_framing(fitted, tile(s, 11), s.data("cursorpos"), 1.15 ** 5)
+        s.check("follow begins on the first wheel tick from fit and retains quick motion through a subsequent touchpad zoom tick")
+
+        s.key(13, 1)
+        s.motion(20, 10)
+        assert s.status()["zoom"]["cursor_follow_settling"] and s.status()["zoom"]["inspection_transitioning"]
+        s.key(13, 0)
+        inspection(s, wait_for, 1.15 ** 6)
+        assert_follow_framing(fitted, tile(s, 11), s.data("cursorpos"), 1.15 ** 6)
+        s.check("holding a keyboard zoom key accepts simultaneous pointer following without waiting for its release")
+
+        s.key(Z, 0)
+        released(s, wait_for)
+        s.move(center(tile(s, 11)))
+        s.key(Z, 1)
+        wheel(s, -4)
+        s.motion(40, 20)
+        assert s.status()["zoom"]["cursor_follow_settling"] and s.status()["zoom"]["inspection_transitioning"]
+        inspection(s, wait_for, 1.15 ** 4)
+        assert_follow_framing(fitted, tile(s, 11), s.data("cursorpos"), 1.15 ** 4)
+        s.check("initial held-fit takeover keeps immediate mouse intent while fitting and magnifying together")
+
+        s.ctl("keyword", "animations:enabled", "false")
+        wheel(s, 32)
+        inspection(s, wait_for, 1)
+        assert same_geometry({0: fitted}, {0: tile(s, 11)})
+        s.key(Z, 0)
+        released(s, wait_for)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        s.check("exact wheel-out and zoom release restore their framing and retain the follow preference")
+
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        wheel(s, -32)
+        inspection(s, wait_for, 4)
+        if not s.status()["zoom"]["cursor_follow_enabled"]:
+            tap(F)
+        s.move(center(fitted))
+        s.motion(20, 0)
+        settle()
+        point = s.preview_point("hs-A", .55, .55)
+        s.move(point)
+        s.button(1)
+        s.button(0)
+        s.key(Z, 0)
+        wait_for(lambda: not s.status()["views"])
+        assert s.data("activewindow")["address"] == s.windows()["hs-A"]["address"]
+        assert s.geometry() == native
+        s.check("a click after cursor-follow commits the displayed window without changing native geometry")
+
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        assert (s.root / "state/hyprspace/cursor-follow").read_text() == "enabled\n"
+        s.key(F, 1)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        assert (s.root / "state/hyprspace/cursor-follow").read_text() == "disabled\n"
+        s.close()
+        s.key(Z, 0)
+        opened(s, wait_for)
+        s.key(Z, 1)
+        s.key(F, 1)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        s.key(F, 0)
+        tap(F)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        s.close()
+        s.key(Z, 0)
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        s.move(center(tile(s, 11)))
+        wheel(s, -3)
+        inspection(s, wait_for, 1.15 ** 3)
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        s.motion(20, 0)
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        tap(F)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        s.check("enabled and disabled choices survive reopening; old held F stays captured and only fresh motion resumes follow")
+
+        s.key(Z, 0)
+        s.close()
+        for setting, default in (("zoom_key", "z"), ("empty_workspace_key", "n"), ("window_view_key", "g")):
+            try:
+                s.ctl("keyword", "plugin:hyprspace:overview:" + setting, "f")
+                opened(s, wait_for)
+                if setting == "zoom_key":
+                    s.key(F, 1)
+                    assert s.status()["zoom"]["held"]
+                    s.key(F, 0)
+                else:
+                    s.key(Z, 1)
+                    tap(F)
+                    assert not s.status()["zoom"]["held"]
+                    if setting == "window_view_key":
+                        assert s.status()["window_board"]["active"]
+                    s.key(Z, 0)
+                assert not s.status()["zoom"]["cursor_follow_enabled"]
+                s.close()
+            finally:
+                s.ctl("keyword", "plugin:hyprspace:overview:" + setting, default)
+        s.check("custom zoom, empty-workspace and window-view shortcuts on F take precedence over cursor-follow")
+
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        s.ctl("keyword", "plugin:hyprspace:overview:follow_key", "c")
+        tap(F)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        s.key(46, 1)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        assert s.status()["zoom"]["cursor_follow_hint"] == "C · Follow enabled"
+        s.ctl("keyword", "plugin:hyprspace:overview:follow_key", "v")
+        s.key(46, 1)
+        s.key(46, 0)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        tap(47)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        s.ctl("keyword", "plugin:hyprspace:overview:follow_key", "")
+        tap(F)
+        assert not s.status()["zoom"]["cursor_follow_enabled"] and not s.status()["zoom"]["cursor_follow_hint"]
+        assert all(v["cursor_follow_hint"] is None for v in s.status()["views"])
+        s.ctl("keyword", "plugin:hyprspace:overview:follow_key", "f")
+        tap(F)
+        s.ctl("keyword", "plugin:hyprspace:overview:show_follow_hint", "false")
+        assert s.status()["zoom"]["cursor_follow_enabled"] and not s.status()["zoom"]["cursor_follow_hint"]
+        assert all(v["cursor_follow_hint"] is None for v in s.status()["views"])
+        wheel(s, -32)
+        inspection(s, wait_for, 4)
+        s.motion(20, 0)
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        settle()
+        tap(F)
+        s.ctl("keyword", "plugin:hyprspace:overview:show_follow_hint", "true")
+        s.key(Z, 0)
+        s.close()
+        for invalid in ("Left", "Shift_L", "space", "plus", "minus", "equal", "KP_Add", "KP_Subtract"):
+            # Runtime keyword writes bypass string validators on this ABI;
+            # the getter must reject them before hinting or capturing input.
+            s.ctl("keyword", "plugin:hyprspace:overview:follow_key", invalid)
+            assert not s.status()["zoom"]["cursor_follow_hint"], invalid
+        s.ctl("keyword", "plugin:hyprspace:overview:follow_key", "f")
+        s.check("follow key remapping, captured repeats, an empty shortcut and hiding the hint work while navigation and inspection keys remain protected")
+
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        s.move(center(tile(s, 11)))
+        tap(F)
+        wheel(s, -3)
+        inspection(s, wait_for, 1.15 ** 3)
+        s.motion(20, 0)
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        s.ctl("keyword", "plugin:hyprspace:overview:wheel_zoom", "false")
+        wait_for(lambda: s.status()["zoom"]["extra_factor"] == 1)
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        s.motion(20, 0)
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        s.ctl("keyword", "plugin:hyprspace:overview:wheel_zoom", "true")
+        s.check("wheel_zoom opt-out clears extra zoom and pending follow while retaining the session preference")
+        tap(F)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        s.key(Z, 0)
+        s.close()
+        s.ctl("plugin", "unload", str(fixture))
+        s.ctl("plugin", "unload", str(s.plugin))
+        s.ctl("plugin", "load", str(s.plugin))
+        s.ctl("reload")
+        fixture = load_overview_fixture(s, wait_for)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        tap(F)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        s.key(Z, 0)
+        s.close()
+        s.ctl("plugin", "unload", str(fixture))
+        s.ctl("plugin", "unload", str(s.plugin))
+        s.ctl("plugin", "load", str(s.plugin))
+        s.ctl("reload")
+        fixture = load_overview_fixture(s, wait_for)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        opened(s, wait_for)
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        tap(F)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        s.key(Z, 0)
+        s.close()
+        opened(s, wait_for)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        s.check("enabled and disabled preferences survive plugin reloads with clean movement state")
+    finally:
+        if panel is not None and panel.poll() is None:
+            panel.terminate()
+            panel.wait(timeout=3)
+        for code in (F, Z, SHIFT, 106, 57, 46, 47, 13):
+            s.key(code, 0)
+        s.button(0, PAN_BUTTON)
+        s.ctl("keyword", "animations:enabled", "false")
+        s.ctl("keyword", "plugin:hyprspace:follow_mouse", "true")
+        s.ctl("keyword", "plugin:hyprspace:overview:wheel_zoom", "true")
+        s.ctl("keyword", "plugin:hyprspace:overview:follow_key", "f")
+        s.ctl("keyword", "plugin:hyprspace:overview:show_follow_hint", "true")
+        s.close()
+        s.ctl("plugin", "unload", str(fixture))
 
 
 def wheel_inspection(s, wait_for):

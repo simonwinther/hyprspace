@@ -100,8 +100,7 @@ def consistency(s, wait_for):
 
             s.ctl("dispatch", "focuswindow", "address:" + s.windows()["hs-A"]["address"])
             s.ctl("dispatch", "hyprspace:overview", "on")
-            if not follow:
-                assert s.status()["target"]["window"] == s.windows()["hs-A"]["address"]
+            assert s.status()["target"]["window"] == s.windows()["hs-A"]["address"]
             s.move(s.preview_point("hs-A"))
             s.key(125, 1)
             try:

@@ -404,6 +404,7 @@ namespace hyprspace {
         const bool changed =
             !m_zoomFit || m_zoomFit->workspace != workspace || m_zoomFit->camera != fitted || m_zoomFit->cell != entry->target || m_zoomFit->usable != m_usable;
         if (changed || !config::overviewWheelZoom() || !m_inspection.goalFits(fitted.apply(entry->target))) {
+            session().pauseCursorFollow();
             session().cancelPan();
             foldInspection();
         }
@@ -484,9 +485,19 @@ namespace hyprspace {
         return true;
     }
 
+    bool COverview::inspectionFollowAvailable(const Vector2D& globalPos) const {
+        const auto mon = monitor();
+        return inspectionReady() && mon && SBoxF{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y}.contains(globalPos.x, globalPos.y) &&
+               m_inspection.canPan(m_zoomFit->camera.apply(m_zoomFit->cell), 1);
+    }
+
     void COverview::panInspection(const Vector2D& delta) {
         if (inspectionReady() && m_inspection.pan(m_zoomFit->camera.apply(m_zoomFit->cell), delta.x, delta.y))
             damage();
+    }
+
+    bool COverview::followInspection(CInspectionFollow& follow, CInspectionFollow::Clock::time_point now) {
+        return inspectionReady() && follow.advance(m_inspection, m_zoomFit->camera.apply(m_zoomFit->cell), now);
     }
 
     bool COverview::inspectScroll(const SScrollInput& event, const Vector2D& globalPos) {
@@ -557,6 +568,8 @@ namespace hyprspace {
         if (!mon)
             return std::nullopt;
         const auto local = globalPos - mon->m_position;
+        if (const auto hint = cursorFollowHintBox(); hint && hint->contains(local.x, local.y))
+            return std::nullopt;
         if (scrollControlAt(local))
             return std::nullopt;
         return overviewZoomEdgeAt(m_usable, local.x, local.y);
@@ -581,6 +594,8 @@ namespace hyprspace {
         if (!session().zoomEdgeReady(*this))
             return result;
         std::vector<SBoxF> obstacles;
+        if (const auto hint = cursorFollowHintBox())
+            obstacles.push_back(*hint);
         for (const auto& entry : m_entries) {
             const auto cell = displayedCell(entry);
             if (auto state = scrollingFor(entry)) {
@@ -601,6 +616,23 @@ namespace hyprspace {
                 result.push_back({direction, *neighbor, *box, session().zoomEdgePending() == direction});
         }
         return result;
+    }
+
+    std::optional<SBoxF> COverview::cursorFollowHintBox() const {
+        const auto mon    = monitor();
+        const auto target = session().zoomTarget();
+        const auto label  = session().cursorFollowHint();
+        if (!mon || m_closing || !session().zoomHeld() || !target || target->monitor != mon || session().gestureActive() || label.empty())
+            return std::nullopt;
+        const auto font = config::overviewFont();
+        if (!m_cursorFollowHintText || m_cursorFollowHintText->font != font || m_cursorFollowHintText->label != label || m_cursorFollowHintText->scale != mon->m_scale) {
+            int width = 0, height = 0;
+            measureText(label, font, width, height, mon->m_scale);
+            m_cursorFollowHintText = SCursorFollowHintText{font, label, mon->m_scale, {width / mon->m_scale, height / mon->m_scale}};
+        }
+        const auto  size = m_cursorFollowHintText->size;
+        const SBoxF box{m_usable.x + 12, m_usable.y + 12, size.x + 20, size.y + 10};
+        return box.x + box.w <= m_usable.x + m_usable.w - 12 && box.y + box.h <= m_usable.y + m_usable.h - 12 ? std::optional{box} : std::nullopt;
     }
 
     void COverview::freezeZoom() {
@@ -1952,6 +1984,17 @@ namespace hyprspace {
                 }
             }
             workspaceCard(*workspaceSettle, settle.workspace, std::lerp(0.94F, 1.F, progress), ink, labelInk, width);
+        }
+
+        // The hint is fixed to the usable screen corner, above the normal fitted
+        // preview. Its bounds are also excluded from edge-hover navigation.
+        if (const auto badge = cursorFollowHintBox()) {
+            const auto ink = session().cursorFollowEnabled() ? config::overviewActiveBorder() : config::overviewLabelColor();
+            if (auto text = textures().text(session().cursorFollowHint(), FONT, ink, 0, SCALE)) {
+                const auto size = logicalSize(text);
+                rect(*badge, config::overviewTitleBgColor(), 8);
+                tex(text, {badge->x + 10, badge->y + 5, size.x, size.y}, PROGRESS * 0.8F);
+            }
         }
 
         // Name the destination above the carried card, including when its

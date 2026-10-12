@@ -2,6 +2,8 @@
 
 #include "Config.hpp"
 #include "Overview.hpp"
+#include "WindowBoard.hpp"
+#include "HelpOverlay.hpp"
 #include "Launch.hpp"
 #include "OverlayPolicy.hpp"
 #include "Diagnostics.hpp"
@@ -44,8 +46,10 @@ namespace hyprspace::hooks {
         CFunctionHook *                 pointerHook = nullptr, *imeModsHook = nullptr, *axisHook = nullptr, *mouseBindHook = nullptr;
         CFunctionHook*                  layoutPointerHook   = nullptr;
         CFunctionHook*                  cursorRenderingHook = nullptr;
-        double                          axisScale           = 1.0;
-        bool                            keyRelease          = false;
+        CFunctionHook *                 relativeMotionHook = nullptr, *absoluteMotionHook = nullptr;
+        double                          axisScale    = 1.0;
+        bool                            keyRelease   = false;
+        bool                            deviceMotion = false;
         std::optional<Vector2D>         desktopPoint;
         std::function<bool()>           ownsKeyboard;
         std::function<bool()>           launchEnabled;
@@ -84,7 +88,7 @@ namespace hyprspace::hooks {
             return dladdr(reinterpret_cast<const void*>(__hyprland_api_get_hash), &executable) && dladdr(owner, &provider) && executable.dli_fbase == provider.dli_fbase;
         }
 
-        enum class EInspectionKey { NONE, IN, OUT, GRAB, LEFT, RIGHT, UP, DOWN };
+        enum class EInspectionKey { NONE, IN, OUT, GRAB, LEFT, RIGHT, UP, DOWN, FOLLOW };
 
         struct SKey {
             WP<IKeyboard>           keyboard;
@@ -97,17 +101,27 @@ namespace hyprspace::hooks {
             EInspectionKey          inspection           = EInspectionKey::NONE;
             uint64_t                inspectionGeneration = 0;
             std::optional<uint64_t> panToken;
+            bool                    windowView      = false;
+            bool                    board           = false;
+            bool                    boardSearch     = false;
+            bool                    oneShot         = false;
+            uint64_t                boardGeneration = 0;
+            std::string             text;
+            xkb_keysym_t            boardKey       = XKB_KEY_NoSymbol;
+            uint32_t                boardMods      = 0;
+            bool                    help           = false;
+            uint64_t                helpGeneration = 0;
         };
         std::vector<SKey>   keys;
         std::vector<SKey>   ignoredKeys;
-        SP<CEventLoopTimer> inspectionRepeatTimer;
-        WP<IKeyboard>       inspectionRepeatKeyboard;
-        uint32_t            inspectionRepeatCode = 0;
+        SP<CEventLoopTimer> reservedRepeatTimer;
+        WP<IKeyboard>       reservedRepeatKeyboard;
+        uint32_t            reservedRepeatCode = 0;
 
-        void stopInspectionRepeat() {
-            if (inspectionRepeatTimer)
-                inspectionRepeatTimer->updateTimeout(std::nullopt);
-            inspectionRepeatKeyboard.reset();
+        void stopReservedRepeat() {
+            if (reservedRepeatTimer)
+                reservedRepeatTimer->updateTimeout(std::nullopt);
+            reservedRepeatKeyboard.reset();
         }
 
         void inspectKey(EInspectionKey action) {
@@ -117,6 +131,9 @@ namespace hyprspace::hooks {
                 break;
             case EInspectionKey::OUT:
                 session().zoomStep(-1);
+                break;
+            case EInspectionKey::FOLLOW:
+                session().toggleCursorFollow();
                 break;
             case EInspectionKey::LEFT:
                 session().panKey({40, 0});
@@ -155,6 +172,8 @@ namespace hyprspace::hooks {
             }
             if (mods != 0)
                 return EInspectionKey::NONE;
+            if (session().cursorFollowShortcutAvailable() && xkb_keysym_to_lower(sym) == config::overviewFollowKey())
+                return EInspectionKey::FOLLOW;
             switch (sym) {
             case XKB_KEY_plus:
             case XKB_KEY_equal:
@@ -170,29 +189,55 @@ namespace hyprspace::hooks {
             }
         }
 
-        void startInspectionRepeat(SP<IKeyboard> keyboard, uint32_t code) {
+        void startReservedRepeat(SP<IKeyboard> keyboard, uint32_t code) {
             if (keyboard->m_repeatRate <= 0)
                 return;
-            if (!inspectionRepeatTimer) {
-                inspectionRepeatTimer = makeShared<CEventLoopTimer>(
+            if (!reservedRepeatTimer) {
+                reservedRepeatTimer = makeShared<CEventLoopTimer>(
                     std::nullopt,
                     [](SP<CEventLoopTimer> self, void*) {
-                        const auto keyboard = inspectionRepeatKeyboard.lock();
-                        const auto key = std::ranges::find_if(keys, [&](const auto& entry) { return entry.keyboard == keyboard && entry.code == inspectionRepeatCode; });
-                        if (!keyboard || keyboard->m_repeatRate <= 0 || key == keys.end() || !keyboardOwned() || !session().cursorOwned() ||
-                            !config::overviewWheelZoom() || key->inspectionGeneration != session().zoomGeneration()) {
-                            stopInspectionRepeat();
+                        const auto keyboard = reservedRepeatKeyboard.lock();
+                        const auto key = std::ranges::find_if(keys, [&](const auto& entry) { return entry.keyboard == keyboard && entry.code == reservedRepeatCode; });
+                        if (!keyboard || keyboard->m_repeatRate <= 0 || key == keys.end() || key->oneShot || !keyboardOwned()) {
+                            stopReservedRepeat();
                             return;
                         }
-                        inspectKey(key->inspection);
+                        if (key->help) {
+                            auto* help = session().helpOverlay();
+                            if (!session().helpActive() || help->generation() != key->helpGeneration) {
+                                stopReservedRepeat();
+                                return;
+                            }
+                            help->onKey(key->boardKey, key->boardMods, key->text);
+                        } else if (session().helpActive()) {
+                            stopReservedRepeat();
+                            return;
+                        } else if (key->board) {
+                            auto* board = session().windowBoard();
+                            if (key->oneShot || !session().windowViewActive() || board->generation() != key->boardGeneration ||
+                                board->searchFocused() != key->boardSearch) {
+                                stopReservedRepeat();
+                                return;
+                            }
+                            if (diagnostics::enabled)
+                                if (const auto monitor = board->monitor())
+                                    diagnostics::input(monitor->m_id);
+                            board->onKey(key->boardKey, key->boardMods, key->text);
+                        } else {
+                            if (!session().cursorOwned() || !config::overviewWheelZoom() || key->inspectionGeneration != session().zoomGeneration()) {
+                                stopReservedRepeat();
+                                return;
+                            }
+                            inspectKey(key->inspection);
+                        }
                         self->updateTimeout(std::chrono::milliseconds(std::max(1, 1000 / keyboard->m_repeatRate)));
                     },
                     nullptr);
-                g_pEventLoopManager->addTimer(inspectionRepeatTimer);
+                g_pEventLoopManager->addTimer(reservedRepeatTimer);
             }
-            inspectionRepeatKeyboard = keyboard;
-            inspectionRepeatCode     = code;
-            inspectionRepeatTimer->updateTimeout(std::chrono::milliseconds(std::max(1, keyboard->m_repeatDelay)));
+            reservedRepeatKeyboard = keyboard;
+            reservedRepeatCode     = code;
+            reservedRepeatTimer->updateTimeout(std::chrono::milliseconds(std::max(1, keyboard->m_repeatDelay)));
         }
 
         void pruneKeys() {
@@ -341,6 +386,20 @@ namespace hyprspace::hooks {
             reinterpret_cast<Fn>(pointerHook->m_original)(self, time, refocus, mouse, overridePos);
         }
 
+        void pointerRelative(CInputManager* self, IPointer::SMotionEvent event) {
+            using Fn                                     = void (*)(CInputManager*, IPointer::SMotionEvent);
+            const bool                          previous = std::exchange(deviceMotion, true);
+            const Hyprutils::Utils::CScopeGuard restore([previous] { deviceMotion = previous; });
+            reinterpret_cast<Fn>(relativeMotionHook->m_original)(self, event);
+        }
+
+        void pointerAbsolute(CInputManager* self, IPointer::SMotionAbsoluteEvent event) {
+            using Fn                                     = void (*)(CInputManager*, IPointer::SMotionAbsoluteEvent);
+            const bool                          previous = std::exchange(deviceMotion, true);
+            const Hyprutils::Utils::CScopeGuard restore([previous] { deviceMotion = previous; });
+            reinterpret_cast<Fn>(absoluteMotionHook->m_original)(self, event);
+        }
+
         void pointerAxis(CInputManager* self, IPointer::SAxisEvent event, SP<IPointer> pointer) {
             using Fn              = void (*)(CInputManager*, IPointer::SAxisEvent, SP<IPointer>);
             const double previous = axisScale;
@@ -480,10 +539,14 @@ namespace hyprspace::hooks {
             const Hyprutils::Utils::CScopeGuard restore([previous] { keyRelease = previous; });
             pruneKeys();
             const bool owned = ownsKeyboard && ownsKeyboard();
-            if (owned && pressed && diagnostics::enabled)
-                if (const auto* view = session().keyboardView())
-                    if (const auto monitor = view->monitor())
-                        diagnostics::input(monitor->m_id);
+            if (session().helpActive())
+                session().helpOverlay()->syncKeyboardOwnership(owned);
+            if (owned && pressed && diagnostics::enabled) {
+                const auto* view    = session().keyboardView();
+                const auto  monitor = session().windowViewActive() ? session().windowBoard()->monitor() : view ? view->monitor() : nullptr;
+                if (monitor)
+                    diagnostics::input(monitor->m_id);
+            }
             auto it = std::ranges::find_if(keys, [&](const auto& key) { return key.keyboard == keyboard && key.code == e.keycode; });
             if (!pressed && it != keys.end()) {
                 const auto saved = *it;
@@ -492,8 +555,8 @@ namespace hyprspace::hooks {
                     session().zoomRelease(*saved.zoomToken);
                 if (saved.panToken)
                     session().panRelease(*saved.panToken);
-                if (inspectionRepeatKeyboard == keyboard && inspectionRepeatCode == e.keycode)
-                    stopInspectionRepeat();
+                if (reservedRepeatKeyboard == keyboard && reservedRepeatCode == e.keycode)
+                    stopReservedRepeat();
                 if (saved.reserved)
                     return false;
                 const bool pass = original(self, event, keyboard);
@@ -501,26 +564,98 @@ namespace hyprspace::hooks {
             }
             const auto sym  = keyboard->m_xkbSymState ? xkb_state_key_get_one_sym(keyboard->m_xkbSymState, e.keycode + 8) : XKB_KEY_NoSymbol;
             const auto mods = g_pInputManager->getModsFromAllKBs();
+            if (pressed && it != keys.end() && it->help) {
+                if (!it->oneShot && owned && session().helpActive() && session().helpOverlay()->generation() == it->helpGeneration)
+                    session().helpOverlay()->onKey(sym, mods, it->text);
+                return false;
+            }
+            if (pressed && it != keys.end() && (it->oneShot || (session().helpActive() && it->reserved)))
+                return false;
             // Captured one-shot and zoom presses keep their route across repeats, config
             // reloads and close/reopen. An ignored first press stays ignored.
             if (pressed && it != keys.end() && (it->zoom || it->emptyWorkspace))
                 return false;
+            if (pressed && it != keys.end() && it->windowView)
+                return false;
+            if (pressed && it != keys.end() && it->board) {
+                if (!it->oneShot && owned && session().windowViewActive() && session().windowBoard()->generation() == it->boardGeneration &&
+                    session().windowBoard()->searchFocused() == it->boardSearch)
+                    session().windowBoard()->onKey(sym, mods, it->text);
+                return false;
+            }
             if (pressed && it != keys.end() && it->inspection != EInspectionKey::NONE) {
-                if (owned && session().cursorOwned() && it->inspectionGeneration == session().zoomGeneration())
+                if (!it->oneShot && owned && session().cursorOwned() && it->inspectionGeneration == session().zoomGeneration())
                     inspectKey(it->inspection);
                 return false;
             }
             const bool navigation = it != keys.end() ? it->reserved : owned && (reserved(sym, mods) || (sym == XKB_KEY_Escape && session().gestureActive()));
             if (pressed && it == keys.end()) {
+                auto*       board     = session().windowViewActive() ? session().windowBoard() : nullptr;
+                const bool  searching = board && board->searchFocused();
+                std::string text;
+                if (keyboard->m_xkbState) {
+                    char      buffer[64]{};
+                    const int length = xkb_state_key_get_utf8(keyboard->m_xkbState, e.keycode + 8, buffer, sizeof(buffer));
+                    if (length > 0 && length < static_cast<int>(sizeof(buffer)) && !g_unichar_iscntrl(g_utf8_get_char(buffer)))
+                        text.assign(buffer, length);
+                }
+                auto*      help       = session().helpActive() ? session().helpOverlay() : nullptr;
+                const auto helpKey    = config::overviewHelpKey();
+                const bool helpOpener = owned && (!searching || text.empty()) && !help && helpKey != XKB_KEY_NoSymbol &&
+                                        (xkb_keysym_to_lower(sym) == helpKey || (helpKey == XKB_KEY_question && text == "?")) &&
+                                        (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0;
+                const bool helpRoute  = owned && help && help->reservesKey(sym, mods);
+                if (helpOpener || helpRoute) {
+                    stopReservedRepeat();
+                    // Existing captured holds retain their releases, but must
+                    // not resume an action in the view behind this dialog.
+                    if (helpOpener)
+                        for (auto& key : keys)
+                            if (key.reserved)
+                                key.oneShot = true;
+                    keys.push_back({keyboard, e.keycode, true, true});
+                    auto& captured     = keys.back();
+                    captured.help      = true;
+                    captured.oneShot   = helpOpener || help->oneShot(sym, text);
+                    captured.text      = text;
+                    captured.boardKey  = sym;
+                    captured.boardMods = mods;
+                    if (helpOpener)
+                        (void)session().help();
+                    else
+                        help->onKey(sym, mods, text);
+                    captured.helpGeneration = session().helpOverlay()->generation();
+                    if (!captured.oneShot)
+                        startReservedRepeat(keyboard, e.keycode);
+                    return false;
+                }
+                // Modified native shortcuts may still use the real matcher;
+                // overlay-only routes stay suspended while help owns input.
+                if (help) {
+                    keys.push_back({keyboard, e.keycode, false, owned});
+                    return original(self, event, keyboard) && !owned;
+                }
+                const bool boardRoute = owned && board && (board->reservesKey(sym, mods, text) || reserved(sym, mods));
+                const auto viewKey    = config::overviewWindowViewKey();
+                const bool windowView =
+                    owned && !searching && viewKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == viewKey && (mods == 0 || (board && mods == HL_MODIFIER_SHIFT));
                 const auto zoomKey    = config::overviewZoomKey();
-                const bool zoom       = owned && mods == 0 && zoomKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == zoomKey;
+                const bool zoom       = owned && !searching && mods == 0 && zoomKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == zoomKey;
                 const auto emptyKey   = config::overviewEmptyWorkspaceKey();
-                const bool empty      = owned && mods == 0 && emptyKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == emptyKey;
-                const auto inspection = owned && session().zoomHeld() && !zoom && !empty ? inspectionKey(sym, mods) : EInspectionKey::NONE;
-                stopInspectionRepeat();
+                const bool empty      = owned && !searching && mods == 0 && emptyKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == emptyKey;
+                const auto inspection = owned && session().zoomHeld() && !zoom && !empty && !searching ? inspectionKey(sym, mods) : EInspectionKey::NONE;
+                stopReservedRepeat();
                 keys.push_back({keyboard, e.keycode, navigation || zoom || empty || inspection != EInspectionKey::NONE, owned, zoom,
                                 zoom ? session().zoomPress() : std::nullopt, empty, inspection, session().zoomGeneration()});
                 it = std::prev(keys.end());
+                if (windowView) {
+                    it->reserved = it->windowView = true;
+                    if (mods == HL_MODIFIER_SHIFT)
+                        board->cycleGrouping();
+                    else
+                        (void)session().windowView("toggle");
+                    return false;
+                }
                 if (zoom)
                     return false;
                 if (empty) {
@@ -534,9 +669,26 @@ namespace hyprspace::hooks {
                     if (inspection == EInspectionKey::GRAB)
                         it->panToken = session().panPress();
                     else {
+                        it->oneShot = inspection == EInspectionKey::FOLLOW;
                         inspectKey(inspection);
-                        startInspectionRepeat(keyboard, e.keycode);
+                        if (!it->oneShot)
+                            startReservedRepeat(keyboard, e.keycode);
                     }
+                    return false;
+                }
+                if (boardRoute) {
+                    it->reserved = it->board = true;
+                    it->boardSearch          = searching;
+                    it->boardGeneration      = board->generation();
+                    it->text                 = text;
+                    it->boardKey             = sym;
+                    it->boardMods            = mods;
+                    it->oneShot              = sym == XKB_KEY_Escape || sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter ||
+                                               (!searching && (text == "/" || sym == XKB_KEY_r || sym == XKB_KEY_slash || sym == XKB_KEY_s || sym == XKB_KEY_space ||
+                                                               (sym >= XKB_KEY_0 && sym <= XKB_KEY_9)));
+                    board->onKey(sym, mods, text);
+                    if (!it->oneShot)
+                        startReservedRepeat(keyboard, e.keycode);
                     return false;
                 }
             }
@@ -645,7 +797,7 @@ namespace hyprspace::hooks {
         return (overrideController.get()->*member(SCursorOverrides{}))[CURSOR_OVERRIDE_UNKNOWN];
     }
 
-    bool foregroundPointerAt(const Vector2D& pos) {
+    bool foregroundPointerAt(const Vector2D& pos, bool ignorePanels) {
         const auto mon = State::monitorState()->query().vec(pos).run();
         if (!mon)
             return false;
@@ -653,8 +805,11 @@ namespace hyprspace::hooks {
         PHLLS    layer;
         auto     hit = Desktop::viewState()->hitTest();
         for (auto level : {ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ZWLR_LAYER_SHELL_V1_LAYER_TOP}) {
-            if (hit.layerPopupSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer) ||
-                hit.layerSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer))
+            // Menus retain native input even when the panel beneath them yields
+            // to an active follow lens. Other foreground interfaces do too.
+            if (hit.layerPopupSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer))
+                return true;
+            if (hit.layerSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer) && (!ignorePanels || !layer || !layer->m_namespace.starts_with("waybar")))
                 return true;
         }
         std::vector<PHLLSREF> panels;
@@ -662,7 +817,7 @@ namespace hyprspace::hooks {
             for (const auto& candidate : mon->m_layerSurfaceLayers[level])
                 if (candidate && candidate->m_namespace.starts_with("waybar"))
                     panels.push_back(candidate);
-        if (hit.layerPopupSurfaceAt(pos, &panels, &local, &layer) || hit.layerSurfaceAt(pos, &panels, &local, &layer))
+        if (hit.layerPopupSurfaceAt(pos, &panels, &local, &layer) || (!ignorePanels && hit.layerSurfaceAt(pos, &panels, &local, &layer)))
             return true;
         return false;
     }
@@ -700,6 +855,24 @@ namespace hyprspace::hooks {
         return ownsKeyboard && ownsKeyboard();
     }
 
+    bool inspectionInputHeld() {
+        return std::ranges::any_of(keys, [](const auto& key) {
+            return (key.inspection == EInspectionKey::LEFT || key.inspection == EInspectionKey::RIGHT || key.inspection == EInspectionKey::UP ||
+                    key.inspection == EInspectionKey::DOWN) &&
+                   key.inspectionGeneration == session().zoomGeneration();
+        });
+    }
+
+    bool devicePointerMotion() {
+        return deviceMotion;
+    }
+    void suspendOverviewKeys() {
+        stopReservedRepeat();
+        for (auto& key : keys)
+            if (key.reserved)
+                key.oneShot = true;
+    }
+
     namespace {
         std::expected<void, std::string> validateOverviewKey(const std::string& name, const std::string& setting) {
             if (name.empty())
@@ -726,8 +899,29 @@ namespace hyprspace::hooks {
         return validateOverviewKey(name, "empty_workspace_key");
     }
 
+    std::expected<void, std::string> validateWindowViewKey(const std::string& name) {
+        return validateOverviewKey(name, "window_view_key");
+    }
+
+    std::expected<void, std::string> validateFollowKey(const std::string& name) {
+        if (auto result = validateOverviewKey(name, "follow_key"); !result)
+            return result;
+        const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+        if (sym == XKB_KEY_space || sym == XKB_KEY_plus || sym == XKB_KEY_equal || sym == XKB_KEY_minus || sym == XKB_KEY_KP_Add || sym == XKB_KEY_KP_Subtract)
+            return std::unexpected("follow_key cannot replace an inspection zoom or pan key");
+        return {};
+    }
+
     double scrollFactor() {
         return axisScale;
+    }
+    std::expected<void, std::string> validateHelpKey(const std::string& name) {
+        if (auto result = validateOverviewKey(name, "help_key"); !result)
+            return result;
+        const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+        if (sym == XKB_KEY_plus || sym == XKB_KEY_equal || sym == XKB_KEY_minus || sym == XKB_KEY_KP_Add || sym == XKB_KEY_KP_Subtract)
+            return std::unexpected("help_key cannot replace an inspection zoom key");
+        return {};
     }
 
     void syncKeyboardFocus() {
@@ -1115,6 +1309,8 @@ namespace hyprspace::hooks {
             coordsHook          = hook("getMouseCoordsInternal", "CInputManager::getMouseCoordsInternal(", reinterpret_cast<void*>(mouseCoords));
             warpHook            = hook("warpTo", "Pointer::CPointerController::warpTo(", reinterpret_cast<void*>(warp));
             pointerHook         = hook("mouseMoveUnified", "CInputManager::mouseMoveUnified(", reinterpret_cast<void*>(pointerMove));
+            relativeMotionHook  = hook("onMouseMoved", "CInputManager::onMouseMoved(", reinterpret_cast<void*>(pointerRelative));
+            absoluteMotionHook  = hook("onMouseWarp", "CInputManager::onMouseWarp(", reinterpret_cast<void*>(pointerAbsolute));
             axisHook            = hook("onMouseWheel", "CInputManager::onMouseWheel(", reinterpret_cast<void*>(pointerAxis));
             imeModsHook         = hook("sendMods", "CInputMethodKeyboardGrabV2::sendMods(", reinterpret_cast<void*>(imeModifiers));
             mouseBindHook       = hook("ensureMouseBindState", "CKeybindManager::ensureMouseBindState(", reinterpret_cast<void*>(ensureMouseBindState));
@@ -1128,10 +1324,10 @@ namespace hyprspace::hooks {
     }
 
     void uninstall() {
-        stopInspectionRepeat();
-        if (inspectionRepeatTimer) {
-            g_pEventLoopManager->removeTimer(inspectionRepeatTimer);
-            inspectionRepeatTimer.reset();
+        stopReservedRepeat();
+        if (reservedRepeatTimer) {
+            g_pEventLoopManager->removeTimer(reservedRepeatTimer);
+            reservedRepeatTimer.reset();
         }
         cancelPlacement();
         ownCursor(false);
@@ -1147,16 +1343,18 @@ namespace hyprspace::hooks {
                 current->second = std::move(registration.original);
         }
         dispatchers.clear();
-        for (auto handle :
-             {keyHook, inputHook, focusHook, coordsHook, warpHook, pointerHook, imeModsHook, axisHook, mouseBindHook, layoutPointerHook, cursorRenderingHook})
+        for (auto handle : {keyHook, inputHook, focusHook, coordsHook, warpHook, pointerHook, relativeMotionHook, absoluteMotionHook, imeModsHook, axisHook,
+                            mouseBindHook, layoutPointerHook, cursorRenderingHook})
             if (handle)
                 HyprlandAPI::removeFunctionHook(PHANDLE, handle);
         keyHook = inputHook = focusHook = coordsHook = warpHook = nullptr;
         pointerHook = imeModsHook = axisHook = mouseBindHook = nullptr;
-        layoutPointerHook                                    = nullptr;
-        cursorRenderingHook                                  = nullptr;
-        axisScale                                            = 1.0;
-        keyRelease                                           = false;
+        relativeMotionHook = absoluteMotionHook = nullptr;
+        layoutPointerHook                       = nullptr;
+        cursorRenderingHook                     = nullptr;
+        axisScale                               = 1.0;
+        keyRelease                              = false;
+        deviceMotion                            = false;
         desktopPoint.reset();
         ownsKeyboard      = {};
         launchEnabled     = {};

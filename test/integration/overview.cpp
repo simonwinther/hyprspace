@@ -4,6 +4,7 @@
 
 // Test-only state transitions executed inside the private compositor.
 #include "../../src/Overview.hpp"
+#include "../../src/WindowBoard.hpp"
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
 #include <hyprland/src/output/Monitor.hpp>
@@ -63,6 +64,44 @@ namespace {
         }
     };
     template struct CInspectionAccess<&COverview::m_inspectionProgress>;
+
+    auto& boardReflow(CWindowBoard& board);
+    template <auto Member> struct CBoardReflowAccess {
+        friend auto& boardReflow(CWindowBoard& board) {
+            return board.*Member;
+        }
+    };
+    template struct CBoardReflowAccess<&CWindowBoard::m_reflow>;
+
+    SDispatchResult boardScrollContinuity(std::string) {
+        auto* board = session().windowBoard();
+        if (!board || !board->active() || board->inspecting() || !board->monitor())
+            return {.success = false, .error = "test requires an active uninspected window board"};
+        board->setGrouping(board->grouping() == EWindowGrouping::FLAT ? EWindowGrouping::APP : EWindowGrouping::FLAT);
+        boardReflow(*board)->setValueAndWarp(0.4F);
+        const Hyprutils::Utils::CScopeGuard finish([board] {
+            *boardReflow(*board) = 1.F;
+            session().damage();
+        });
+        const auto                          before = board->inspectTargets();
+        const auto                          offset = board->scrollOffset();
+        const auto                          area   = board->viewport();
+        // Scroll inside one callback to exclude ordinary animation frames.
+        board->scroll({.delta = 30, .finger = true}, board->monitor()->m_position + Vector2D{area.cx(), area.cy()});
+        const auto after    = board->inspectTargets();
+        const auto distance = board->scrollOffset() - offset;
+        if (distance <= 0 || before.size() != after.size() || before.empty())
+            return {.success = false, .error = "board continuity fixture requires overflowing cards"};
+        if (std::abs(boardReflow(*board)->value() - 0.4F) > 0.0001)
+            return {.success = false, .error = "scroll snapped the grouping animation"};
+        for (size_t i = 0; i < before.size(); ++i) {
+            const auto &a = before[i].preview, &b = after[i].preview;
+            if (before[i].window != after[i].window || std::abs(a.x - b.x) > 0.0001 || std::abs(a.y - distance - b.y) > 0.0001 || std::abs(a.w - b.w) > 0.0001 ||
+                std::abs(a.h - b.h) > 0.0001)
+                return {.success = false, .error = "scroll changed reflow geometry instead of translating it"};
+        }
+        return {};
+    }
 
     auto& cursorOverrides(Pointer::Cursor::CShapeOverrideController& controller);
     template <auto Member> struct CCursorOverridesAccess {
@@ -437,6 +476,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:resources", resourceProbe);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:axis", axisInput);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:axis-continuity", axisContinuity);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:board-scroll-continuity", boardScrollContinuity);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:inspection-progress", warpInspection);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:pan-continuity", panContinuity);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:zoom-release-continuity", zoomReleaseContinuity);

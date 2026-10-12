@@ -110,12 +110,16 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 
 | Control | Action |
 |---|---|
-| Super + A | Open the overview; press again to open the selected workspace |
+| Super + A | Open the overview; press again to open the selected workspace or window |
 | Click a preview | Focus that window |
+| G | Toggle the global window board and workspace overview |
+| Shift + G in the window board | Cycle All windows, Apps, Workspaces and Monitors |
+| / in the window board | Search titles, apps, workspace names and monitor names |
+| R in the window board | Toggle recent-first order |
 | Arrows or Tab / Shift+Tab, then Enter or S | Select and open a workspace |
 | N or + Empty workspace | Select an empty workspace on the monitor under the pointer |
 | Middle-click | Select an empty workspace on that monitor and keep the overview open |
-| Hold Z | Fit the selected workspace; release to return to the grid |
+| Hold Z | Fit the selected workspace or board window; release to return to the grid |
 | Wheel / vertical two-finger scroll while holding Z | Zoom around the pointer; scroll back to the fitted view |
 | + / − while holding Z | Zoom around the center; hold to repeat (`=` and keypad + / − also work) |
 | Space + touchpad motion while holding Z and magnified | Grab and pan the view |
@@ -128,7 +132,26 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | Super + L (optional binding) | Cycle dwindle/scrolling on the indicated workspace |
 | Alt + Tab / Alt + Shift + Tab | Cycle windows forward / backward |
 | Release Alt | Focus the selected window |
-| Escape | Dismiss either overlay without selecting |
+| Escape | Step back from board search/grouping; dismiss the workspace overview or switcher |
+
+On this experimental branch, press **G** inside the overview to browse a single
+board containing windows from every covered monitor. The toolbar groups them by
+app, workspace or monitor; **All windows** gives a flat grid. Grouping changes
+the previews while your native windows keep their workspace, layout and size.
+Cards keep a readable minimum size and scroll when they need more room.
+
+Press **/** to search. Letters, spaces and digits become search text; **Ctrl+U**
+clears it. Arrows or Tab browse the results, and Enter or a click opens the
+selected window on its own monitor. Hold **Z** to inspect that window with the
+existing zoom and pan controls. **R** orders each group by a snapshot of recent
+focus, so browsing keeps the order steady. Escape clears search first, then
+returns to workspaces, then closes the overview. Window moves and resizes use
+the workspace view; **N** and middle-click return there to prepare an empty
+workspace.
+
+![The experimental global window board grouped by app](docs/screenshots/window-views-app.png)
+
+[Watch grouping and search](docs/screenshots/window-views.mp4).
 
 The overview opens on all monitors by default, with each showing its own
 workspaces. Alt+Tab uses the active normal workspace on the monitor under the

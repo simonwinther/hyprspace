@@ -49,7 +49,8 @@ namespace hyprspace {
         std::string iconNameForClass(const std::string& cls) const;
 
         // Look up a human app name for a window class. Empty if unknown.
-        std::string appNameForClass(const std::string& cls) const;
+        std::string          appNameForClass(const std::string& cls) const;
+        const SDesktopEntry* entryForClass(const std::string& cls) const;
 
         // Resolve an icon name (or absolute path) to a file on disk.
         // `preferredSize` steers which themed size is picked.

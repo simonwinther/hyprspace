@@ -120,6 +120,38 @@ namespace hyprspace {
         return store(key, renderText(text, font, toRgba(color), maxWidth, scale));
     }
 
+    SP<Render::ITexture> CTextureCache::paragraph(const std::string& str, const std::string& font, const CHyprColor& color, int width, int height, double scale) {
+        if (str.empty())
+            return nullptr;
+        const auto text = boundedText(str);
+        const auto key  = std::format("p|{}|{}|{:08x}|{}|{}|{:.3f}", text, boundedText(font), color.getAsHex(), width, height, scale);
+        if (auto it = m_cache.find(key); it != m_cache.end()) {
+            it->second.used = ++m_sequence;
+            ++resourceCounts.hits;
+            return it->second.texture;
+        }
+        ++resourceCounts.misses;
+        if (std::chrono::steady_clock::now() < m_retryAfter)
+            return nullptr;
+        return store(key, renderParagraph(text, font, toRgba(color), width, height, scale));
+    }
+
+    SP<Render::ITexture> CTextureCache::inputText(const std::string& str, const std::string& font, const CHyprColor& color, int width, double offset, double scale,
+                                                  size_t selectionStart, size_t selectionEnd, const CHyprColor& selectionColor) {
+        if (str.empty())
+            return nullptr;
+        const auto text = boundedText(str);
+        const auto key  = std::format("i|{}|{}|{:08x}|{}|{:.3f}|{:.3f}|{}|{}|{:08x}", text, boundedText(font), color.getAsHex(), width, offset, scale, selectionStart,
+                                      selectionEnd, selectionColor.getAsHex());
+        if (auto it = m_cache.find(key); it != m_cache.end()) {
+            it->second.used = ++m_sequence;
+            ++resourceCounts.hits;
+            return it->second.texture;
+        }
+        ++resourceCounts.misses;
+        return store(key, renderInputText(text, font, toRgba(color), width, offset, scale, selectionStart, selectionEnd, toRgba(selectionColor)));
+    }
+
     namespace {
         struct SDesktopDbState {
             std::optional<CDesktopDb> db;
@@ -175,6 +207,13 @@ namespace hyprspace {
         } catch (...) {
             state.db.emplace();
         }
+    }
+
+    SAppIdentity appIdentity(const std::string& windowClass) {
+        if (const auto* db = desktopDbIfReady())
+            if (const auto* entry = db->entryForClass(windowClass))
+                return {entry->id, entry->name};
+        return {normaliseClass(windowClass), windowClass};
     }
 
     void finishIconDiscovery() {

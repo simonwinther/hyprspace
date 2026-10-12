@@ -35,6 +35,9 @@ namespace hyprspace {
         // glyphs are rasterised at native resolution. The returned texture's
         // m_size is therefore in physical px.
         SP<Render::ITexture> text(const std::string& str, const std::string& font, const CHyprColor& color, int maxWidth = 0, double scale = 1.0);
+        SP<Render::ITexture> paragraph(const std::string& str, const std::string& font, const CHyprColor& color, int width, int height, double scale = 1.0);
+        SP<Render::ITexture> inputText(const std::string& str, const std::string& font, const CHyprColor& color, int width, double offset, double scale,
+                                       size_t selectionStart, size_t selectionEnd, const CHyprColor& selectionColor);
 
         // `size` is in physical px.
         SIconTexture icon(const std::string& windowClass, int size);
@@ -59,6 +62,11 @@ namespace hyprspace {
     };
 
     CTextureCache& textures();
+
+    struct SAppIdentity {
+        std::string id, name;
+    };
+    SAppIdentity appIdentity(const std::string& windowClass);
 
     // Desktop files and icon themes are filesystem work, so prepare them away
     // from Hyprland's compositor thread. `finishIconDiscovery` joins that work

@@ -146,14 +146,39 @@ namespace hyprspace {
         bool pan(const SBoxF& footprint, double dx, double dy) {
             if (!std::isfinite(dx) || !std::isfinite(dy) || !canPan(footprint, 1))
                 return false;
+            return panTo(footprint, std::clamp(m_goal.x + dx, (footprint.x + footprint.w) * (1 - m_goal.scale), footprint.x * (1 - m_goal.scale)),
+                         std::clamp(m_goal.y + dy, (footprint.y + footprint.h) * (1 - m_goal.scale), footprint.y * (1 - m_goal.scale)));
+        }
+
+        bool panTo(const SBoxF& footprint, double x, double y) {
+            if (!panGoalTo(footprint, x, y))
+                return false;
+            m_from      = m_goal;
+            m_direction = 0;
+            return true;
+        }
+
+        // Follow steers the destination while the zoom animation retains its
+        // displayed starting point, scale and direction for wheel reversals.
+        bool panGoalTo(const SBoxF& footprint, double x, double y) {
+            if (!std::isfinite(x) || !std::isfinite(y) || !canPan(footprint, 1))
+                return false;
             auto next = m_goal;
-            next.x    = std::clamp(next.x + dx, (footprint.x + footprint.w) * (1 - next.scale), footprint.x * (1 - next.scale));
-            next.y    = std::clamp(next.y + dy, (footprint.y + footprint.h) * (1 - next.scale), footprint.y * (1 - next.scale));
+            next.x    = std::clamp(x, (footprint.x + footprint.w) * (1 - next.scale), footprint.x * (1 - next.scale));
+            next.y    = std::clamp(y, (footprint.y + footprint.h) * (1 - next.scale), footprint.y * (1 - next.scale));
             if (next == m_goal)
                 return false;
-            m_from = m_goal = next;
-            m_direction     = 0;
+            m_goal = next;
             return true;
+        }
+
+        std::optional<SOverviewCamera> followTarget(const SBoxF& footprint, double pointerX, double pointerY) const {
+            if (!std::isfinite(pointerX) || !std::isfinite(pointerY) || !canPan(footprint, 1))
+                return std::nullopt;
+            // The cursor's normalized position chooses the same position in
+            // the available pan range. Moving right exposes content to the right.
+            return SOverviewCamera{m_goal.scale, std::clamp(pointerX, footprint.x, footprint.x + footprint.w) * (1 - m_goal.scale),
+                                   std::clamp(pointerY, footprint.y, footprint.y + footprint.h) * (1 - m_goal.scale)};
         }
 
       private:
@@ -263,6 +288,81 @@ namespace hyprspace {
       private:
         SOverviewCamera m_from, m_goal;
         int             m_direction = 0;
+    };
+
+    // The session owner retains the preference across openings. Both inspection
+    // views share intent; suspension clears movement and requires fresh motion.
+    class CInspectionFollow {
+      public:
+        using Clock = std::chrono::steady_clock;
+
+        explicit CInspectionFollow(bool enabled = false) : m_enabled(enabled) {}
+
+        bool enabled() const {
+            return m_enabled;
+        }
+
+        bool settling() const {
+            return m_target.has_value();
+        }
+
+        void suspend(double pointerX, double pointerY) {
+            m_anchor = std::isfinite(pointerX) && std::isfinite(pointerY) ? std::optional{SFollowPoint{pointerX, pointerY}} : std::nullopt;
+            m_target.reset();
+            m_lastFrame.reset();
+        }
+
+        void toggle(double pointerX, double pointerY) {
+            m_enabled = !m_enabled;
+            suspend(pointerX, pointerY);
+        }
+
+        bool motion(double pointerX, double pointerY, bool eligible, Clock::time_point now) {
+            if (!m_enabled || !eligible || !std::isfinite(pointerX) || !std::isfinite(pointerY)) {
+                suspend(pointerX, pointerY);
+                return false;
+            }
+            if (!m_anchor) {
+                suspend(pointerX, pointerY);
+                return false;
+            }
+            if (std::hypot(pointerX - m_anchor->x, pointerY - m_anchor->y) < 4)
+                return false;
+            m_anchor = SFollowPoint{pointerX, pointerY};
+            m_target = m_anchor;
+            if (!m_lastFrame)
+                m_lastFrame = now;
+            return true;
+        }
+
+        bool advance(CInspectionZoom& lens, const SBoxF& footprint, Clock::time_point now) {
+            if (!m_target || !m_lastFrame)
+                return false;
+            const auto destination = lens.followTarget(footprint, m_target->x, m_target->y);
+            if (!destination) {
+                suspend(m_anchor->x, m_anchor->y);
+                return false;
+            }
+            if (now < *m_lastFrame)
+                return false;
+            const double elapsed = std::min(std::chrono::duration<double>(now - *m_lastFrame).count(), 0.05);
+            m_lastFrame          = now;
+            auto next            = interpolateOverviewCamera(lens.goal(), *destination, -std::expm1(-elapsed / 0.12));
+            if (std::max(std::abs(next.x - destination->x), std::abs(next.y - destination->y)) <= 0.25) {
+                next = *destination;
+                m_target.reset();
+                m_lastFrame.reset();
+            }
+            return lens.panGoalTo(footprint, next.x, next.y);
+        }
+
+      private:
+        struct SFollowPoint {
+            double x, y;
+        };
+        bool                             m_enabled = false;
+        std::optional<SFollowPoint>      m_anchor, m_target;
+        std::optional<Clock::time_point> m_lastFrame;
     };
 
     class CScrollAccumulator {

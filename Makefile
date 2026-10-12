@@ -16,6 +16,8 @@ SRCS := \
 	src/Focus.cpp \
 	src/Overview.cpp \
 	src/OverviewSession.cpp \
+	src/WindowBoard.cpp \
+	src/HelpOverlay.cpp \
 	src/CompositorHooks.cpp \
 	src/Launch.cpp \
 	src/PassElements.cpp \

@@ -38,7 +38,12 @@ int main(void) {
     struct zwlr_virtual_pointer_v1 *pointer = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(manager, NULL);
     struct zwp_virtual_keyboard_v1 *keyboard = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(keyboard_manager, seat);
     struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-    struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, NULL, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    const struct xkb_rule_names names = {
+        .layout = getenv("HS_KEYBOARD_LAYOUT"),
+        .variant = getenv("HS_KEYBOARD_VARIANT"),
+    };
+    struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    if (!keymap) return 4;
     struct xkb_state *keyboard_state = xkb_state_new(keymap);
     char *text = xkb_keymap_get_as_string(keymap, XKB_KEYMAP_FORMAT_TEXT_V1);
     size_t size = strlen(text) + 1;
