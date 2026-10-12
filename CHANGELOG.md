@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.6.0](https://github.com/simonwinther/hyprspace/compare/v1.5.0...v1.6.0) (2026-10-12)
+
+- Add a global window board with app, workspace and monitor grouping, recent ordering, and Unicode search.
+- Add persistent cursor-follow in workspace and window inspection. Motion responds during zoom animations, including wheel bursts and held zoom keys, and works at corners and over Waybar.
+- Add searchable `?` help with `/`, vim navigation, and configured shortcut labels.
+- Fix window-board scrolling, search editing, fractional-scale outlines, and selection during rapid overview toggles.
+
+Supports Hyprland 0.56.2 (`efb50993780079460b0cbed1363e2166a2de1d9f`).
+
 ## [1.5.0](https://github.com/simonwinther/hyprspace/compare/v1.4.0...v1.5.0) (2026-10-09)
 
 - Move regular workspaces between monitors with Super+Alt+left-drag.
