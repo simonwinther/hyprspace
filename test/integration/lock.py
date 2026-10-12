@@ -19,6 +19,7 @@ def lifecycle(s, wait_for):
         assert not state["live"] and not state["views"], state
         assert not state["keyboard_owned"] and not state["cursor_owned"], state
         assert not state["dragging"]
+        assert not state["help"]["active"]
         assert all(window["alpha"] == 1 for window in state["windows"])
 
     def input_reaches_locker(process):
@@ -33,7 +34,7 @@ def lifecycle(s, wait_for):
         assert after["keys"] == before["keys"] + 2, (before, after)
         assert after["buttons"] == before["buttons"] + 2, (before, after)
 
-    for initial in (None, "overview", "switch"):
+    for initial in (None, "overview", "switch", "help"):
         s.setup("dwindle", 0, 0)
         locker = s.spawn(
             [str(s.artifact("test-lock"))],
@@ -45,8 +46,13 @@ def lifecycle(s, wait_for):
         if initial:
             if initial == "switch":
                 s.key(56, 1)
-            s.ctl("dispatch", f"hyprspace:{initial}")
+            s.ctl("dispatch", f"hyprspace:{'overview' if initial == 'help' else initial}")
             wait_for(lambda: s.status()["cursor_owned"])
+            if initial == "help":
+                s.ctl("dispatch", "hyprspace:help", "on")
+                s.run("wtype", "/keybinds")
+                assert s.status()["help"]["search_focused"]
+                s.key(33, 1)
             if initial == "overview":
                 s.ctl("keyword", "workspace", f"21,monitor:{s.names[0]},persistent:true,layout:dwindle")
                 wait_for(lambda: (s.names[0], 21) in tiles(s))
@@ -62,6 +68,8 @@ def lifecycle(s, wait_for):
         if initial == "overview":
             s.key(Z, 0)
             assert not s.status()["zoom"]["held"]
+        if initial == "help":
+            s.key(33, 0)
         released()
         input_reaches_locker(locker)
         if initial is None:

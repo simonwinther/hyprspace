@@ -95,7 +95,7 @@ namespace hyprspace {
         cairo_surface_destroy(tmp);
     }
 
-    SImage renderText(const std::string& text, const std::string& font, const SRgba& color, int maxWidth, double scale) {
+    static SImage renderLayout(const std::string& text, const std::string& font, const SRgba& color, int maxWidth, double scale, int maxHeight = 0) {
         if (text.empty() || !std::isfinite(scale) || scale <= 0)
             return {};
 
@@ -105,7 +105,14 @@ namespace hyprspace {
             cairo_surface_t* tmp = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
             cairo_t*         cr  = cairo_create(tmp);
             layout               = makeLayout(cr, text, font, maxWidth, scale);
+            if (maxHeight > 0) {
+                pango_layout_set_single_paragraph_mode(layout, FALSE);
+                pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+                pango_layout_set_height(layout, static_cast<int>(std::min(maxHeight * scale, static_cast<double>(MAX_RASTER_DIMENSION))) * PANGO_SCALE);
+            }
             pango_layout_get_pixel_size(layout, &w, &h);
+            if (maxHeight > 0)
+                h = std::min(h, static_cast<int>(std::min(maxHeight * scale, static_cast<double>(MAX_RASTER_DIMENSION))));
             cairo_destroy(cr);
             cairo_surface_destroy(tmp);
         }
@@ -134,6 +141,16 @@ namespace hyprspace {
         SImage out = fromSurface(surf);
         cairo_surface_destroy(surf);
         return out;
+    }
+
+    SImage renderText(const std::string& text, const std::string& font, const SRgba& color, int maxWidth, double scale) {
+        return renderLayout(text, font, color, maxWidth, scale);
+    }
+
+    SImage renderParagraph(const std::string& text, const std::string& font, const SRgba& color, int width, int height, double scale) {
+        if (width <= 0 || height <= 0)
+            return {};
+        return renderLayout(text, font, color, width, scale, height);
     }
 
     STextCursor measureTextCursor(const std::string& text, const std::string& font, size_t cursor, double scale) {

@@ -38,6 +38,9 @@ namespace hyprspace::config {
     xkb_keysym_t overviewZoomKey();
     xkb_keysym_t overviewEmptyWorkspaceKey();
     xkb_keysym_t overviewWindowViewKey();
+    xkb_keysym_t overviewFollowKey();
+    xkb_keysym_t overviewHelpKey();
+    bool         overviewShowFollowHint();
     uint32_t     overviewWorkspaceDragModifiers();
     bool         overviewWheelZoom();
 

@@ -95,6 +95,9 @@ namespace hyprspace {
         void                           zoomStep(int direction, std::optional<Vector2D> pos = std::nullopt);
         void                           panKey(const Vector2D& delta);
         bool                           panAvailable(const Vector2D& pos) const;
+        bool                           inspectionSettled() const;
+        bool                           followAvailable(const Vector2D& pos) const;
+        bool                           followInspection(CInspectionFollow& follow, CInspectionFollow::Clock::time_point now);
         bool                           beginPan(const Vector2D& pos, bool keyboard);
         void                           endPan();
         bool                           needsBlur(PHLMONITOR monitor) const;

@@ -14,6 +14,7 @@
 namespace hyprspace {
     class COverview;
     class CWindowBoard;
+    class CHelpOverlay;
 
     struct SOverviewTarget {
         SWorkspaceIdentity workspace;
@@ -93,7 +94,13 @@ namespace hyprspace {
         CWindowBoard* windowBoard() const {
             return m_windowBoard.get();
         }
-        bool            windowViewActive() const;
+        bool          windowViewActive() const;
+        bool          helpActive() const;
+        CHelpOverlay* helpOverlay() const {
+            return m_help.get();
+        }
+        SDispatchResult help(const std::string& args = "");
+        void            closeHelp();
         SDispatchResult windowView(const std::string& args);
         void            commitWindowView();
         void            selectBoardTarget(std::optional<SOverviewTarget> target, bool pointer = false);
@@ -119,6 +126,17 @@ namespace hyprspace {
         void                    cancelZoom();
         bool                    zoomScroll(const SScrollInput& event, const Vector2D& pos);
         void                    zoomStep(int direction);
+        void                    toggleCursorFollow();
+        void                    pauseCursorFollow();
+        bool                    cursorFollowShortcutAvailable() const;
+        bool                    cursorFollowAvailableAt(const Vector2D& pos) const;
+        std::string             cursorFollowHint() const;
+        bool                    cursorFollowEnabled() const {
+            return m_cursorFollow.enabled();
+        }
+        bool cursorFollowSettling() const {
+            return m_cursorFollow.settling();
+        }
         void                    panKey(const Vector2D& delta);
         std::optional<uint64_t> panPress();
         void                    panRelease(uint64_t token);
@@ -176,6 +194,11 @@ namespace hyprspace {
         void                                     beginWorkspaceSettle(SWorkspaceDrag gesture, PHLMONITOR destination);
         void                                     syncSelection();
         void                                     updateZoom();
+        PHLMONITOR                               cursorFollowMonitor() const;
+        Vector2D                                 cursorFollowPoint() const;
+        bool                                     cursorFollowEligible() const;
+        void                                     cursorFollowMotion();
+        void                                     advanceCursorFollow(PHLMONITOR renderedMonitor);
         void                                     retargetSelection(COverview& view);
         void                                     cancelZoomEdge();
         bool                                     zoomEdgeEnabled(const COverview& view) const;
@@ -203,6 +226,8 @@ namespace hyprspace {
             PHLMONITORREF      monitor;
         };
         CZoomEdgeHover                                     m_zoomEdgeHover;
+        CInspectionFollow                                  m_cursorFollow;
+        std::unique_ptr<CHelpOverlay>                      m_help;
         std::unique_ptr<CWindowBoard>                      m_windowBoard;
         std::optional<SZoomEdgeIntent>                     m_zoomEdgeIntent;
         CZoomHoldState                                     m_zoomHolds;

@@ -60,6 +60,32 @@ or no window if the workspace is empty.
 
 ## Input and rendering
 
+`?` opens searchable help above the selected workspace or window-board output.
+The resolved keyboard character recognizes punctuation on layouts such as Danish.
+`/` focuses its UTF-8 search; Enter returns to result browsing, j/k select entries,
+and h/l select topics. Escape leaves search first, then closes help. Text editing
+uses the same bounded cursor/selection model and shaped Pango caret as window
+search. Search covers descriptions, settings, current keys and keyword aliases;
+the catalog refreshes when configuration or the follow preference changes.
+
+Help has its own input generation. Captured keys retain their releases across
+close/reopen, search-mode changes and foreground handoff, while old repeats
+cannot modify a new help session. Opening help suspends old overview holds,
+manual gestures, edge dwell and cursor-follow without changing selection or the
+saved preference. Existing zoom releases still finish normally. System bindings,
+locks, screenshot selectors and other foreground input keep their native routes.
+Caret timers stop on blur, dismissal and unload. Native pass elements draw the
+modal after the workspace/window view, inside usable output space; other covered
+outputs remain dimmed. Offset, rotated and fractional-scale outputs use logical
+bounds and native-resolution text. Smaller outputs use a compact layout.
+
+`overview:help_key` controls the shortcut. `hyprspace:help` and
+`hl.plugin.hyprspace.help()` accept `on`, `off`, `toggle` or no argument and require
+an open overview. Status exposes the help host, input generation, query/cursor,
+topic, selected entry, filtered controls and global panel/search/result bounds.
+`--only help` tests navigation, query editing, remapping, native foreground input,
+Danish punctuation, inspection suspension and display geometry.
+
 Both overlays render at `RENDER_POST_WINDOWS`. Hyprland draws top/overlay layers,
 their popups, notifications and the cursor afterward. Cursor ownership is scoped
 to overview input and restores the previous overrides on handoff and dismissal.
@@ -104,6 +130,16 @@ workspace around the pointer, bounded to 1–4 times its normal fit. Wheel input
 also acts during opening and the initial zoom transition. Horizontal-wheel and
 wheel-tilt panning retain their existing behavior. `overview:wheel_zoom = false`
 disables all extra magnification and panning controls and restores native scrolling.
+`overview:follow_key` selects the cursor-follow toggle key (default F; empty
+disables the shortcut), and `overview:show_follow_hint = false` hides its status
+without changing the saved preference. Navigation, modifier, system and
+inspection zoom/pan keys cannot replace the follow shortcut. Existing zoom,
+empty-workspace and window-view shortcuts take precedence when keys match.
+Magnified follow accepts motion across the full inspection output, including
+corners and reserved panel areas. It retains pointer ownership over ordinary
+Waybar surfaces while enabled, with native ownership restored when follow or
+inspection ends. Panel popups and other foreground surfaces still receive input.
+
 While Z is held, +/− (including =, Shift+plus and keypad add/subtract) changes
 the centered lens by 1.15 per step. Shift+arrows pans the viewport toward that
 direction by 40 logical pixels. Both repeat at the emitting keyboard's delay and
@@ -119,6 +155,24 @@ from an active grab. Releasing the button retains the view; releasing Z restores
 the grid. The grab owns mouse actions until release or cancellation, and leaves
 native window movement and the scrolling tape untouched. Super+right-button
 resize remains available outside the grab.
+
+F while Z is held enables or disables cursor-follow, initially disabled. The
+preference survives overview openings and is saved in the user's XDG state
+directory so plugin reloads and compositor restarts restore the same choice.
+Both workspace and G-view inspection map real pointer position to the bounded
+pan range during zoom and opening animations. Follow steers the lens destination
+without replacing the animation's starting camera or requested scale. Wheel and
+touchpad bursts retain pending motion, and held zoom keys allow simultaneous
+following. Motion below four logical pixels does not retarget;
+translation settles with a 120 ms time constant and stops within 0.25 logical
+pixels. Only the inspection's display output advances the camera. Manual pan
+input, button presses, gestures, target changes and foreground handoff discard
+pending movement without changing the preference; resuming requires fresh motion.
+Synthetic warps cannot arm follow. Hover refresh uses the displayed geometry
+without manufacturing pointer selection. Status exposes `cursor_follow_enabled`,
+`cursor_follow_hint` and `cursor_follow_settling` under `zoom`, plus the workspace
+hint's global bounds under each view's `cursor_follow_hint`. Settled reporting includes follow.
+
 The overview toggle commits the command selection using the same displayed
 destination close camera as Enter. It snapshots that camera before cancelling
 held inputs and closes every output together. Explicit off, close and Escape

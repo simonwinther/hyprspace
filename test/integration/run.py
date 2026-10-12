@@ -132,6 +132,7 @@ class Suite:
             ("XDG_CONFIG_HOME", "config"),
             ("XDG_CACHE_HOME", "cache"),
             ("XDG_DATA_HOME", "data"),
+            ("XDG_STATE_HOME", "state"),
         ):
             path = self.root / directory
             path.mkdir(exist_ok=True)
@@ -1687,6 +1688,7 @@ def main():
             "lifecycle",
             "overview",
             "window_views",
+            "help",
             "zoom",
             "transitions",
             "resize",
@@ -1851,6 +1853,10 @@ def main():
             import window_views
 
             window_views.run(suite, wait_for)
+        if args.only in ("all", "help"):
+            import help
+
+            help.run(suite, wait_for)
         if args.only in ("all", "zoom"):
             import zoom
 

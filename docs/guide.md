@@ -75,6 +75,7 @@ update.
 | `hyprspace:overview` | `on` | Open, never toggle closed |
 | `hyprspace:overview` | `off` | Dismiss if open, without selecting |
 | `hyprspace:emptyworkspace` | *(none)* | Select an empty workspace on the pointer's monitor; requires an open overview |
+| `hyprspace:help` | *(none)* / `toggle` / `on` / `off` | Toggle, open or close searchable help on the selected output; requires an open overview |
 | `hyprspace:switch` | *(none)* / `next` | Open the switcher, or step forward |
 | `hyprspace:switch` | `prev` / `backward` | Open the switcher, or step backward |
 | `hyprspace:close` | *(none)* | Dismiss whichever overlay is up, without selecting |
@@ -105,6 +106,8 @@ A session limited to one output starts on that output's active workspace.
 | `Z` + `+` / `−` (`=`, keypad + / −) | Magnify around the viewport center; hold to repeat |
 | `Z` + `Space` + pointer motion | Grab and pan magnified content, including one-finger touchpad motion |
 | `Z` + `Shift` + arrows | Pan the viewport toward that direction; hold to repeat |
+| `Z` + `F` | Enable or disable smooth cursor-follow; the choice is remembered |
+| `?` | Open searchable help above the current view |
 | `←` `↓` `↑` `→` | Move to the nearest tile in that direction |
 | `h/j/k/l` | Same, vim style |
 | `1` through `9`, `0` | Go to that workspace at once, no Enter needed (`0` = workspace 10) |
@@ -119,6 +122,32 @@ A session limited to one output starts on that output's active workspace.
 | Wheel / two-finger scroll | Pan the scrolling workspace under the pointer; other layouts step the workspace selection |
 | Edge arrows inside a scrolling tile | Reveal the next hidden column and keep the overview open |
 | + Empty workspace | Prepare an empty workspace on this output, or accept a Super-dragged window |
+
+Press **?** in the workspace overview or window board to open an on-the-fly
+guide. It shows the configured zoom, follow, window-board, empty-workspace and
+help keys, the workspace-drag modifiers, and the current follow preference.
+Native overview bindings are shown when available; Lua callback bindings remain
+under your Hyprland configuration.
+
+| Help control | Action |
+|---|---|
+| `/` | Search every topic; type `keybinds`, `follow`, `resize`, or another term |
+| `Enter` while searching | Finish editing and browse the results |
+| `j/k` or Up/Down | Choose an entry and read its explanation |
+| `h/l` or Left/Right | Choose a topic; clears the search |
+| Tab / Shift+Tab | Next / previous entry |
+| Home / End, Page Up / Page Down | First / last entry, or a page of entries |
+| Wheel or click | Browse entries or choose a topic |
+| Ctrl+A / Ctrl+U while searching | Select or clear the query |
+| `Esc` | Leave search first, then close help and return to the current view |
+
+The guide preserves the workspace or window selection. Zoom follow and manual
+inspection controls pause while it is open; releasing a held zoom key still
+returns to the previous view. Printable `?` stays ordinary text in a focused
+search field. `overview:help_key` accepts an XKB key name (`question` for `?`)
+or an empty value to disable the shortcut. Existing zoom, empty-workspace,
+window-board and follow keys take precedence if they share the help key.
+The dispatcher also has a Lua entry point, `hl.plugin.hyprspace.help()`.
 
 Hold **Super + Alt** and left-drag anywhere inside a regular workspace tile,
 including over window previews or from the enlarged zoom view. Once the motion
@@ -168,6 +197,7 @@ still opens first, and G returns to it.
 | Wheel, two-finger scroll, Page Up / Page Down | Scroll the window board |
 | Enter, S, Space or click | Focus the selected source window and close the overview |
 | Hold Z | Fit the selected window; the existing 1–4× zoom and pan controls apply |
+| Z + F | Enable or disable persistent cursor-follow |
 | Escape | Clear and leave search, return to workspaces, then dismiss |
 | N / middle-click | Return to workspaces and prepare an empty destination |
 | 1–9 / 0 | Return to workspaces and open that workspace |
@@ -197,6 +227,11 @@ Changing groups animates the cards, retains selection and scrolls rather than
 shrinking previews below their readable minimum. Titles and window membership
 update while the board is open. Losing its display output relocates the board
 to another covered output.
+
+Wheel and touchpad scrolling keep your position when titles or window membership
+change. Hovering a partially visible card selects it without scrolling; keyboard
+navigation reveals the selected card. Scrolling during a grouping animation moves
+the cards without interrupting their rearrangement.
 
 Recent order is captured when entering the board. Hovering and navigation do
 not reorder it. Group and order preferences survive G toggles during one open
@@ -292,6 +327,41 @@ content. Space is consumed while Z is held, including at the normal fit where
 there is nothing to pan. Release Space to retain the camera. **Z+Shift+arrows**
 pans the viewport toward that direction by 40 logical pixels per step, repeating
 while held. Unmodified arrows and Tab continue to browse workspaces.
+
+Press **F while Z is held** to toggle cursor-follow in either workspace zoom or
+G-view window inspection. Moving right reveals more content on the right;
+moving down reveals more below. Movement under four logical pixels is ignored,
+and larger movement gently steers the camera within the existing bounds. When
+you stop moving, the camera finishes settling. The **F · Follow enabled/disabled** hint
+shows the current mode. In workspace zoom it stays in the upper-left corner;
+G-view includes it in the inspection hints. Turning follow on waits for fresh mouse movement;
+turning it off stops follow at the displayed framing.
+
+Set `overview:follow_key` to another XKB key name, or an empty value to disable
+the shortcut. Set `overview:show_follow_hint = false` to hide the hint in both
+workspace and G-view inspection without changing your saved follow preference.
+
+Follow starts disabled until you enable it with F. Your choice lasts through
+Z releases, view changes, closing and reopening, plugin reloads and Hyprland
+restarts. Only pending camera movement resets; a new inspection waits for fresh
+mouse movement. The preference is saved in
+`$XDG_STATE_HOME/hyprspace/cursor-follow`, falling back to
+`~/.local/state/hyprspace/cursor-follow` under the
+[XDG state-directory rules](https://specifications.freedesktop.org/basedir/latest/).
+Missing or invalid saved state starts disabled. Follow only moves content above
+the normal held fit and works independently of selection's `follow_mouse`
+setting. Follow covers the whole inspection output, including its corners and
+the reserved Waybar area; moving beyond the fitted footprint reaches the pan
+bound, and moving inward steers it back. While magnified follow is active, the
+overview retains pointer ownership over ordinary Waybar surfaces. Disabling
+follow or releasing zoom restores native panel input. Menus and other foreground
+interfaces still receive input. Follow accepts motion during zoom and opening
+animations, including while a zoom key is repeating. Wheel bursts keep pending
+follow movement without changing the requested magnification. Manual panning,
+drags, foreground input and movement outside the inspection output pause follow;
+fresh movement resumes it afterward. Wheel and keyboard zoom retain their usual anchors. Zoom,
+empty-workspace and window-view shortcuts take precedence if they share the
+follow key. `overview:wheel_zoom = false` also disables cursor-follow.
 
 Hold the right mouse button while Z is held to grab and pan a magnified
 workspace. The picture follows the mouse, bounded to keep its normal fitted
@@ -478,6 +548,9 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:zoom_key` | string | `z` | Unmodified hold-to-zoom key; empty disables it. Use an XKB key name that does not conflict with overview navigation or system keys |
 | `overview:empty_workspace_key` | string | `n` | Unmodified key that selects an empty workspace on the pointer's monitor; empty disables it. Zoom takes precedence if both keys match |
 | `overview:window_view_key` | string | `g` | Toggle the global window board inside the overview; Shift cycles groups. Empty disables it. Zoom and empty-workspace keys take precedence |
+| `overview:follow_key` | string | `f` | Toggle persistent cursor-follow while the zoom key is held. Empty disables the shortcut; zoom, empty-workspace and window-view keys take precedence. Navigation, system, zoom and pan keys cannot be assigned |
+| `overview:show_follow_hint` | bool | `true` | Show the follow shortcut and enabled/disabled state while inspecting. Hiding it does not change the saved preference |
+| `overview:help_key` | string | `question` | Open searchable help (`?` by default). Empty disables it; existing overview shortcuts take precedence. Navigation, modifiers, system and inspection zoom keys cannot be assigned |
 | `overview:workspace_drag_modifiers` | string | `SUPER ALT` | Exact modifiers for left-dragging a regular workspace to another monitor; requires Super plus Alt, Ctrl or Shift. Empty disables it |
 | `overview:wheel_zoom` | bool | `true` | Extra wheel, vertical touchpad and keyboard magnification/panning while the zoom key is held; bounds are 1–4 times the normal held fit. Disable to retain previous scrolling behavior |
 | `overview:band_gap` | int | `28` | Deprecated compatibility key; ignored. `overview:gap` controls both axes |
@@ -603,13 +676,15 @@ workspace IDs, hint bounds in global logical pixels, and pending dwell state.
 The `zoom` object includes `extra_factor`, `extra_goal`, `inspection_ready`,
 `inspection_transitioning`, and `camera_settled` for wheel magnification and its
 input/animation state. Input readiness is immediate; `camera_settled` waits for
-opening, fit and inspection animations. Extra factors stay within 1–4 while the
-initial fit is still moving. Release clears the inspection transform before the
+opening, fit and inspection animations, including cursor-follow settling. Extra
+factors stay within 1–4 while the initial fit is still moving. Release clears the inspection transform before the
 base camera returns to the grid, so extra factors read 1 during that return.
 The zoom object also reports `pan_held`, `panning`, and `pan_available` for an
 armed grab, active camera movement, and an eligible displayed lens. The top-level
 `overview_cursor` reports the current cursor override, including `grab` and
 `grabbing`; foreground ownership or an external override can replace it.
+`zoom.cursor_follow_enabled` reports the remembered preference;
+`zoom.cursor_follow_settling` reports pending follow movement in either zoom view.
 
 ### Animations
 

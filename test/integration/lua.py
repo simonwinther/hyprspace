@@ -237,6 +237,22 @@ def lifecycle(s, wait_for):
         s.ctl("eval", 'local result = hl.plugin.hyprspace.windowview(); assert(not result.ok and result.error:find("overview"))')
         s.check(f"Lua {phase} windowview exposes every grouping, preserves native selection and rejects inactive calls")
 
+    def help_overlay(phase):
+        prepare(True)
+        selected = s.status()["target"]
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.help("bad"); assert(not result.ok)')
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.help("on"); assert(result.ok, result.error)')
+        wait_for(lambda: s.status()["help"]["active"])
+        s.run("wtype", "/keybinds")
+        assert s.status()["help"]["selected_id"] == "bindings"
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.help("on"); assert(result.ok, result.error)')
+        assert s.status()["help"]["query"] == "keybinds"
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.help("off"); assert(result.ok, result.error)')
+        assert not s.status()["help"]["active"] and s.status()["target"] == selected
+        s.close()
+        s.ctl("eval", 'local result = hl.plugin.hyprspace.help(); assert(not result.ok and result.error:find("overview"))')
+        s.check(f"Lua {phase} help opens searchable controls, preserves selection and rejects invalid or inactive calls")
+
     try:
         for phase in ("startup", "reload-1", "reload-2"):
             if phase != "startup":
@@ -246,6 +262,7 @@ def lifecycle(s, wait_for):
             empty_workspace(phase)
             toggle_selection(phase)
             window_views(phase)
+            help_overlay(phase)
         # Invalid configurations must not poison the next valid Lua state.
         reload("local invalid = )\n", error="syntax")
         reload()
@@ -254,6 +271,7 @@ def lifecycle(s, wait_for):
         empty_workspace("syntax-recovery")
         toggle_selection("syntax-recovery")
         window_views("syntax-recovery")
+        help_overlay("syntax-recovery")
         reload('error("hyprspace-test-runtime")\n', error="runtime")
         reload()
         route("runtime-recovery", "workspace")
@@ -261,6 +279,7 @@ def lifecycle(s, wait_for):
         empty_workspace("runtime-recovery")
         toggle_selection("runtime-recovery")
         window_views("runtime-recovery")
+        help_overlay("runtime-recovery")
         s.close()
         count = s.reload_count()
         s.config.write_text(s.config_text(plugin=False))

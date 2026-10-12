@@ -147,6 +147,7 @@ namespace hyprspace {
                 leave();
                 return;
             }
+            m_session.pauseCursorFollow();
             m_dirty = true;
         }
         const auto   mon      = monitor();
@@ -156,8 +157,10 @@ namespace hyprspace {
         const double padding = std::min<double>(config::overviewPadding(), std::min(usable.w, usable.h) * 0.08);
         const SBoxF  viewport{usable.x + padding, usable.y + padding + 132, std::max(1.0, usable.w - padding * 2), std::max(1.0, usable.h - padding * 2 - 166)};
         const double gap = std::clamp<double>(config::overviewGap(), 8, 32);
-        if (m_usable != usable || m_viewport != viewport || m_gap != gap)
+        if (m_usable != usable || m_viewport != viewport || m_gap != gap) {
+            m_session.pauseCursorFollow();
             m_dirty = true;
+        }
         m_usable   = usable;
         m_viewport = viewport;
         m_gap      = gap;
@@ -188,12 +191,11 @@ namespace hyprspace {
         std::vector<SWindowViewInput> input;
         for (const auto& candidate : fresh)
             input.push_back(candidate.input);
-        m_items = std::move(fresh);
-        if (m_input != input) {
+        m_items                 = std::move(fresh);
+        const bool inputChanged = m_input != input;
+        if (inputChanged)
             m_input = std::move(input);
-            m_dirty = true;
-        }
-        if (m_dirty)
+        if (m_dirty || inputChanged)
             rebuild();
         if (const auto chosen = selectedTarget()) {
             const auto previous = m_session.selection.command();
@@ -209,27 +211,42 @@ namespace hyprspace {
     void CWindowBoard::rebuild() {
         const auto                          oldSelected = std::ranges::find(m_layout.cards, m_selected, &SWindowViewCard::key);
         const size_t                        ordinal     = oldSelected == m_layout.cards.end() ? 0 : oldSelected - m_layout.cards.begin();
+        const auto                          selected    = m_selected;
+        auto                                layout      = layoutWindowViews(m_input, groupWindowViews(m_input, m_grouping, m_recent, query()), m_viewport, m_gap);
+        const bool                          changed     = layout != m_layout;
         std::unordered_map<uint64_t, SBoxF> from;
-        for (const auto& card : m_layout.cards)
-            from[card.key] = gridBox(card);
-        m_from   = std::move(from);
-        m_layout = layoutWindowViews(m_input, groupWindowViews(m_input, m_grouping, m_recent, query()), m_viewport, m_gap);
+        if (changed)
+            for (const auto& card : m_layout.cards)
+                from[card.key] = gridBox(card);
+        m_layout = std::move(layout);
         if (std::ranges::find(m_layout.cards, m_selected, &SWindowViewCard::key) == m_layout.cards.end())
             m_selected = m_layout.cards.empty() ? 0 : m_layout.cards[std::min(ordinal, m_layout.cards.size() - 1)].key;
         m_scroll = std::clamp(m_scroll, 0.0, std::max(0.0, m_layout.height - m_viewport.h));
-        ensureVisible();
-        m_reflow->setValueAndWarp(0.F);
-        *m_reflow = 1.F;
-        m_dirty   = false;
+        // Passive title/membership updates must not undo manual scrolling.
+        // Explicit grouping/search/navigation and replacement selection reveal
+        // the chosen card; unchanged geometry keeps its current animation.
+        if (m_dirty || selected != m_selected)
+            ensureVisible();
+        if (changed) {
+            m_session.pauseCursorFollow();
+            for (auto& [key, box] : from)
+                box.y += m_scroll;
+            m_from = std::move(from);
+            m_reflow->setValueAndWarp(0.F);
+            *m_reflow = 1.F;
+        }
+        m_dirty = false;
         m_session.selectBoardTarget(selectedTarget());
         m_session.damage();
     }
 
     SBoxF CWindowBoard::gridBox(const SWindowViewCard& card) const {
         auto box = card.box;
-        box.y -= m_scroll;
         if (const auto found = m_from.find(card.key); found != m_from.end())
             box = interpolateBox(found->second, box, std::clamp(m_reflow->value(), 0.F, 1.F));
+        // Apply scrolling after reflow so wheel/finger input moves every card
+        // immediately without snapping an in-flight grouping animation.
+        box.y -= m_scroll;
         return box;
     }
 
@@ -347,12 +364,14 @@ namespace hyprspace {
         if (!key || !item(key))
             return;
         if (m_selected != key) {
+            m_session.pauseCursorFollow();
             m_selected = key;
             m_lens.reset();
             m_lensProgress->setValueAndWarp(1.F);
             endPan();
         }
-        ensureVisible();
+        if (!pointer)
+            ensureVisible();
         m_session.selectBoardTarget(selectedTarget(), pointer);
         m_session.damage();
     }
@@ -592,7 +611,7 @@ namespace hyprspace {
             m_hovered = hovered;
             m_session.damage();
         }
-        if (userMotion && hovered && config::followMouse() && !m_inspecting)
+        if (userMotion && delta != Vector2D{} && hovered && config::followMouse() && !m_inspecting)
             select(hovered, true);
     }
 
@@ -603,8 +622,7 @@ namespace hyprspace {
         if (next == m_scroll)
             return;
         m_scroll = next;
-        m_from.clear();
-        m_reflow->setValueAndWarp(1.F);
+        pointer(m_pointer, false);
         m_session.damage();
     }
 
@@ -628,6 +646,7 @@ namespace hyprspace {
     bool CWindowBoard::beginInspection() {
         if (!selectedTarget() || m_searchFocused)
             return false;
+        m_session.pauseCursorFollow();
         m_inspecting = true;
         m_lens.reset();
         m_lensProgress->setValueAndWarp(1.F);
@@ -637,6 +656,7 @@ namespace hyprspace {
     }
 
     void CWindowBoard::endInspection() {
+        m_session.pauseCursorFollow();
         m_inspecting = false;
         endPan();
         *m_inspectionMix = 0.F;
@@ -661,6 +681,7 @@ namespace hyprspace {
     void CWindowBoard::panKey(const Vector2D& delta) {
         if (!m_inspecting)
             return;
+        m_session.pauseCursorFollow();
         m_lens.freeze(m_lensProgress->value());
         m_lensProgress->setValueAndWarp(1.F);
         if (m_lens.pan(inspectionFit(), delta.x, delta.y))
@@ -673,9 +694,25 @@ namespace hyprspace {
                m_lens.canPan(inspectionFit(), m_lensProgress->value());
     }
 
+    bool CWindowBoard::inspectionSettled() const {
+        return m_inspecting && !m_openness->isBeingAnimated() && !m_reflow->isBeingAnimated() && !m_inspectionMix->isBeingAnimated() &&
+               !m_lensProgress->isBeingAnimated() && m_openness->value() >= 0.99F && m_inspectionMix->value() >= 0.99F;
+    }
+
+    bool CWindowBoard::followAvailable(const Vector2D& pos) const {
+        const auto mon = monitor();
+        return m_inspecting && mon && SBoxF{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y}.contains(pos.x, pos.y) &&
+               m_lens.canPan(inspectionFit(), 1);
+    }
+
+    bool CWindowBoard::followInspection(CInspectionFollow& follow, CInspectionFollow::Clock::time_point now) {
+        return follow.advance(m_lens, inspectionFit(), now);
+    }
+
     bool CWindowBoard::beginPan(const Vector2D& pos, bool keyboard) {
         if (!panAvailable(pos) || !m_lens.beginPan(inspectionFit(), m_lensProgress->value()))
             return false;
+        m_session.pauseCursorFollow();
         m_lensProgress->setValueAndWarp(1.F);
         m_keyboardPan = keyboard;
         m_mousePan    = !keyboard;
@@ -970,7 +1007,9 @@ namespace hyprspace {
             if (!query().empty())
                 text("Escape clears the search", {m_viewport.x, m_viewport.cy() + 20, m_viewport.w, 28}, fade(ink, 0.6F), opacity, true);
         }
-        const auto hints = m_inspecting ? std::format("Release {} to return · Wheel / + − zoom · Space or right-drag to pan", zoomKey)
+        const auto followLabel = m_session.cursorFollowHint();
+        const auto followHint = followLabel.empty() ? "" : followLabel + " · ";
+        const auto hints = m_inspecting ? std::format("Release {} to return · {}Wheel / + − zoom · Space or right-drag to pan", zoomKey, followHint)
                                         : (viewKey.empty() ? "" : std::format("{}  Workspaces    Shift+{}  Group    ", viewKey, viewKey)) + "/  Search    R  Recent    " +
                                               (zoomKey.empty() ? "" : std::format("Hold {}  Inspect    ", zoomKey)) + "Enter  Open";
         text(hints, {m_viewport.x, m_viewport.y + m_viewport.h + 8, m_viewport.w, 26}, fade(ink, 0.65F), opacity, true);

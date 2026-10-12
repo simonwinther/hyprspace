@@ -124,16 +124,19 @@ namespace hyprspace {
     struct SWindowViewCard {
         uint64_t key;
         SBoxF    box;
+        bool     operator==(const SWindowViewCard&) const = default;
     };
     struct SWindowViewHeading {
         std::string label;
         size_t      count;
         SBoxF       box;
+        bool        operator==(const SWindowViewHeading&) const = default;
     };
     struct SWindowViewLayout {
         std::vector<SWindowViewCard>    cards;
         std::vector<SWindowViewHeading> headings;
-        double                          height = 0;
+        double                          height                                     = 0;
+        bool                            operator==(const SWindowViewLayout&) const = default;
     };
 
     // Fixed card proportions keep scanning and navigation predictable. Each

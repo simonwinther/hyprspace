@@ -40,6 +40,7 @@ namespace hyprspace {
     // `scale` is the output's device scale: the glyphs are rasterised that much
     // larger so text stays sharp on HiDPI monitors. maxWidth stays logical.
     SImage renderText(const std::string& text, const std::string& font, const SRgba& color, int maxWidth = 0, double scale = 1.0);
+    SImage renderParagraph(const std::string& text, const std::string& font, const SRgba& color, int width, int height, double scale = 1.0);
 
     // Measure without rasterising.
     void measureText(const std::string& text, const std::string& font, int& outW, int& outH, double scale = 1.0);

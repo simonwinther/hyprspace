@@ -41,6 +41,9 @@ namespace hyprspace::config {
             SP<Config::Values::CStringValue> overviewZoomKey;
             SP<Config::Values::CStringValue> overviewEmptyWorkspaceKey;
             SP<Config::Values::CStringValue> overviewWindowViewKey;
+            SP<Config::Values::CStringValue> overviewFollowKey;
+            SP<Config::Values::CStringValue> overviewHelpKey;
+            SP<Config::Values::CBoolValue>   overviewShowFollowHint;
             SP<Config::Values::CStringValue> overviewWorkspaceDragModifiers;
             SP<Config::Values::CBoolValue>   overviewWheelZoom;
             SP<Config::Values::CColorValue>  overviewFullscreenBorder;
@@ -152,6 +155,13 @@ namespace hyprspace::config {
         g_values.overviewWindowViewKey =
             reg<CStringValue>("plugin:hyprspace:overview:window_view_key", "unmodified XKB key to toggle the global window board; empty disables", "g",
                               SStringValueOptions{.validator = hooks::validateWindowViewKey});
+        g_values.overviewFollowKey =
+            reg<CStringValue>("plugin:hyprspace:overview:follow_key", "unmodified XKB key to toggle persistent cursor-follow while inspecting; empty disables", "f",
+                              SStringValueOptions{.validator = hooks::validateFollowKey});
+        g_values.overviewShowFollowHint =
+            reg<CBoolValue>("plugin:hyprspace:overview:show_follow_hint", "show the cursor-follow shortcut and mode while inspecting", true);
+        g_values.overviewHelpKey = reg<CStringValue>("plugin:hyprspace:overview:help_key", "XKB key that opens searchable help; empty disables", "question",
+                                                     SStringValueOptions{.validator = hooks::validateHelpKey});
         g_values.overviewWorkspaceDragModifiers =
             reg<CStringValue>("plugin:hyprspace:overview:workspace_drag_modifiers", "exact modifiers for left-dragging a workspace to another monitor; empty disables",
                               "SUPER ALT", SStringValueOptions{.validator = validateWorkspaceDragModifiers});
@@ -268,6 +278,23 @@ namespace hyprspace::config {
     uint32_t overviewWorkspaceDragModifiers() {
         const auto name = g_values.overviewWorkspaceDragModifiers ? g_values.overviewWorkspaceDragModifiers->value() : "SUPER ALT";
         return workspaceDragModifiers(name).value_or(0);
+    }
+    xkb_keysym_t overviewFollowKey() {
+        const auto name = g_values.overviewFollowKey ? g_values.overviewFollowKey->value() : "f";
+        if (name.empty() || !hooks::validateFollowKey(name))
+            return XKB_KEY_NoSymbol;
+        const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+        return sym == overviewZoomKey() || sym == overviewEmptyWorkspaceKey() || sym == overviewWindowViewKey() ? XKB_KEY_NoSymbol : sym;
+    }
+    bool overviewShowFollowHint() {
+        return g_values.overviewShowFollowHint ? g_values.overviewShowFollowHint->value() : true;
+    }
+    xkb_keysym_t overviewHelpKey() {
+        const auto name = g_values.overviewHelpKey ? g_values.overviewHelpKey->value() : "question";
+        if (name.empty() || !hooks::validateHelpKey(name))
+            return XKB_KEY_NoSymbol;
+        const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+        return sym == overviewZoomKey() || sym == overviewEmptyWorkspaceKey() || sym == overviewWindowViewKey() || sym == overviewFollowKey() ? XKB_KEY_NoSymbol : sym;
     }
     bool overviewWheelZoom() {
         return g_values.overviewWheelZoom ? g_values.overviewWheelZoom->value() : true;

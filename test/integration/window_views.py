@@ -4,9 +4,9 @@ import json
 import subprocess
 import time
 
-from zoom import center, reply
+from zoom import assert_follow_framing, center, follow_corners, follow_during_zoom, inspection, relative_to, reply, same_geometry
 
-G, SHIFT, Z, SPACE, PLUS = 34, 42, 44, 57, 13
+G, F, SHIFT, Z, SPACE, PLUS = 34, 33, 42, 44, 57, 13
 
 
 def board(s):
@@ -33,6 +33,96 @@ def placement(s):
 def search(s, text):
     s.run("wtype", "-k", "slash")
     s.run("wtype", text)
+
+
+def scrolling(s, wait_for):
+    fixture = s.artifact("test-overview.so")
+    s.ctl("plugin", "load", str(fixture))
+    try:
+        scrolling_cases(s, wait_for)
+    finally:
+        s.close()
+        s.ctl("plugin", "unload", str(fixture))
+
+
+def scrolling_cases(s, wait_for):
+    s.setup("dwindle", 0, 1)
+    title_file = s.root / "scrolling-title"
+    titles = [f"hs-scroll-{i}" for i in range(21)]
+    s.spawn(["env", "HS_APP_ID=hyprspace-scroll", f"HS_TITLE_FILE={title_file}",
+             "python3", str(s.client), *titles])
+    wait_for(lambda: len(s.windows()) == 24)
+    s.ctl("keyword", "plugin:hyprspace:follow_mouse", "true")
+    s.ctl("keyword", "input:touchpad:scroll_factor", "1")
+    s.ctl("keyword", "input:scroll_factor", "1")
+    for mode in ("flat", "app", "workspace", "monitor"):
+        opened(s, wait_for, mode)
+        state = board(s)
+        host = next(m for m in s.data("monitors") if m["name"] == state["monitor"])
+        viewport = state["viewport"]
+        s.move((host["x"] + viewport["x"] + viewport["w"] / 2,
+                host["y"] + viewport["y"] + viewport["h"] / 2))
+        tap(s, 102)  # Home selects the first card and reveals it.
+        time.sleep(.35)
+        origin = board(s)["scroll"]
+        selected = board(s)["selected_window"]
+        s.scroll(90, 0, source=2)  # Smooth finger input.
+        before = board(s)
+        assert abs(before["scroll"] - origin - 90) < .01, (mode, origin, before["scroll"])
+        assert before["selected_window"] == selected
+        title = f"hs-scroll-renamed-{mode}"
+        title_file.write_text(title)
+        wait_for(lambda: title in s.windows())
+        time.sleep(.2)
+        after = board(s)
+        assert abs(after["scroll"] - before["scroll"]) < .01, (mode, before["scroll"], after["scroll"])
+        assert after["selected_window"] == selected
+        assert after["previews"] == before["previews"], (mode, before, after)
+
+        # A frame without physical movement must not select the card now
+        # under the pointer. Hovering clipped cards must not reveal them.
+        s.motion(0, 0)
+        assert board(s)["selected_window"] == selected
+        assert abs(board(s)["scroll"] - before["scroll"]) < .01
+        clipped = next(p for p in board(s)["previews"]
+                       if p["y"] < host["y"] + viewport["y"]
+                       < p["y"] + p["h"])
+        s.move((clipped["x"] + clipped["w"] / 2,
+                host["y"] + viewport["y"] + 3))
+        assert board(s)["selected_window"] == clipped["window"]
+        assert abs(board(s)["scroll"] - before["scroll"]) < .01
+        s.scroll(-30, 0, source=2)
+        assert abs(board(s)["scroll"] - origin - 60) < .01
+        s.scroll(0, 0, source=2)  # End the touchpad gesture.
+        s.scroll()
+        assert abs(board(s)["scroll"] - (origin + 60 + viewport["h"] / 4)) < .01
+        s.scroll(-1e6, -100)
+        assert board(s)["scroll"] == 0
+        s.scroll(-15, -1)
+        assert board(s)["scroll"] == 0
+        tap(s, 107)  # End reveals the last card through keyboard navigation.
+        assert board(s)["scroll"] > 0
+        tap(s, 102)
+        assert board(s)["selected_window"] == board(s)["previews"][0]["window"]
+        assert board(s)["scroll"] <= 34
+        if mode == "flat":
+            s.scroll(90, 0, source=2)
+            selected = board(s)["selected_window"]
+            added = s.spawn(["env", "HS_APP_ID=hyprspace-scroll", "python3", str(s.client), "hs-scroll-new"])
+            try:
+                wait_for(lambda: board(s)["count"] == 25)
+                state = board(s)
+                assert abs(state["scroll"] - 90) < .01 and state["selected_window"] == selected, (state["scroll"], selected, state["selected_window"])
+            finally:
+                added.terminate()
+                added.wait(timeout=3)
+            wait_for(lambda: board(s)["count"] == 24)
+            state = board(s)
+            assert abs(state["scroll"] - 90) < .01 and state["selected_window"] == selected, (state["scroll"], selected, state["selected_window"])
+        s.ctl("dispatch", "hyprspace-test:board-scroll-continuity")
+        s.close()
+    s.check("all board groups preserve scrolling through live title updates, stationary frames and clipped-card hover; wheel, touchpad and keyboard bounds work")
+    s.check("window membership updates preserve manual scroll and scrolling translates in-flight grouping animations without snapping")
 
 
 def danish_search(s, wait_for):
@@ -199,6 +289,182 @@ def search_field(s, wait_for):
     s.check("unloading a focused search cancels its blink callback and reload restores clean input ownership")
 
 
+def cursor_follow(s, wait_for):
+    panel = None
+    def chosen():
+        state = board(s)
+        return next(p for p in state["previews"] if p["window"] == state["selected_window"])
+
+    def settle():
+        wait_for(lambda: not s.status()["zoom"]["cursor_follow_settling"])
+
+    try:
+        s.setup("dwindle", 0, 1)
+        native = placement(s)
+        opened(s, wait_for)
+        host = board(s)["monitor"]
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        fitted = chosen()
+        s.move(center(fitted))
+        tap(s, F)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        s.scroll(delta=-480, discrete=-32)
+        inspection(s, wait_for, 4)
+        before = chosen()
+        s.ctl("keyword", "plugin:hyprspace:follow_mouse", "false")
+        selected = board(s)["selected_window"]
+        for _ in range(3):
+            s.motion(1, 0)
+        time.sleep(.12)
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        assert same_geometry({0: before}, {0: chosen()})
+        relative_to(s, (fitted["x"] + fitted["w"] * .85, fitted["y"] + fitted["h"] * .75))
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        assert not s.status()["zoom"]["camera_settled"]
+        settle()
+        followed = chosen()
+        pointer = s.data("cursorpos")
+        assert abs(followed["x"] - (fitted["x"] * 4 - pointer["x"] * 3)) < .1
+        assert abs(followed["y"] - (fitted["y"] * 4 - pointer["y"] * 3)) < .1
+        assert followed["x"] < before["x"] and followed["y"] < before["y"]
+        assert board(s)["selected_window"] == selected and placement(s) == native
+        s.check("G-view inspection shares bounded follow, its calm zone and settled status without changing selection or native placement")
+
+        follow_corners(s, wait_for, host, fitted, chosen, "cursor-follow-board")
+        s.check("G-view follow also reaches all full-output corners and resumes inward immediately")
+        monitor = next(m for m in s.data("monitors") if m["name"] == host)
+        namespace = "waybar-cursor-follow-board"
+        panel = s.spawn(["python3", str(s.artifact("layer.py")), str(s.root / namespace), namespace, "pointer", f'{monitor["x"]},{monitor["y"]}'])
+        box = wait_for(lambda: (value if (value := s.layer(namespace)) and value["w"] > 0 and value["h"] > 0 else None))
+        relative_to(s, center(box))
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        settle()
+        assert s.status()["cursor_owned"] and s.status()["keyboard_owned"]
+        assert_follow_framing(fitted, chosen(), s.data("cursorpos"))
+        s.ctl("keyword", "plugin:hyprspace:overview:show_follow_hint", "false")
+        assert not s.status()["zoom"]["cursor_follow_hint"] and s.status()["zoom"]["cursor_follow_enabled"]
+        s.ctl("keyword", "plugin:hyprspace:overview:show_follow_hint", "true")
+        panel.terminate()
+        panel.wait(timeout=3)
+        panel = None
+        s.check("Waybar cannot interrupt G-view follow, and hiding its hint retains the saved mode")
+
+        s.move(center(fitted))
+        s.scroll(delta=480, discrete=32)
+        inspection(s, wait_for, 1)
+        s.scroll(delta=-480, discrete=-32)
+        inspection(s, wait_for, 4)
+        follow_during_zoom(s, wait_for, fitted, chosen)
+        s.check("a single immediate mouse movement steers an unfinished G-view zoom without freezing magnification or requiring another motion")
+        s.key(PLUS, 1)
+        s.motion(20, 10)
+        assert s.status()["zoom"]["cursor_follow_settling"] and s.status()["zoom"]["inspection_transitioning"]
+        s.key(PLUS, 0)
+        inspection(s, wait_for, 4 / 1.15)
+        assert_follow_framing(fitted, chosen(), s.data("cursorpos"), 4 / 1.15)
+        s.check("G-view follows during a held keyboard zoom key and reaches the requested scale")
+        s.ctl("keyword", "animations:enabled", "false")
+        s.scroll(delta=480, discrete=32)
+        inspection(s, wait_for, 1)
+        s.move(center(fitted))
+        s.scroll(delta=-480, discrete=-32)
+        inspection(s, wait_for, 4)
+
+        tap(s, F)
+        stopped = chosen()
+        s.motion(-30, -20)
+        time.sleep(.12)
+        assert same_geometry({0: stopped}, {0: chosen()})
+        tap(s, F)
+        s.move(center(fitted))
+        time.sleep(.12)
+        assert same_geometry({0: stopped}, {0: chosen()})
+        s.motion(10, 0)
+        settle()
+        s.button(1, 273)
+        grip = chosen()
+        s.motion(20, 10)
+        panned = chosen()
+        assert abs(panned["x"] - grip["x"] - 20) < .1
+        assert abs(panned["y"] - grip["y"] - 10) < .1
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        s.button(0, 273)
+        time.sleep(.12)
+        assert same_geometry({0: panned}, {0: chosen()})
+        s.key(SPACE, 1)
+        s.motion(-20, -10)
+        assert s.status()["zoom"]["panning"] and not s.status()["zoom"]["cursor_follow_settling"]
+        s.key(SPACE, 0)
+        s.scroll(delta=480, discrete=32)
+        inspection(s, wait_for, 1)
+        assert same_geometry({0: fitted}, {0: chosen()})
+        s.key(Z, 0)
+        tap(s, G)
+        assert not board(s)["active"] and s.status()["zoom"]["cursor_follow_enabled"]
+        tap(s, G)
+        assert board(s)["active"] and s.status()["zoom"]["cursor_follow_enabled"]
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        s.check("G-view manual grabs override follow, wheel-out restores the exact fit and view changes retain only the toggle")
+
+        # Inspect a window whose native output differs from the presentation host.
+        monitors = {m["id"]: m["name"] for m in s.data("monitors")}
+        remote = next(w for w in s.windows().values() if monitors[w["monitor"]] != host)
+        for _ in range(board(s)["count"]):
+            if board(s)["selected_window"] == remote["address"]:
+                break
+            tap(s, 15)
+        assert board(s)["selected_window"] == remote["address"]
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        fitted = chosen()
+        s.move(center(fitted))
+        s.scroll(delta=-480, discrete=-32)
+        inspection(s, wait_for, 4)
+        relative_to(s, (fitted["x"] + fitted["w"] * .7, fitted["y"] + fitted["h"] * .65))
+        wait_for(lambda: s.status()["zoom"]["cursor_follow_settling"])
+        settle()
+        assert board(s)["monitor"] == host and board(s)["selected_window"] == remote["address"]
+        assert placement(s) == native
+        # A point in the fitted footprint stays visible at every pan bound.
+        s.move(center(fitted))
+        s.button(1)
+        s.button(0)
+        s.key(Z, 0)
+        wait_for(lambda: not s.status()["views"])
+        assert s.data("activewindow")["address"] == remote["address"]
+        s.check("remote-window follow advances on the board's display output and clicks commit its native source window")
+
+        opened(s, wait_for)
+        assert s.status()["zoom"]["cursor_follow_enabled"]
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        search(s, "f")
+        assert board(s)["query"] == "f" and s.status()["zoom"]["cursor_follow_enabled"]
+        s.check("a new board opening retains enabled follow while F remains ordinary text in search")
+        s.run("wtype", "-k", "Escape")
+        s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        tap(s, F)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        s.key(Z, 0)
+        s.close()
+        opened(s, wait_for)
+        assert not s.status()["zoom"]["cursor_follow_enabled"]
+        assert not s.status()["zoom"]["cursor_follow_settling"]
+        s.check("disabling follow in the board persists across later openings")
+    finally:
+        if panel is not None and panel.poll() is None:
+            panel.terminate()
+            panel.wait(timeout=3)
+        for code in (Z, F, SPACE, PLUS):
+            s.key(code, 0)
+        s.button(0, 273)
+        s.ctl("keyword", "animations:enabled", "false")
+        s.ctl("keyword", "plugin:hyprspace:follow_mouse", "true")
+        s.ctl("keyword", "plugin:hyprspace:overview:show_follow_hint", "true")
+        s.close()
+
+
 def run(s, wait_for):
     s.setup("dwindle", 0, 1)
     original = placement(s)
@@ -342,6 +608,8 @@ def run(s, wait_for):
     s.close()
     s.check("window inspection reuses bounded zoom, keyboard grip and mouse pan without changing native geometry")
 
+    cursor_follow(s, wait_for)
+
     for output in range(3):
         s.ctl("dispatch", "focusmonitor", s.names[output])
         s.ctl("keyword", "plugin:hyprspace:follow_mouse", "false")
@@ -381,6 +649,7 @@ def run(s, wait_for):
     s.ctl("keyword", "plugin:hyprspace:overview:window_view_key", "g")
     s.check("remapped toggle keys act once and their held repeats remain captured across close/reopen")
 
+    scrolling(s, wait_for)
     lifecycle(s, wait_for)
     workspace_controls(s, wait_for)
 

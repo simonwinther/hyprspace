@@ -8,6 +8,7 @@
 #include "CompositorHooks.hpp"
 #include "Overview.hpp"
 #include "WindowBoard.hpp"
+#include "HelpOverlay.hpp"
 #include "OverviewSession.hpp"
 
 #include <hyprland/src/Compositor.hpp>
@@ -310,21 +311,65 @@ namespace hyprspace::launch {
                 for (const auto& view : session().views)
                     if (!view->closing() && view->monitor() == zoomMonitor)
                         zoomView = view.get();
-                result["zoom"]                  = {{"held", session().zoomHeld()},
-                                                   {"workspace", zoomTarget ? zoomTarget->workspace.id : 0},
-                                                   {"monitor", zoomMonitor ? zoomMonitor->m_name : ""},
-                                                   {"returning", session().zoomLocked() && !session().zoomHeld()},
-                                                   {"extra_factor", zoomView ? zoomView->inspectionFactor() : 1.0},
-                                                   {"extra_goal", zoomView ? zoomView->inspectionGoal() : 1.0},
-                                                   {"inspection_ready", zoomView && session().zoomHeld() && zoomView->inspectionReady()},
-                                                   {"camera_settled", zoomView && session().zoomHeld() && zoomView->zoomNavigationReady()},
-                                                   {"inspection_transitioning", zoomView && zoomView->inspectionTransitioning()}};
+                const auto* inspectionBoard = session().windowViewActive() ? session().windowBoard() : nullptr;
+                result["zoom"] = {{"held", session().zoomHeld()},
+                                  {"workspace", zoomTarget ? zoomTarget->workspace.id : 0},
+                                  {"monitor", zoomMonitor ? zoomMonitor->m_name : ""},
+                                  {"returning", session().zoomLocked() && !session().zoomHeld()},
+                                  {"extra_factor", inspectionBoard ? inspectionBoard->inspectionFactor()
+                                                   : zoomView      ? zoomView->inspectionFactor()
+                                                                   : 1.0},
+                                  {"extra_goal", inspectionBoard ? inspectionBoard->inspectionGoal()
+                                                 : zoomView      ? zoomView->inspectionGoal()
+                                                                 : 1.0},
+                                  {"inspection_ready", session().zoomHeld() && (inspectionBoard ? inspectionBoard->inspecting() && config::overviewWheelZoom()
+                                                                                                : zoomView && zoomView->inspectionReady())},
+                                  {"camera_settled", session().zoomHeld() && !session().cursorFollowSettling() &&
+                                                         (inspectionBoard ? inspectionBoard->inspectionSettled() : zoomView && zoomView->zoomNavigationReady())},
+                                  {"inspection_transitioning", inspectionBoard ? inspectionBoard->inspecting() && !inspectionBoard->inspectionSettled()
+                                                                               : zoomView && zoomView->inspectionTransitioning()},
+                                  {"cursor_follow_enabled", session().cursorFollowEnabled()},
+                                  {"cursor_follow_hint", session().cursorFollowHint()},
+                                  {"cursor_follow_settling", session().cursorFollowSettling()}};
                 result["zoom"]["pan_held"]      = session().panHeld();
                 result["zoom"]["panning"]       = session().panning();
                 result["zoom"]["pan_available"] = session().panAvailable();
                 result["cursor_shape"]          = hooks::cursorShape();
                 result["pending_resize"]        = session().pendingResize.has_value();
-                result["window_board"]          = nullptr;
+                result["help"]                  = {{"active", session().helpActive()}, {"query", ""}, {"search_focused", false}};
+                if (const auto* help = session().helpOverlay(); help && help->active()) {
+                    const auto  mon       = help->monitor();
+                    const auto& browser   = help->browser();
+                    const auto  globalBox = [&](const SBoxF& box) {
+                        return nlohmann::json{{"x", box.x + (mon ? mon->m_position.x : 0)}, {"y", box.y + (mon ? mon->m_position.y : 0)}, {"w", box.w}, {"h", box.h}};
+                    };
+                    auto entries = nlohmann::json::array();
+                    for (size_t i = 0; i < browser.count(); ++i) {
+                        const auto& entry = browser.entry(i);
+                        entries.push_back({{"id", entry.id}, {"title", entry.title}, {"keys", entry.keys}, {"topic", HELP_TOPICS[entry.topic]}});
+                    }
+                    const auto selected = browser.selection();
+                    result["help"]      = {{"active", true},
+                                           {"monitor", mon ? mon->m_name : ""},
+                                           {"generation", help->generation()},
+                                           {"query", help->search().text()},
+                                           {"query_cursor", help->search().cursor()},
+                                           {"search_focused", help->searchFocused()},
+                                           {"topic", HELP_TOPICS[browser.topic()]},
+                                           {"count", browser.count()},
+                                           {"total", browser.total()},
+                                           {"selected_index", browser.selected()},
+                                           {"selected_id", selected ? selected->id : ""},
+                                           {"selected_description", selected ? selected->description : ""},
+                                           {"scroll", help->scrollOffset()},
+                                           {"entries", entries},
+                                           {"panel", globalBox(help->layout().panel)},
+                                           {"search_box", globalBox(help->layout().search)},
+                                           {"results_box", globalBox(help->layout().results)},
+                                           {"detail_box", globalBox(help->layout().detail)},
+                                           {"row_height", help->layout().rowHeight}};
+                }
+                result["window_board"] = nullptr;
                 if (const auto* board = session().windowBoard()) {
                     const auto host    = board->monitor();
                     const auto chosen  = board->selectedTarget();
@@ -443,7 +488,10 @@ namespace hyprspace::launch {
                         nlohmann::json emptyButton = nullptr;
                         if (const auto box = view->emptyWorkspaceButton())
                             emptyButton = {{"x", box->x}, {"y", box->y}, {"w", box->w}, {"h", box->h}};
-                        nlohmann::json edges = nlohmann::json::array();
+                        nlohmann::json edges      = nlohmann::json::array();
+                        nlohmann::json followHint = nullptr;
+                        if (const auto box = view->cursorFollowHintBox())
+                            followHint = {{"x", mon->m_position.x + box->x}, {"y", mon->m_position.y + box->y}, {"w", box->w}, {"h", box->h}};
                         for (const auto& hint : view->zoomEdgeHints()) {
                             const char* direction = "";
                             switch (hint.direction) {
@@ -473,6 +521,7 @@ namespace hyprspace::launch {
                                                    {"empty_workspace_button", emptyButton},
                                                    {"empty_workspace_error", view->emptyWorkspaceError()},
                                                    {"zoom_edges", edges},
+                                                   {"cursor_follow_hint", followHint},
                                                    {"layout",
                                                     {{"frames", counts.frames},
                                                      {"window_updates", counts.windowUpdates},

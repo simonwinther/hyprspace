@@ -7,6 +7,7 @@
 #include "../src/DesktopDb.hpp"
 #include "../src/Geometry.hpp"
 #include "../src/Input.hpp"
+#include "../src/CursorFollowPreference.hpp"
 #include "../src/Interaction.hpp"
 #include <memory>
 #include "../src/ImageCache.hpp"
@@ -59,6 +60,7 @@ static void section(const char* name) {
 #include "test_capture_geometry.hpp"
 #include "test_empty_workspace.hpp"
 #include "test_window_views.hpp"
+#include "test_help.hpp"
 
 // ---------------------------------------------------------------- layout ----
 
@@ -1456,6 +1458,8 @@ int main(int argc, char** argv) {
             testDesktopPrecedence();
         else if (group == "window_views")
             testWindowViews();
+        else if (group == "help")
+            testHelp();
         else if (group == "resources") {
             testImageCache();
             testRasterBounds();
@@ -1502,9 +1506,13 @@ int main(int argc, char** argv) {
     testOverviewWindowLayout();
     testFullscreenPreviewGeometry();
     testZoomInput();
+    testCursorFollow();
+    testCursorFollowPreference();
     testZoomEdgeHover();
     testZoomGeometry();
     testWindowViews();
+
+    testHelp();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

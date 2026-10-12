@@ -16,6 +16,7 @@
 #include "Overview.hpp"
 #include "OverviewSession.hpp"
 #include "WindowBoard.hpp"
+#include "HelpOverlay.hpp"
 #include "OverlayPolicy.hpp"
 #include "CompositorHooks.hpp"
 #include "Launch.hpp"
@@ -225,7 +226,8 @@ namespace {
     }
 
     bool foregroundPointer() {
-        return hooks::foregroundPointerAt(g_pInputManager->getMouseCoordsInternal());
+        const auto pos = g_pInputManager->getMouseCoordsInternal();
+        return hooks::foregroundPointerAt(pos, session().cursorFollowAvailableAt(pos));
     }
 
     bool foregroundKeyboard() {
@@ -707,6 +709,11 @@ namespace {
             .finger     = event.source == WL_POINTER_AXIS_SOURCE_FINGER,
         };
 
+        if (session().helpActive()) {
+            session().helpOverlay()->scroll(SCROLL);
+            return;
+        }
+
         if (switcherLive()) {
             if (!SCROLL.horizontal)
                 g_switcher->onScroll(SCROLL);
@@ -906,6 +913,10 @@ namespace {
         if (g_switcher && g_switcher->monitor() == MONITOR)
             g_pHyprRenderer->m_renderPass.add(makeUnique<CSwitcherPassElement>(g_switcher.get()));
 
+        if (session().helpActive())
+            for (auto& element : session().helpOverlay()->buildPass(MONITOR))
+                g_pHyprRenderer->m_renderPass.add(std::move(element));
+
         // Some Waybar configurations use the bottom layer. Requeue those
         // panels through the native renderer above the overview's backdrop.
         // Top/overlay panels and all popups are already queued afterward.
@@ -1039,6 +1050,9 @@ namespace {
     SDispatchResult dispatchWindowView(std::string args) {
         return session().windowView(args);
     }
+    SDispatchResult dispatchHelp(std::string args) {
+        return session().help(args);
+    }
 
     SDispatchResult dispatchLayoutCycle(std::string) {
         if (overviewLive() && !foregroundKeyboard())
@@ -1123,6 +1137,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:layoutcycle", dispatchLayoutCycle);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:emptyworkspace", dispatchEmptyWorkspace);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:windowview", dispatchWindowView);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:help", dispatchHelp);
 
     if (Config::mgr()->type() == Config::CONFIG_LUA) {
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "overview", [](lua_State* state) { return dispatchFromLua(state, dispatchOverview); });
@@ -1130,6 +1145,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "layoutcycle", [](lua_State* state) { return dispatchFromLua(state, dispatchLayoutCycle); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "emptyworkspace", [](lua_State* state) { return dispatchFromLua(state, dispatchEmptyWorkspace); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "windowview", [](lua_State* state) { return dispatchFromLua(state, dispatchWindowView); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "help", [](lua_State* state) { return dispatchFromLua(state, dispatchHelp); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "close", [](lua_State* state) { return dispatchFromLua(state, dispatchClose); });
     }
 
@@ -1150,6 +1166,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_listeners.configReloaded  = bus.config.reloaded.listen([] {
         hooks::reconcileDispatchers();
         session().cancelZoom();
+        if (session().helpActive())
+            session().helpOverlay()->refresh(true);
         session().cancelWorkspaceDrag();
         session().cancelWorkspaceSettle();
         if (g_panButtonTracked)
