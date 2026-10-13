@@ -21,6 +21,16 @@ namespace hyprspace {
         double x = 0, y = 0;
     };
 
+    // Keep the hotspot inside a monitor's half-open logical bounds. The last
+    // logical pixel stays inside even when native input floors coordinates.
+    inline std::optional<SPoint> boundedCursor(SPoint point, const SBoxF& bounds) {
+        if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(bounds.x) || !std::isfinite(bounds.y) || !std::isfinite(bounds.w) ||
+            !std::isfinite(bounds.h) || bounds.w <= 0 || bounds.h <= 0 || !std::isfinite(bounds.x + bounds.w) || !std::isfinite(bounds.y + bounds.h))
+            return std::nullopt;
+        return SPoint{std::clamp(point.x, bounds.x, bounds.x + bounds.w - std::min(1.0, bounds.w / 2)),
+                      std::clamp(point.y, bounds.y, bounds.y + bounds.h - std::min(1.0, bounds.h / 2))};
+    }
+
     // Resize the grabbed corner while keeping the opposite corner fixed. If
     // an existing window already crosses an edge, bring its anchor back into
     // the work area. An impossible application minimum cancels the resize.

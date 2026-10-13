@@ -792,6 +792,25 @@ namespace hyprspace {
         return m_cursorOwned && cursorFollowAvailableAt(m_pointer);
     }
 
+    std::optional<SBoxF> COverviewSession::cursorConfinementBoundsAt(const Vector2D& pos) const {
+        // Panning suspends camera follow without releasing this boundary. Use
+        // current input ownership, not the previous motion's cursor-owned bit.
+        if (!m_cursorFollow.enabled() || !live() || !zoomHeld() || !config::overviewWheelZoom() || helpActive() || !overlaysAllowed() || gestureActive() ||
+            pendingResize || hooks::mappingPointer() || !hooks::keyboardOwned())
+            return std::nullopt;
+        const auto mon = cursorFollowMonitor();
+        if (!mon || !mon->m_enabled || mon->isMirror())
+            return std::nullopt;
+        const SBoxF bounds{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y};
+        // An inspection on another output must not pull the pointer into it.
+        if (!bounds.contains(pos.x, pos.y) || !boundedCursor({pos.x, pos.y}, bounds) || hooks::foregroundPointerAt(pos, true))
+            return std::nullopt;
+        if (windowViewActive())
+            return m_windowBoard->inspecting() && m_windowBoard->inspectionGoal() > 1 ? std::optional{bounds} : std::nullopt;
+        const auto* view = zoomView();
+        return view && view->inspectionReady() && view->inspectionGoal() > 1 ? std::optional{bounds} : std::nullopt;
+    }
+
     void COverviewSession::cursorFollowMotion() {
         // The compositor also emits mouse.move after native cursor warps. Keep
         // existing selection routing, but only device callbacks may steer a lens.

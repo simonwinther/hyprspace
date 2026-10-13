@@ -56,6 +56,7 @@ int main(void) {
     puts("ready");
     fflush(stdout);
     uint32_t button, state, axis, source;
+    uint32_t absolute_x, absolute_y, extent_x, extent_y;
     int discrete;
     double delta, dx, dy;
     char line[256];
@@ -70,6 +71,9 @@ int main(void) {
                 xkb_state_serialize_layout(keyboard_state, XKB_STATE_LAYOUT_EFFECTIVE));
         } else if (sscanf(line, "motion %lf %lf", &dx, &dy) == 2) {
             zwlr_virtual_pointer_v1_motion(pointer, milliseconds(), wl_fixed_from_double(dx), wl_fixed_from_double(dy));
+        } else if (sscanf(line, "absolute %u %u %u %u", &absolute_x, &absolute_y, &extent_x, &extent_y) == 4) {
+            if (!extent_x || !extent_y) return 3;
+            zwlr_virtual_pointer_v1_motion_absolute(pointer, milliseconds(), absolute_x, absolute_y, extent_x, extent_y);
         } else if (sscanf(line, "axis %u %lf %d %u", &axis, &delta, &discrete, &source) == 4) {
             if (source != WL_POINTER_AXIS_SOURCE_WHEEL && delta == 0 && discrete == 0)
                 zwlr_virtual_pointer_v1_axis_stop(pointer, milliseconds(), axis);

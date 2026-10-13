@@ -1,5 +1,35 @@
 #pragma once
 
+static void testCursorBounds() {
+    section("cursor confinement: fractional and negative monitor bounds keep every hotspot inside");
+    for (const SBoxF bounds : {SBoxF{0, 0, 960, 600}, SBoxF{-1000, -200, 480, 768}, SBoxF{2200, 100, 639.5, 399.5}, SBoxF{0, 0, .5, .5}}) {
+        const auto center = boundedCursor({bounds.cx(), bounds.cy()}, bounds);
+        CHECK(center && center->x == bounds.cx() && center->y == bounds.cy());
+        for (const auto point : {SPoint{-10000, -10000}, SPoint{10000, -10000}, SPoint{-10000, 10000}, SPoint{10000, 10000}}) {
+            const auto confined = boundedCursor(point, bounds);
+            CHECK(confined && bounds.contains(confined->x, confined->y));
+            if (confined) {
+                const auto repeated = boundedCursor(*confined, bounds);
+                CHECK(repeated && repeated->x == confined->x && repeated->y == confined->y);
+            }
+        }
+    }
+    section("cursor confinement: movement along an edge and back inward has no accumulated overshoot");
+    const SBoxF bounds{-480, -768, 480, 768};
+    auto        point = boundedCursor({10000, -400}, bounds);
+    CHECK(point && point->x == -1 && point->y == -400);
+    point = boundedCursor({point->x, point->y + 15}, bounds);
+    CHECK(point && point->x == -1 && point->y == -385);
+    point = boundedCursor({point->x - 8, point->y}, bounds);
+    CHECK(point && point->x == -9 && point->y == -385);
+    section("cursor confinement: malformed bounds or coordinates cannot constrain a pointer");
+    for (const auto invalid : {SBoxF{}, SBoxF{0, 0, -1, 1}, SBoxF{0, 0, 1, NAN}, SBoxF{INFINITY, 0, 1, 1},
+                               SBoxF{std::numeric_limits<double>::max(), 0, std::numeric_limits<double>::max(), 1}})
+        CHECK(!boundedCursor({0, 0}, invalid));
+    CHECK(!boundedCursor({NAN, 0}, bounds));
+    CHECK(!boundedCursor({0, INFINITY}, bounds));
+}
+
 static void testCursorFollow() {
     using namespace std::chrono_literals;
     using Clock       = hyprspace::CInspectionFollow::Clock;

@@ -47,9 +47,12 @@ namespace hyprspace::hooks {
         CFunctionHook*                  layoutPointerHook   = nullptr;
         CFunctionHook*                  cursorRenderingHook = nullptr;
         CFunctionHook *                 relativeMotionHook = nullptr, *absoluteMotionHook = nullptr;
+        CFunctionHook *                 closestPositionHook = nullptr, *cursorMovedHook = nullptr;
         double                          axisScale    = 1.0;
         bool                            keyRelease   = false;
         bool                            deviceMotion = false;
+        bool                            confineRelativeMotion = false;
+        std::optional<SBoxF>            absoluteConfinement;
         std::optional<Vector2D>         desktopPoint;
         std::function<bool()>           ownsKeyboard;
         std::function<bool()>           launchEnabled;
@@ -269,6 +272,10 @@ namespace hyprspace::hooks {
             friend auto member(SPointerListeners);
         };
         template struct CAccess<SPointerListeners, &Pointer::CPointerManager::m_pointerListeners>;
+        struct SPointerPosition {
+            friend auto member(SPointerPosition);
+        };
+        template struct CAccess<SPointerPosition, &Pointer::CPointerManager::m_pointerPos>;
         struct SIgnoreKeyboard {
             friend auto member(SIgnoreKeyboard);
         };
@@ -389,15 +396,56 @@ namespace hyprspace::hooks {
         void pointerRelative(CInputManager* self, IPointer::SMotionEvent event) {
             using Fn                                     = void (*)(CInputManager*, IPointer::SMotionEvent);
             const bool                          previous = std::exchange(deviceMotion, true);
-            const Hyprutils::Utils::CScopeGuard restore([previous] { deviceMotion = previous; });
+            const bool                          previousRelative = std::exchange(confineRelativeMotion, true);
+            const auto                          previousAbsolute = std::exchange(absoluteConfinement, std::nullopt);
+            const Hyprutils::Utils::CScopeGuard restore([=] {
+                deviceMotion          = previous;
+                confineRelativeMotion = previousRelative;
+                absoluteConfinement   = previousAbsolute;
+            });
             reinterpret_cast<Fn>(relativeMotionHook->m_original)(self, event);
         }
 
         void pointerAbsolute(CInputManager* self, IPointer::SMotionAbsoluteEvent event) {
             using Fn                                     = void (*)(CInputManager*, IPointer::SMotionAbsoluteEvent);
             const bool                          previous = std::exchange(deviceMotion, true);
-            const Hyprutils::Utils::CScopeGuard restore([previous] { deviceMotion = previous; });
+            const bool                          previousRelative = std::exchange(confineRelativeMotion, false);
+            const auto                          bounds           = g_overviewSession && event.device && event.device->getType() == HID_TYPE_POINTER
+                                                                       ? session().cursorConfinementBoundsAt(Pointer::mgr()->position())
+                                                                       : std::nullopt;
+            const auto                          previousAbsolute = std::exchange(absoluteConfinement, bounds);
+            const Hyprutils::Utils::CScopeGuard restore([=] {
+                deviceMotion          = previous;
+                confineRelativeMotion = previousRelative;
+                absoluteConfinement   = previousAbsolute;
+            });
             reinterpret_cast<Fn>(absoluteMotionHook->m_original)(self, event);
+        }
+
+        Vector2D closestPointerPosition(Pointer::CPointerManager* self, const Vector2D& point) {
+            using Fn            = Vector2D (*)(Pointer::CPointerManager*, const Vector2D&);
+            const auto original = reinterpret_cast<Fn>(closestPositionHook->m_original);
+            const auto bounds   = confineRelativeMotion && g_overviewSession ? session().cursorConfinementBoundsAt(self->position()) : std::nullopt;
+            const auto bounded  = bounds ? boundedCursor({point.x, point.y}, *bounds) : std::nullopt;
+            if (!bounded)
+                return original(self, point);
+            // Native layout/hotspot padding still applies, but cannot push the
+            // result onto a neighbor before output-enter or cursor updates.
+            const auto native = original(self, Vector2D{bounded->x, bounded->y});
+            const auto result = boundedCursor({native.x, native.y}, *bounds);
+            return result ? Vector2D{result->x, result->y} : native;
+        }
+
+        void cursorMoved(Pointer::CPointerManager* self) {
+            using Fn = void (*)(Pointer::CPointerManager*);
+            // Absolute mapping writes the position directly, then calls this
+            // before updating outputs. Consume only that first backend update.
+            if (const auto bounds = std::exchange(absoluteConfinement, std::nullopt)) {
+                auto& position = self->*member(SPointerPosition{});
+                if (const auto bounded = boundedCursor({position.x, position.y}, *bounds))
+                    position = Vector2D{bounded->x, bounded->y};
+            }
+            reinterpret_cast<Fn>(cursorMovedHook->m_original)(self);
         }
 
         void pointerAxis(CInputManager* self, IPointer::SAxisEvent event, SP<IPointer> pointer) {
@@ -725,6 +773,12 @@ namespace hyprspace::hooks {
             using Fn = void (*)(const Pointer::CPointerController*, const Vector2D&, bool);
             if (desktopPoint || dispatchDepth > 0)
                 return;
+            const bool                          previousRelative = std::exchange(confineRelativeMotion, false);
+            const auto                          previousAbsolute = std::exchange(absoluteConfinement, std::nullopt);
+            const Hyprutils::Utils::CScopeGuard restore([=] {
+                confineRelativeMotion = previousRelative;
+                absoluteConfinement   = previousAbsolute;
+            });
             reinterpret_cast<Fn>(warpHook->m_original)(self, point, force);
         }
 
@@ -1311,6 +1365,8 @@ namespace hyprspace::hooks {
             pointerHook         = hook("mouseMoveUnified", "CInputManager::mouseMoveUnified(", reinterpret_cast<void*>(pointerMove));
             relativeMotionHook  = hook("onMouseMoved", "CInputManager::onMouseMoved(", reinterpret_cast<void*>(pointerRelative));
             absoluteMotionHook  = hook("onMouseWarp", "CInputManager::onMouseWarp(", reinterpret_cast<void*>(pointerAbsolute));
+            closestPositionHook = hook("closestValid", "Pointer::CPointerManager::closestValid(", reinterpret_cast<void*>(closestPointerPosition));
+            cursorMovedHook     = hook("onCursorMoved", "Pointer::CPointerManager::onCursorMoved(", reinterpret_cast<void*>(cursorMoved));
             axisHook            = hook("onMouseWheel", "CInputManager::onMouseWheel(", reinterpret_cast<void*>(pointerAxis));
             imeModsHook         = hook("sendMods", "CInputMethodKeyboardGrabV2::sendMods(", reinterpret_cast<void*>(imeModifiers));
             mouseBindHook       = hook("ensureMouseBindState", "CKeybindManager::ensureMouseBindState(", reinterpret_cast<void*>(ensureMouseBindState));
@@ -1344,17 +1400,20 @@ namespace hyprspace::hooks {
         }
         dispatchers.clear();
         for (auto handle : {keyHook, inputHook, focusHook, coordsHook, warpHook, pointerHook, relativeMotionHook, absoluteMotionHook, imeModsHook, axisHook,
-                            mouseBindHook, layoutPointerHook, cursorRenderingHook})
+                            mouseBindHook, layoutPointerHook, cursorRenderingHook, closestPositionHook, cursorMovedHook})
             if (handle)
                 HyprlandAPI::removeFunctionHook(PHANDLE, handle);
         keyHook = inputHook = focusHook = coordsHook = warpHook = nullptr;
         pointerHook = imeModsHook = axisHook = mouseBindHook = nullptr;
         relativeMotionHook = absoluteMotionHook = nullptr;
+        closestPositionHook = cursorMovedHook   = nullptr;
         layoutPointerHook                       = nullptr;
         cursorRenderingHook                     = nullptr;
         axisScale                               = 1.0;
         keyRelease                              = false;
         deviceMotion                            = false;
+        confineRelativeMotion                   = false;
+        absoluteConfinement.reset();
         desktopPoint.reset();
         ownsKeyboard      = {};
         launchEnabled     = {};

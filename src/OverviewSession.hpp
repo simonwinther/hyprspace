@@ -130,6 +130,7 @@ namespace hyprspace {
         void                    pauseCursorFollow();
         bool                    cursorFollowShortcutAvailable() const;
         bool                    cursorFollowAvailableAt(const Vector2D& pos) const;
+        std::optional<SBoxF>    cursorConfinementBoundsAt(const Vector2D& pos) const;
         std::string             cursorFollowHint() const;
         bool                    cursorFollowEnabled() const {
             return m_cursorFollow.enabled();

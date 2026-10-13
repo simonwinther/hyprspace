@@ -337,6 +337,15 @@ shows the current mode. In workspace zoom it stays in the upper-left corner;
 G-view includes it in the inspection hints. Turning follow on waits for fresh mouse movement;
 turning it off stops follow at the displayed framing.
 
+While Follow is enabled and Z is held with extra magnification above the fitted
+1× view, the cursor stays inside the monitor showing the inspection. This covers
+every edge and corner, including during right-drag or Space panning, so you can
+reach the pan bounds without accidentally moving to another monitor. Returning
+to 1×, releasing Z or disabling Follow restores free movement immediately,
+including during the zoom-out animation. If the cursor is already on another
+monitor, it stays there until you move it into the inspected output. Foreground
+interfaces and window or workspace dragging retain their usual input.
+
 Set `overview:follow_key` to another XKB key name, or an empty value to disable
 the shortcut. Set `overview:show_follow_hint = false` to hide the hint in both
 workspace and G-view inspection without changing your saved follow preference.

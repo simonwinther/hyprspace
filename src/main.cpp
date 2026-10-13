@@ -227,7 +227,7 @@ namespace {
 
     bool foregroundPointer() {
         const auto pos = g_pInputManager->getMouseCoordsInternal();
-        return hooks::foregroundPointerAt(pos, session().cursorFollowAvailableAt(pos));
+        return hooks::foregroundPointerAt(pos, session().cursorFollowAvailableAt(pos) || session().cursorConfinementBoundsAt(pos).has_value());
     }
 
     bool foregroundKeyboard() {

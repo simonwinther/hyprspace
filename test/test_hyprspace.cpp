@@ -1506,6 +1506,7 @@ int main(int argc, char** argv) {
     testOverviewWindowLayout();
     testFullscreenPreviewGeometry();
     testZoomInput();
+    testCursorBounds();
     testCursorFollow();
     testCursorFollowPreference();
     testZoomEdgeHover();

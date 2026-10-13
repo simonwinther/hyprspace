@@ -123,9 +123,11 @@ namespace hyprspace {
         add("keyboard-pan", 2, "Pan with the keyboard", held("Shift + arrows"),
             "Move the magnified picture by 40 logical pixels per press. Holding an arrow repeats the movement.", "pan shift keyboard move", "overview:wheel_zoom");
         add("follow", 2, "Follow the cursor", follow.empty() ? "Disabled" : held(follow),
-            std::format("Follow is {}. Move the pointer to steer a magnified picture, including at the corners and over Waybar. Your choice survives restarts.",
+            std::format("Follow is {}. Move the pointer to steer a magnified picture, including at the corners and over Waybar. With Follow enabled and zoom held above "
+                        "the fitted view, the cursor stays inside this monitor, including during panning. Return to the fitted view, release the zoom key or disable "
+                        "Follow to cross monitors. Your choice survives restarts.",
                         s.followEnabled ? "enabled" : "disabled"),
-            "follow cursor mouse persistent toggle enabled disabled waybar corners", "overview:follow_key");
+            "follow cursor mouse persistent toggle enabled disabled waybar corners boundary confine monitor", "overview:follow_key");
         add("zoom-neighbor", 2, "Browse while inspecting", "Pointer at an edge",
             "At the fitted zoom level, pause over a directional edge arrow to inspect its neighboring workspace. Extra magnification pauses this navigation.",
             "zoom edge arrows neighbors dwell");

@@ -547,6 +547,21 @@ bindm = SUPER,mouse:273,resizewindow
         device.stdin.flush()
         assert reply(device) == "ok"
 
+    def absolute_motion(self, point, pointer=None):
+        from resize import area
+
+        boxes = [area({**monitor, "reserved": [0, 0, 0, 0]}) for monitor in self.data("monitors")]
+        left, top = min(box["x"] for box in boxes), min(box["y"] for box in boxes)
+        width = max(box["x"] + box["w"] for box in boxes) - left
+        height = max(box["y"] + box["h"] for box in boxes) - top
+        extent = 1000000
+        x = round(min(1, max(0, (point[0] - left) / width)) * extent)
+        y = round(min(1, max(0, (point[1] - top) / height)) * extent)
+        device = pointer or self.pointer
+        device.stdin.write(f"absolute {x} {y} {extent} {extent}\n")
+        device.stdin.flush()
+        assert reply(device) == "ok"
+
     def scroll(self, delta=15, discrete=1, axis=0, source=0):
         self.pointer.stdin.write(f"axis {axis} {delta} {discrete} {source}\n")
         self.pointer.stdin.flush()
@@ -1690,6 +1705,7 @@ def main():
             "window_views",
             "help",
             "zoom",
+            "cursor_confinement",
             "transitions",
             "resize",
             "browser",
@@ -1861,6 +1877,11 @@ def main():
             import zoom
 
             zoom.lifecycle(suite, wait_for)
+
+        if args.only in ("all", "cursor_confinement"):
+            import cursor_confinement
+
+            cursor_confinement.run(suite, wait_for)
         if args.only in ("all", "transitions"):
             import transition_regressions
             transition_regressions.run(suite, wait_for)
