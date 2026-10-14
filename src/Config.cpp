@@ -40,6 +40,7 @@ namespace hyprspace::config {
             SP<Config::Values::CStringValue> overviewFont;
             SP<Config::Values::CStringValue> overviewZoomKey;
             SP<Config::Values::CStringValue> overviewEmptyWorkspaceKey;
+            SP<Config::Values::CStringValue> overviewCloseWorkspaceKey;
             SP<Config::Values::CStringValue> overviewWindowViewKey;
             SP<Config::Values::CStringValue> overviewFollowKey;
             SP<Config::Values::CStringValue> overviewHelpKey;
@@ -152,6 +153,9 @@ namespace hyprspace::config {
         g_values.overviewEmptyWorkspaceKey =
             reg<CStringValue>("plugin:hyprspace:overview:empty_workspace_key", "unmodified XKB key to select an empty workspace on the pointer's monitor; empty disables",
                               "n", SStringValueOptions{.validator = hooks::validateEmptyWorkspaceKey});
+        g_values.overviewCloseWorkspaceKey =
+            reg<CStringValue>("plugin:hyprspace:overview:close_workspace_key", "unmodified XKB key to close the selected empty workspace; empty disables", "q",
+                              SStringValueOptions{.validator = hooks::validateCloseWorkspaceKey});
         g_values.overviewWindowViewKey =
             reg<CStringValue>("plugin:hyprspace:overview:window_view_key", "unmodified XKB key to toggle the global window board; empty disables", "g",
                               SStringValueOptions{.validator = hooks::validateWindowViewKey});
@@ -298,6 +302,15 @@ namespace hyprspace::config {
     }
     bool overviewWheelZoom() {
         return g_values.overviewWheelZoom ? g_values.overviewWheelZoom->value() : true;
+    }
+
+    xkb_keysym_t overviewCloseWorkspaceKey() {
+        const auto name = g_values.overviewCloseWorkspaceKey ? g_values.overviewCloseWorkspaceKey->value() : "q";
+        if (name.empty() || !hooks::validateCloseWorkspaceKey(name))
+            return XKB_KEY_NoSymbol;
+        const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+        return sym == overviewZoomKey() || sym == overviewEmptyWorkspaceKey() || sym == overviewWindowViewKey() || sym == overviewFollowKey() ||
+                       sym == overviewHelpKey() ? XKB_KEY_NoSymbol : sym;
     }
     CHyprColor overviewFullscreenBorder() {
         return colorOf(g_values.overviewFullscreenBorder, 0xff89b4fa);

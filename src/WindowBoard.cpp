@@ -657,6 +657,10 @@ namespace hyprspace {
 
     void CWindowBoard::endInspection() {
         m_session.pauseCursorFollow();
+        if (m_inspecting) {
+            m_lens.freeze(m_lensProgress->value());
+            m_lensProgress->setValueAndWarp(1.F);
+        }
         m_inspecting = false;
         endPan();
         *m_inspectionMix = 0.F;

@@ -82,7 +82,7 @@ namespace hyprspace {
 
     CHelpOverlay::SSettings CHelpOverlay::settings() const {
         return {config::overviewZoomKey(),   config::overviewEmptyWorkspaceKey(), config::overviewWindowViewKey(),
-                config::overviewFollowKey(), config::overviewHelpKey(),           config::overviewWorkspaceDragModifiers(),
+                config::overviewFollowKey(), config::overviewHelpKey(),           config::overviewCloseWorkspaceKey(), config::overviewWorkspaceDragModifiers(),
                 config::overviewWheelZoom(), m_session.cursorFollowEnabled(),     config::followMouse(),
                 config::warpCursor(),        config::overviewShowFollowHint(),    config::overviewAllMonitors()};
     }
@@ -112,7 +112,7 @@ namespace hyprspace {
         add("scrolling", 1, "Browse a scrolling workspace", "Wheel / PgUp / PgDn",
             "Scroll the workspace under the pointer. Its edge arrows reveal hidden columns while keeping the overview open.", "scroll scrolling columns touchpad tape");
         add("zoom", 2, "Inspect a workspace or window", zoom.empty() ? "Disabled" : "Hold " + zoom,
-            "Enlarge the selected workspace, or the selected window in the window board. Release the key to return to the previous view.", "zoom inspect magnify fit",
+            "Enlarge the selected workspace, or the selected window in the window board. The cursor follows its point into zoom and back to the grid; repeated presses without mouse movement keep its position. You can move the mouse throughout.", "zoom inspect magnify fit",
             "overview:zoom_key");
         add("magnify", 2, "Zoom in or out", held("wheel / + / −"),
             "Magnify from 1× to 4× the fitted view. Wheel zoom anchors at the pointer; + and − use the viewport center.", "zoom magnify plus minus scroll touchpad",
@@ -152,13 +152,16 @@ namespace hyprspace {
         add("move-window", 4, "Move a window", "Super + left-drag",
             "Drag a preview to rearrange its window or move it into a workspace on another output. Escape cancels the drag.",
             "move rearrange window drag monitor output");
+        add("close-workspace", 4, "Close an empty workspace", s.closeWorkspace == XKB_KEY_NoSymbol ? "Disabled" : keyLabel(s.closeWorkspace),
+            "Remove the selected empty normal workspace and keep the overview open. An active workspace switches to the nearest remaining tile on its monitor. Workspaces with windows and the last normal workspace on a monitor are protected.",
+            "close remove dismiss delete empty workspace quit q", "overview:close_workspace_key");
         add("resize-window", 4, "Resize a window", "Super + right-drag", "Resize a window from its preview, scaled into the workspace tile. Escape cancels the resize.",
             "resize size window drag");
         add("move-workspace", 4, "Move a whole workspace", s.workspaceMods ? modifiers(s.workspaceMods) + " + drag" : "Disabled",
             "Left-drag a regular workspace to another output. Its number, name and layout travel with it; pinned windows stay on their original monitor.",
             "move workspace monitor output drag pinned", "overview:workspace_drag_modifiers");
         add("bindings", 5, "Configure keybindings", "Hyprland config",
-            "Change zoom_key, empty_workspace_key, window_view_key, follow_key or help_key under plugin:hyprspace:overview. An empty key disables its shortcut.",
+            "Change zoom_key, empty_workspace_key, close_workspace_key, window_view_key, follow_key or help_key under plugin:hyprspace:overview. An empty key disables its shortcut.",
             "keys keybind keybinds keybinding keybindings bindings shortcuts controls configuration customize remap", "overview:*_key");
         add("hint", 5, "Show or hide the follow hint", s.showFollowHint ? "Shown" : "Hidden",
             "Set show_follow_hint to false to hide the zoom hint. Your saved follow preference stays available through its toggle key.",

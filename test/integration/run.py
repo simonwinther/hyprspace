@@ -1694,6 +1694,7 @@ def main():
             "lua",
             "selection",
             "empty_workspaces",
+            "close_workspaces",
             "layout",
             "resources",
             "configuration",
@@ -1706,6 +1707,7 @@ def main():
             "help",
             "zoom",
             "cursor_confinement",
+            "cursor_return",
             "transitions",
             "resize",
             "browser",
@@ -1827,6 +1829,10 @@ def main():
             import empty_workspaces
 
             empty_workspaces.run(suite, wait_for)
+        if args.only in ("all", "close_workspaces"):
+            import close_workspaces
+
+            close_workspaces.run(suite, wait_for)
         if args.only in ("all", "switcher"):
             import switcher
 
@@ -1877,7 +1883,10 @@ def main():
             import zoom
 
             zoom.lifecycle(suite, wait_for)
+        if args.only in ("all", "cursor_return"):
+            import cursor_return
 
+            cursor_return.run(suite, wait_for)
         if args.only in ("all", "cursor_confinement"):
             import cursor_confinement
 

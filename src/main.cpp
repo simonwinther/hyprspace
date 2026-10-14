@@ -227,7 +227,8 @@ namespace {
 
     bool foregroundPointer() {
         const auto pos = g_pInputManager->getMouseCoordsInternal();
-        return hooks::foregroundPointerAt(pos, session().cursorFollowAvailableAt(pos) || session().cursorConfinementBoundsAt(pos).has_value());
+        return hooks::foregroundPointerAt(pos, session().cursorFollowAvailableAt(pos) || session().cursorConfinementBoundsAt(pos).has_value() ||
+                                                   session().zoomCursorTravelAvailableAt(pos));
     }
 
     bool foregroundKeyboard() {
@@ -1050,6 +1051,12 @@ namespace {
     SDispatchResult dispatchWindowView(std::string args) {
         return session().windowView(args);
     }
+
+    SDispatchResult dispatchCloseWorkspace(std::string args) {
+        if (!args.empty())
+            return {.success = false, .error = "hyprspace: closeworkspace takes no arguments"};
+        return session().closeWorkspace();
+    }
     SDispatchResult dispatchHelp(std::string args) {
         return session().help(args);
     }
@@ -1136,6 +1143,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:close", dispatchClose);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:layoutcycle", dispatchLayoutCycle);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:emptyworkspace", dispatchEmptyWorkspace);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:closeworkspace", dispatchCloseWorkspace);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:windowview", dispatchWindowView);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:help", dispatchHelp);
 
@@ -1144,6 +1152,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "switch", [](lua_State* state) { return dispatchFromLua(state, dispatchSwitch); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "layoutcycle", [](lua_State* state) { return dispatchFromLua(state, dispatchLayoutCycle); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "emptyworkspace", [](lua_State* state) { return dispatchFromLua(state, dispatchEmptyWorkspace); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "closeworkspace", [](lua_State* state) { return dispatchFromLua(state, dispatchCloseWorkspace); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "windowview", [](lua_State* state) { return dispatchFromLua(state, dispatchWindowView); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "help", [](lua_State* state) { return dispatchFromLua(state, dispatchHelp); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "close", [](lua_State* state) { return dispatchFromLua(state, dispatchClose); });

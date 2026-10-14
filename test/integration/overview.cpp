@@ -9,12 +9,14 @@
 #include <hyprland/src/state/WorkspaceState.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 #include "../../src/CompositorHooks.hpp"
 #include <nlohmann/json.hpp>
 
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/pointer/PointerManager.hpp>
 
 #include <chrono>
 #include <cmath>
@@ -26,6 +28,57 @@
 using namespace hyprspace;
 
 namespace {
+    CHyprSignalListener cursorFrameListener;
+    nlohmann::json     cursorFrames = nlohmann::json::object();
+    uint64_t           cursorFrameSequence = 0;
+
+    nlohmann::json captureCursorFrame(PHLMONITOR mon) {
+        const auto cursor = Pointer::mgr()->position();
+        nlohmann::json frame{{"frame", ++cursorFrameSequence}, {"held", session().zoomHeld()}, {"cursor", {{"x", cursor.x}, {"y", cursor.y}}},
+                             {"cursor_return", !session().zoomHeld() && session().zoomCursorTravelAvailableAt(cursor)},
+                             {"cursor_travel", session().zoomCursorTravelAvailableAt(cursor)},
+                             {"cells", nlohmann::json::object()}, {"returning", false}, {"camera_settled", false}};
+        const auto boxJson = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
+        for (const auto& view : session().views)
+            if (!view->closing() && view->monitor() == mon) {
+                frame["returning"] = !session().zoomHeld() && !view->zoomNavigationReady();
+                frame["camera_settled"] = view->zoomNavigationReady();
+                for (const auto& target : view->inspectTargets())
+                    if (!target.window)
+                        frame["cells"][std::to_string(target.workspace.id)] = boxJson(target.preview);
+            }
+        if (session().windowViewActive() && session().windowBoard()->monitor() == mon) {
+            frame["returning"] = session().windowBoard()->inspectionReturning();
+            frame["camera_settled"] = session().zoomHeld() ? session().windowBoard()->inspectionSettled() : !frame["returning"].get<bool>();
+            if (const auto target = session().windowBoard()->selectedTarget())
+                frame["board"] = boxJson(target->preview);
+        }
+        return frame;
+    }
+
+    void recordCursorFrame(eRenderStage stage) {
+        if (stage != RENDER_POST_WINDOWS)
+            return;
+        if (!g_overviewSession || !session().live()) {
+            cursorFrames.clear();
+            return;
+        }
+        if (const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock())
+            cursorFrames[mon->m_name] = captureCursorFrame(mon);
+    }
+
+    SDispatchResult zoomCursorFrame(std::string monitor) {
+        if (!cursorFrames.contains(monitor))
+            return {.success = false, .error = "no rendered cursor frame for this output"};
+        return {.success = false, .error = cursorFrames[monitor].dump()};
+    }
+
+    SDispatchResult zoomCursorSample(std::string monitor) {
+        for (const auto& view : session().views)
+            if (!view->closing() && view->monitor()->m_name == monitor)
+                return {.success = false, .error = captureCursorFrame(view->monitor()).dump()};
+        return {.success = false, .error = "no live overview for this output"};
+    }
     PHLMONITORREF clockMonitor;
     float         originalRefresh = 0;
     void          resetClock() {
@@ -299,6 +352,18 @@ namespace {
         return {.success = true};
     }
 
+    SDispatchResult zoomCursorRelease(std::string monitor) {
+        if (!session().live() || !session().zoomHeld())
+            return {.success = false, .error = "cursor release requires held zoom"};
+        for (const auto& view : session().views)
+            if (const auto mon = view->monitor(); mon && mon->m_name == monitor) {
+                const auto before = captureCursorFrame(mon);
+                const auto result = zoomReleaseContinuity("44");
+                return result.success ? SDispatchResult{.success = false, .error = before.dump()} : result;
+            }
+        return {.success = false, .error = "unknown cursor return output"};
+    }
+
     SDispatchResult panContinuity(std::string arguments) {
         if (!session().live() || !session().zoomHeld() || !g_pInputManager || g_pInputManager->m_pointers.empty() || !g_pInputManager->m_pointers.front())
             return {.success = false, .error = "test requires held overview zoom and a live private pointer"};
@@ -480,6 +545,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:inspection-progress", warpInspection);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:pan-continuity", panContinuity);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:zoom-release-continuity", zoomReleaseContinuity);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:zoom-cursor-frame", zoomCursorFrame);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:zoom-cursor-sample", zoomCursorSample);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:zoom-cursor-release", zoomCursorRelease);
+    cursorFrameListener = Event::bus()->m_events.render.stage.listen(recordCursorFrame);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:cursor-overrides", cursorOverrideProbe);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:pointer-state", pointerState);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:capture", captureProbe);
@@ -492,5 +561,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    cursorFrameListener = {};
+    cursorFrames.clear();
     resetClock();
 }

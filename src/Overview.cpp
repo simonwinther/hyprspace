@@ -121,6 +121,8 @@ namespace hyprspace {
         for (const auto& ws : State::workspaceState()->workspacesCopy()) {
             if (!ws || ws->m_monitor != MONITOR || (ws->m_isSpecialWorkspace && !SPECIAL))
                 continue;
+            if (session().dismissedWorkspace(ws))
+                continue;
             const auto rule = Config::workspaceRuleMgr()->getWorkspaceRuleFor(ws);
             if (ws != MONITOR->m_activeWorkspace && ws != MONITOR->m_activeSpecialWorkspace && ws->getWindowCount() == 0 &&
                 !(rule && rule->m_isPersistent.value_or(false)) && !session().preparedWorkspace(ws))

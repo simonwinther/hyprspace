@@ -24,6 +24,7 @@ namespace hyprspace::hooks {
     void                             suspendOverviewKeys();
     std::expected<void, std::string> validateZoomKey(const std::string& name);
     std::expected<void, std::string> validateEmptyWorkspaceKey(const std::string& name);
+    std::expected<void, std::string> validateCloseWorkspaceKey(const std::string& name);
     std::expected<void, std::string> validateWindowViewKey(const std::string& name);
     std::expected<void, std::string> validateFollowKey(const std::string& name);
     std::expected<void, std::string> validateHelpKey(const std::string& name);

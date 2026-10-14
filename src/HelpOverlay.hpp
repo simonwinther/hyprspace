@@ -54,7 +54,7 @@ namespace hyprspace {
 
       private:
         struct SSettings {
-            xkb_keysym_t zoom, empty, windows, follow, help;
+            xkb_keysym_t zoom, empty, windows, follow, help, closeWorkspace;
             uint32_t     workspaceMods;
             bool         wheelZoom, followEnabled, followMouse, warpCursor, showFollowHint, allMonitors;
             bool         operator==(const SSettings&) const = default;

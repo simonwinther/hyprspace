@@ -72,6 +72,9 @@ namespace hyprspace {
         bool inspecting() const {
             return m_inspecting;
         }
+        bool inspectionReturning() const {
+            return !m_inspecting && (m_inspectionMix->isBeingAnimated() || m_reflow->isBeingAnimated());
+        }
         bool panning() const {
             return m_mousePan || m_keyboardPan;
         }

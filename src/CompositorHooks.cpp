@@ -691,9 +691,11 @@ namespace hyprspace::hooks {
                 const bool zoom       = owned && !searching && mods == 0 && zoomKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == zoomKey;
                 const auto emptyKey   = config::overviewEmptyWorkspaceKey();
                 const bool empty      = owned && !searching && mods == 0 && emptyKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == emptyKey;
-                const auto inspection = owned && session().zoomHeld() && !zoom && !empty && !searching ? inspectionKey(sym, mods) : EInspectionKey::NONE;
+                const auto closeKey   = config::overviewCloseWorkspaceKey();
+                const bool close      = owned && !board && mods == 0 && closeKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == closeKey;
+                const auto inspection = owned && session().zoomHeld() && !zoom && !empty && !close && !searching ? inspectionKey(sym, mods) : EInspectionKey::NONE;
                 stopReservedRepeat();
-                keys.push_back({keyboard, e.keycode, navigation || zoom || empty || inspection != EInspectionKey::NONE, owned, zoom,
+                keys.push_back({keyboard, e.keycode, navigation || zoom || empty || close || inspection != EInspectionKey::NONE, owned, zoom,
                                 zoom ? session().zoomPress() : std::nullopt, empty, inspection, session().zoomGeneration()});
                 it = std::prev(keys.end());
                 if (windowView) {
@@ -711,6 +713,11 @@ namespace hyprspace::hooks {
                     // keyboardView(). Ordinary navigation would select that
                     // previous view again after the action returned.
                     (void)session().emptyWorkspace();
+                    return false;
+                }
+                if (close) {
+                    it->oneShot = true;
+                    (void)session().closeWorkspace();
                     return false;
                 }
                 if (inspection != EInspectionKey::NONE) {
@@ -951,6 +958,15 @@ namespace hyprspace::hooks {
 
     std::expected<void, std::string> validateEmptyWorkspaceKey(const std::string& name) {
         return validateOverviewKey(name, "empty_workspace_key");
+    }
+
+    std::expected<void, std::string> validateCloseWorkspaceKey(const std::string& name) {
+        if (auto result = validateOverviewKey(name, "close_workspace_key"); !result)
+            return result;
+        const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
+        if (sym == XKB_KEY_plus || sym == XKB_KEY_equal || sym == XKB_KEY_minus || sym == XKB_KEY_KP_Add || sym == XKB_KEY_KP_Subtract)
+            return std::unexpected("close_workspace_key cannot replace an inspection zoom key");
+        return {};
     }
 
     std::expected<void, std::string> validateWindowViewKey(const std::string& name) {

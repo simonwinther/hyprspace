@@ -114,6 +114,8 @@ namespace hyprspace {
         void                    reconcileVisibility();
         bool                    covers(PHLMONITOR monitor) const;
         SDispatchResult         emptyWorkspace(PHLMONITOR monitor = nullptr);
+        SDispatchResult         closeWorkspace();
+        bool                    dismissedWorkspace(PHLWORKSPACE workspace);
         bool                    preparedWorkspace(PHLWORKSPACE workspace) const;
         PHLWORKSPACE            preparedLifetime(PHLWORKSPACE workspace) const;
         void                    hideWindow(PHLWINDOW window);
@@ -131,6 +133,7 @@ namespace hyprspace {
         bool                    cursorFollowShortcutAvailable() const;
         bool                    cursorFollowAvailableAt(const Vector2D& pos) const;
         std::optional<SBoxF>    cursorConfinementBoundsAt(const Vector2D& pos) const;
+        bool                    zoomCursorTravelAvailableAt(const Vector2D& pos) const;
         std::string             cursorFollowHint() const;
         bool                    cursorFollowEnabled() const {
             return m_cursorFollow.enabled();
@@ -200,6 +203,10 @@ namespace hyprspace {
         bool                                     cursorFollowEligible() const;
         void                                     cursorFollowMotion();
         void                                     advanceCursorFollow(PHLMONITOR renderedMonitor);
+        void                                     beginZoomCursorTravel();
+        bool                                     updateZoomCursorTravelPointer();
+        std::optional<SBoxF>                      zoomCursorTravelBox() const;
+        void                                     advanceZoomCursorTravel(PHLMONITOR renderedMonitor);
         void                                     retargetSelection(COverview& view);
         void                                     cancelZoomEdge();
         bool                                     zoomEdgeEnabled(const COverview& view) const;
@@ -226,11 +233,21 @@ namespace hyprspace {
             SWorkspaceIdentity source, destination;
             PHLMONITORREF      monitor;
         };
+        struct SZoomCursorTravel {
+            PHLMONITORREF    monitor;
+            PHLWORKSPACEREF  workspace;
+            PHLWINDOWREF     window;
+            SPoint           point;
+            SBoxF            box;
+            Vector2D         cursor;
+            uint64_t         boardGeneration = 0;
+        };
         CZoomEdgeHover                                     m_zoomEdgeHover;
         CInspectionFollow                                  m_cursorFollow;
         std::unique_ptr<CHelpOverlay>                      m_help;
         std::unique_ptr<CWindowBoard>                      m_windowBoard;
         std::optional<SZoomEdgeIntent>                     m_zoomEdgeIntent;
+        std::optional<SZoomCursorTravel>                   m_zoomCursorTravel;
         CZoomHoldState                                     m_zoomHolds;
         CZoomHoldState                                     m_panHolds;
         uint64_t                                           m_zoomGeneration = 0;
@@ -241,6 +258,7 @@ namespace hyprspace {
         SP<Hyprutils::Animation::SAnimationPropertyConfig> m_workspaceSettleConfig;
         PHLANIMVAR<float>                                  m_workspaceSettleProgress;
         std::vector<SPreparedWorkspace>                    m_preparedWorkspaces;
+        std::vector<PHLWORKSPACEREF>                        m_dismissedWorkspaces;
         bool                                               m_emptyButtonPressed = false;
         bool                                               m_cursorOwned        = false;
         Vector2D                                           m_pointer;

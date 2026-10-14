@@ -37,6 +37,7 @@ namespace hyprspace::config {
     std::string  overviewFont();
     xkb_keysym_t overviewZoomKey();
     xkb_keysym_t overviewEmptyWorkspaceKey();
+    xkb_keysym_t overviewCloseWorkspaceKey();
     xkb_keysym_t overviewWindowViewKey();
     xkb_keysym_t overviewFollowKey();
     xkb_keysym_t overviewHelpKey();

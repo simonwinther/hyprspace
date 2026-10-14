@@ -100,6 +100,7 @@ A session limited to one output starts on that output's active workspace.
 | `Enter` / `S` / `Space` | Switch to the selected workspace and close |
 | `Tab` / `Shift+Tab` | Next / previous workspace |
 | `N` | Select an empty workspace on the monitor under the pointer and keep the overview open |
+| `Q` | Close the selected empty workspace and select its nearest remaining neighbor |
 | Middle-click | Select an empty workspace on this monitor and keep the overview open |
 | Hold `Z` | Enlarge the selected workspace; release to smoothly restore the grid |
 | `Z` + wheel / vertical two-finger scroll | Magnify around the pointer |
@@ -252,6 +253,18 @@ bind = SUPER, G, hyprspace:windowview, app
 
 ### Workspace destinations
 
+Press **Q** on a selected empty workspace to close it while keeping the overview
+open. If it is active, the nearest remaining normal workspace on the same monitor
+becomes active. Closing an inactive workspace keeps the current desktop active.
+Workspaces containing windows, special workspaces, and the last normal workspace
+on each monitor are protected. Holding Q acts once. Configured persistent
+workspaces can return after reloading your configuration.
+
+Set `overview:close_workspace_key` to another XKB key name, or an empty value to
+disable it. Existing overview shortcuts take precedence on a shared key.
+The same action is available as `hyprspace:closeworkspace` or
+`hl.plugin.hyprspace.closeworkspace()` in Lua.
+
 Middle-click without modifiers, press **N**, or click **+ Empty workspace** on a
 monitor to prepare an empty destination there. This uses the pointer's monitor
 even when keyboard navigation selected a tile on another output or `follow_mouse = false`.
@@ -321,6 +334,12 @@ changing that workspace. For keyboard-only zoom, press **+** or **−** while Z 
 held; **=**, **Shift+plus** and keypad add/subtract are also accepted. Each press
 changes magnification by a factor of 1.15 around the viewport center, even if the
 pointer is on another output. Held keys use the keyboard's repeat delay and rate.
+
+Holding **Z** leaves the cursor under your control. A quick press, mouse move and
+release keeps its screen position; repeated stationary taps do not move it.
+After magnifying with the wheel or **+**/**−**, releasing **Z** carries the cursor
+back to the corresponding point in the grid. Movement during that return adjusts
+the local point, so you can keep moving while the view shrinks.
 
 On a laptop, hold **Z+Space** and move one finger on the touchpad to pan magnified
 content. Space is consumed while Z is held, including at the normal fit where
@@ -558,6 +577,7 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:empty_workspace_key` | string | `n` | Unmodified key that selects an empty workspace on the pointer's monitor; empty disables it. Zoom takes precedence if both keys match |
 | `overview:window_view_key` | string | `g` | Toggle the global window board inside the overview; Shift cycles groups. Empty disables it. Zoom and empty-workspace keys take precedence |
 | `overview:follow_key` | string | `f` | Toggle persistent cursor-follow while the zoom key is held. Empty disables the shortcut; zoom, empty-workspace and window-view keys take precedence. Navigation, system, zoom and pan keys cannot be assigned |
+| `overview:close_workspace_key` | string | `q` | Close the selected empty normal workspace while keeping the overview open. The last normal workspace on each monitor is protected; an active workspace switches to its nearest remaining tile. Empty disables; existing overview shortcuts take precedence |
 | `overview:show_follow_hint` | bool | `true` | Show the follow shortcut and enabled/disabled state while inspecting. Hiding it does not change the saved preference |
 | `overview:help_key` | string | `question` | Open searchable help (`?` by default). Empty disables it; existing overview shortcuts take precedence. Navigation, modifiers, system and inspection zoom keys cannot be assigned |
 | `overview:workspace_drag_modifiers` | string | `SUPER ALT` | Exact modifiers for left-dragging a regular workspace to another monitor; requires Super plus Alt, Ctrl or Shift. Empty disables it |

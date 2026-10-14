@@ -1155,8 +1155,10 @@ def cursor_follow(s, wait_for):
         s.run("grim", "-s", "1", "-o", s.names[0], str(s.root / "cursor-follow-over-panel.png"))
         s.key(Z, 0)
         released(s, wait_for)
+        assert s.status()["cursor_owned"]
+        relative_to(s, (500, 40))
         wait_for(lambda: not s.status()["cursor_owned"])
-        s.check("follow covers reserved Waybar space and all corners, then restores ordinary panel ownership when inspection ends")
+        s.check("follow covers Waybar and corners; release carries the cursor back and fresh panel motion restores ordinary panel ownership")
         s.close()
         panel.terminate()
         panel.wait(timeout=3)
