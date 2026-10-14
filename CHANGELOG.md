@@ -1,5 +1,60 @@
 # Changelog
 
+## [1.8.0](https://github.com/simonwinther/hyprspace/compare/v1.7.0...v1.8.0) (2026-10-14)
+
+
+### Features
+
+* add cursor follow and searchable help ([0c0aeb9](https://github.com/simonwinther/hyprspace/commit/0c0aeb9fda2b54d4efb19bfb4429e9aec2e2dbbc))
+* add experimental grouped window views ([bc6b8eb](https://github.com/simonwinther/hyprspace/commit/bc6b8eb3d91675ee66e8394901700371974ec49a))
+* add window views, cursor follow and help ([7c3bcf1](https://github.com/simonwinther/hyprspace/commit/7c3bcf1b48ba05319a33817e08d516c518f31466))
+* add workspace dragging between monitors ([01767b6](https://github.com/simonwinther/hyprspace/commit/01767b6fd87d668bf2fdac3ab69f630d9c28024a))
+* **config:** add Lua dispatcher bindings ([21d165d](https://github.com/simonwinther/hyprspace/commit/21d165dc514b9b3d6e3602359c25d04147abe073))
+* confine cursor during magnified follow ([9387ee2](https://github.com/simonwinther/hyprspace/commit/9387ee27f292ed8474ba11534ea76f1370452beb))
+* **docs:** add close workspace functionality to user guide ([3974ac6](https://github.com/simonwinther/hyprspace/commit/3974ac6a08b70589b45be4de5103913d8a6e0dd6))
+* **docs:** add documentation and templates for issues and contributions ([e721031](https://github.com/simonwinther/hyprspace/commit/e721031b4d28d9962cbd6747b95b6781022c7bdd))
+* **docs:** update README with new screenshot handling instructions ([64aebdb](https://github.com/simonwinther/hyprspace/commit/64aebdbcb9072cc49dfde950765be4462c872599))
+* **install:** add tagged installs and Nix package ([5e25df2](https://github.com/simonwinther/hyprspace/commit/5e25df2c31e6c69eeb0ce78c04f53c459fce975d))
+* integrate local robustness improvements with v1.3.1 ([035da55](https://github.com/simonwinther/hyprspace/commit/035da558937b6a4dd663067d7055bb36e3026cad))
+* **overview:** add hold-to-zoom workspace previews ([59f9a1a](https://github.com/simonwinther/hyprspace/commit/59f9a1a496a3910f225cac9112116db5bf330d72))
+* **overview:** add wheel zoom and drag pan ([6af06c7](https://github.com/simonwinther/hyprspace/commit/6af06c7608f34a883b30fcaaaedf324fbca91874))
+* **overview:** add wheel zoom and drag pan ([#9](https://github.com/simonwinther/hyprspace/issues/9)) ([efc3b5d](https://github.com/simonwinther/hyprspace/commit/efc3b5dc6e394fb5e85e10c06af92c4d8d0fffb8))
+* **overview:** browse zoomed workspaces on hover ([ea914e4](https://github.com/simonwinther/hyprspace/commit/ea914e4827298a8c8501af36a0365a0989957943))
+* **overview:** make workspaces interactive ([8c36ae7](https://github.com/simonwinther/hyprspace/commit/8c36ae7815a491218d0e6e587974b34f32cb9082))
+
+
+### Bug Fixes
+
+* activate board search with shifted keyboard layouts ([d96a241](https://github.com/simonwinther/hyprspace/commit/d96a2418a55e3160671b398802c264ecb61e1c95))
+* **build:** declare JSON header dependency ([4383a73](https://github.com/simonwinther/hyprspace/commit/4383a73a001886c6e2dc20125abc25a97015ebcd))
+* **ci:** install fonts for raster tests ([c9ae7bc](https://github.com/simonwinther/hyprspace/commit/c9ae7bcbb886a4ab6adba4d10ce462f6da98ff60))
+* **config:** align workspace option defaults ([cb4036a](https://github.com/simonwinther/hyprspace/commit/cb4036a7e09b2cdba7b27d30dbf9e728a33c4ffd))
+* give board search a proper caret and text editing ([2097a1d](https://github.com/simonwinther/hyprspace/commit/2097a1d02bf7fce0d70759c6bcb1cfe517556ff4))
+* **hooks:** preserve foreign dispatchers ([658dcdc](https://github.com/simonwinther/hyprspace/commit/658dcdc3262a1573f6430aff7b13c98ff1720a73))
+* **icons:** resolve compressed and scaled assets ([6a5fade](https://github.com/simonwinther/hyprspace/commit/6a5fade2145eebee415d65ed39d91c9e135948e9))
+* **icons:** respect desktop entry precedence ([43d0cc6](https://github.com/simonwinther/hyprspace/commit/43d0cc6b853e0610e3c36695ff5aa1da8cf70a82))
+* keep window board outlines intact at fractional scales ([5704ac1](https://github.com/simonwinther/hyprspace/commit/5704ac16f950d5085a0d328b0c670a4a5d5c2e46))
+* **launch:** preserve service command arguments ([665dcaa](https://github.com/simonwinther/hyprspace/commit/665dcaa90ff794b28617d8a4808868b324269643))
+* **overlays:** block activation while locked ([d93b9c3](https://github.com/simonwinther/hyprspace/commit/d93b9c36d22ac03ce5a5e4c7968af89ce787a543))
+* **overview:** bound workspace resizing ([1188778](https://github.com/simonwinther/hyprspace/commit/1188778ba08996e43957f0781ebfd3c0f23bd6ba))
+* **overview:** clear stale tiles on empty refresh ([e032e24](https://github.com/simonwinther/hyprspace/commit/e032e24f9d9752d5cf20c5de110f24bda4403a0f))
+* **overview:** resolve interaction audit findings ([8fe2ba5](https://github.com/simonwinther/hyprspace/commit/8fe2ba5c6127a7d193b33302e683967e6e8683a8))
+* **overview:** restore Lua command routing ([24c1c1a](https://github.com/simonwinther/hyprspace/commit/24c1c1a55c0eb45cce68c488b73862ea1af63480))
+* **overview:** resume selection after zoom release ([5d47ab1](https://github.com/simonwinther/hyprspace/commit/5d47ab175c4c965a8cbc6eea331d0d781fdcb645))
+* **overview:** retain keyboard selection ([08239f6](https://github.com/simonwinther/hyprspace/commit/08239f666d80489deb28f6d32cb942f7f1a8da28))
+* preserve opening selection through rapid overview toggles ([1a0dc59](https://github.com/simonwinther/hyprspace/commit/1a0dc5918b28b2b3958276e887a17e4d55938868))
+* release integration runner artifacts after teardown ([8611bec](https://github.com/simonwinther/hyprspace/commit/8611bec3bfabad1e4cd6c2656680daaa7de601b7))
+* **release:** consolidate initial release notes ([837d07b](https://github.com/simonwinther/hyprspace/commit/837d07bb63232a2e96cf9b3e27bb5539a3aad8fa))
+* **release:** test versions independently ([04422e9](https://github.com/simonwinther/hyprspace/commit/04422e98027bb5d49d66b52c589a16c1ce623dfc))
+* **render:** cap capture and texture memory ([838b8b5](https://github.com/simonwinther/hyprspace/commit/838b8b58dbed1f733862b18d4428446fba132163))
+* **render:** show switcher over fullscreen ([ff6775d](https://github.com/simonwinther/hyprspace/commit/ff6775d8638fc32b99347d0ecf37d444ca3d4dd8))
+
+
+### Performance Improvements
+
+* **overview:** reuse unchanged layouts ([48f48a4](https://github.com/simonwinther/hyprspace/commit/48f48a4744b3a04751591f67408cc2687648fbb7))
+* **raster:** reuse measured text layouts ([5de62a1](https://github.com/simonwinther/hyprspace/commit/5de62a1378307bf591b4db35a9c6bc88270c3320))
+
 ## [1.7.0](https://github.com/simonwinther/hyprspace/compare/v1.6.0...v1.7.0) (2026-10-14)
 
 - Keep the cursor inside the inspected monitor during magnified cursor-follow, including while panning. Returning to the fitted view, releasing Z or disabling Follow restores free movement immediately.
