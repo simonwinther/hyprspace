@@ -12,13 +12,13 @@ a newer stable release for you. Explicit revisions also take precedence over
 repository commit pins in the [supported hyprpm implementation](https://github.com/hyprwm/Hyprland/blob/efb50993780079460b0cbed1363e2166a2de1d9f/hyprpm/src/core/PluginManager.cpp).
 
 To change versions, disable and remove the installed repository, then repeat
-installation with the desired published tag. This example selects `v1.6.0`:
+installation with the desired published tag. This example selects `v1.7.0`:
 
 ```bash
 hyprpm disable hyprspace
 hyprpm reload
 hyprpm remove hyprspace
-hyprpm add https://github.com/simonwinther/hyprspace.git v1.6.0
+hyprpm add https://github.com/simonwinther/hyprspace.git v1.7.0
 hyprpm enable hyprspace
 hyprpm reload
 hyprctl plugin list

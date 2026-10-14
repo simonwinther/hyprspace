@@ -2,11 +2,11 @@
 
 ## [1.7.0](https://github.com/simonwinther/hyprspace/compare/v1.6.0...v1.7.0) (2026-10-14)
 
+- Keep the cursor inside the inspected monitor during magnified cursor-follow, including while panning. Returning to the fitted view, releasing Z or disabling Follow restores free movement immediately.
+- Preserve the cursor position through quick inspection taps and carry it back to the corresponding grid point after magnifying.
+- Close a selected empty workspace with Q while keeping the overview open. Populated workspaces, special workspaces and the last normal workspace on each monitor are protected.
 
-### Features
-
-* confine cursor during magnified follow ([9387ee2](https://github.com/simonwinther/hyprspace/commit/9387ee27f292ed8474ba11534ea76f1370452beb))
-* **docs:** add close workspace functionality to user guide ([3974ac6](https://github.com/simonwinther/hyprspace/commit/3974ac6a08b70589b45be4de5103913d8a6e0dd6))
+Supports Hyprland 0.56.2 (`efb50993780079460b0cbed1363e2166a2de1d9f`).
 
 ## [1.6.0](https://github.com/simonwinther/hyprspace/compare/v1.5.0...v1.6.0) (2026-10-12)
 

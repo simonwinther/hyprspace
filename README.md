@@ -11,7 +11,7 @@ separate compatibility testing.
 
 Use **hyprpm** on Arch and other Linux setups with the supported Hyprland build,
 or the **tagged flake** on Nix. [Published releases](https://github.com/simonwinther/hyprspace/releases)
-are the stable-version list. The commands below select `v1.6.0`. An unversioned
+are the stable-version list. The commands below select `v1.7.0`. An unversioned
 repository install tracks development.
 
 ### Arch Linux and hyprpm
@@ -22,7 +22,7 @@ and select the release explicitly:
 ```bash
 sudo pacman -S --needed hyprland base-devel git cmake cpio cairo pango gdk-pixbuf2 librsvg libei nlohmann-json jq python
 hyprpm update
-hyprpm add https://github.com/simonwinther/hyprspace.git v1.6.0
+hyprpm add https://github.com/simonwinther/hyprspace.git v1.7.0
 hyprpm enable hyprspace
 hyprpm reload
 ```
@@ -66,7 +66,7 @@ Add these inputs to your system flake:
 
 ```nix
 inputs.hyprland.url = "github:hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f";
-inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.6.0";
+inputs.hyprspace.url = "github:simonwinther/hyprspace/v1.7.0";
 inputs.hyprspace.inputs.hyprland.follows = "hyprland";
 ```
 
@@ -118,6 +118,7 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | R in the window board | Toggle recent-first order |
 | Arrows or Tab / Shift+Tab, then Enter or S | Select and open a workspace |
 | N or + Empty workspace | Select an empty workspace on the monitor under the pointer |
+| Q | Close the selected empty workspace and select its nearest remaining neighbor |
 | Middle-click | Select an empty workspace on that monitor and keep the overview open |
 | ? | Open searchable help; / searches and Escape returns to the current view |
 | F while holding Z | Toggle cursor-follow; the choice survives restarts |
