@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.0](https://github.com/simonwinther/hyprspace/compare/v1.6.0...v1.7.0) (2026-10-14)
+
+
+### Features
+
+* confine cursor during magnified follow ([9387ee2](https://github.com/simonwinther/hyprspace/commit/9387ee27f292ed8474ba11534ea76f1370452beb))
+* **docs:** add close workspace functionality to user guide ([3974ac6](https://github.com/simonwinther/hyprspace/commit/3974ac6a08b70589b45be4de5103913d8a6e0dd6))
+
 ## [1.6.0](https://github.com/simonwinther/hyprspace/compare/v1.5.0...v1.6.0) (2026-10-12)
 
 - Add a global window board with app, workspace and monitor grouping, recent ordering, and Unicode search.
