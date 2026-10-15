@@ -2,10 +2,11 @@
 
 ## [1.8.0](https://github.com/simonwinther/hyprspace/compare/v1.7.0...v1.8.0) (2026-10-15)
 
+- Open All windows with search focused by pressing `/` directly from the workspace overview, regardless of the previously selected window grouping.
+- Keep the search shortcut layout-aware and consume held or repeated opening keys without inserting a slash or passing input to the underlying application.
+- Update searchable help and the guides with combined application/title search examples and Escape navigation.
 
-### Miscellaneous Chores
-
-* **release:** review direct window search for 1.8.0 ([1409b95](https://github.com/simonwinther/hyprspace/commit/1409b951886bc3f78d6294bc14e6f157b841c2a2))
+Supports Hyprland 0.56.2 (`efb50993780079460b0cbed1363e2166a2de1d9f`).
 
 ## [1.7.0](https://github.com/simonwinther/hyprspace/compare/v1.6.0...v1.7.0) (2026-10-14)
 
