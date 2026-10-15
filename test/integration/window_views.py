@@ -35,6 +35,75 @@ def search(s, text):
     s.run("wtype", text)
 
 
+def overview_search(s, wait_for):
+    s.setup("dwindle", 0, 1)
+    chrome = s.spawn(["env", "HS_APP_ID=google-chrome", "python3", str(s.client),
+                      "hs-Project roadmap", "hs-Release notes"])
+    try:
+        wait_for(lambda: len(s.windows()) == 5)
+        project = s.windows()["hs-Project roadmap"]["address"]
+        s.ctl("dispatch", "movetoworkspacesilent", "12,address:" + project)
+        s.ctl("dispatch", "focuswindow", "address:" + s.windows()["hs-A"]["address"])
+        original = placement(s)
+        original_focus = s.data("activewindow")["address"]
+        log = s.root / "input.log"
+        log.write_text("")
+        s.ctl("dispatch", "hyprspace:overview", "on")
+        wait_for(lambda: s.status()["live"])
+        s.move(s.preview_point("hs-A"))
+        s.key(53, 1)  # / opens global search directly from workspace tiles.
+        wait_for(lambda: board(s)["active"] and board(s)["search_focused"])
+        assert board(s)["grouping"] == "flat" and board(s)["count"] == 5
+        s.key(53, 1)
+        time.sleep(.7)
+        assert board(s)["query"] == ""
+        assert placement(s) == original and s.data("activewindow")["address"] == original_focus
+
+        # An opening press stays consumed when the overview closes and reopens.
+        s.close()
+        s.ctl("dispatch", "hyprspace:overview", "on")
+        wait_for(lambda: s.status()["live"])
+        s.key(53, 1)
+        assert not board(s)["active"]
+        s.key(53, 0)
+        tap(s, 53)
+        assert board(s)["search_focused"] and board(s)["query"] == ""
+        s.run("wtype", "CHROME")
+        wait_for(lambda: board(s)["count"] == 2)
+        s.run("wtype", " project")
+        wait_for(lambda: board(s)["count"] == 1)
+        assert board(s)["selected_window"] == project
+        assert placement(s) == original and s.data("activewindow")["address"] == original_focus
+        assert not log.read_text(), log.read_text()
+        s.run("wtype", "-k", "Return")
+        wait_for(lambda: not s.status()["views"])
+        assert s.data("activewindow")["address"] == project
+        assert s.data("activeworkspace")["id"] == 12 and placement(s) == original
+
+        # A prior grouping does not hide results when entering direct search.
+        opened(s, wait_for, "app")
+        s.ctl("dispatch", "hyprspace:windowview", "off")
+        search(s, "release notes")
+        wait_for(lambda: board(s)["count"] == 1)
+        assert board(s)["grouping"] == "flat"
+        assert board(s)["selected_window"] == s.windows()["hs-Release notes"]["address"]
+        s.run("wtype", "-k", "Escape")
+        assert board(s)["active"] and not board(s)["search_focused"] and board(s)["query"] == ""
+        assert board(s)["count"] == 5
+        s.run("wtype", "-k", "Escape")
+        assert s.status()["live"] and not board(s)["active"]
+        s.run("wtype", "-k", "Escape")
+        wait_for(lambda: not s.status()["views"])
+        s.check("/ from workspaces searches app names and titles across outputs; Enter focuses the native window and Escape unwinds search and views")
+        s.check("the search opener acts once through repeats and close/reopen, without typing a slash or leaking input")
+    finally:
+        s.key(53, 0)
+        s.close()
+        chrome.terminate()
+        chrome.wait(timeout=3)
+        wait_for(lambda: len(s.windows()) == 3)
+
+
 def scrolling(s, wait_for):
     fixture = s.artifact("test-overview.so")
     s.ctl("plugin", "load", str(fixture))
@@ -128,7 +197,8 @@ def scrolling_cases(s, wait_for):
 def danish_search(s, wait_for):
     # wtype installs a keymap for its requested symbols. Use physical keycodes
     # with the user's Danish layout to exercise Shift+7 rather than a US slash.
-    opened(s, wait_for)
+    s.ctl("dispatch", "hyprspace:overview", "on")
+    wait_for(lambda: s.status()["live"])
     before = placement(s)
     log = s.root / "input.log"
     log.write_text("")
@@ -205,7 +275,7 @@ def danish_search(s, wait_for):
             s.ctl("keyword", "unbind", "CTRL SHIFT,7")
         press(1)
         s.close()
-        s.check("Danish Shift+7 opens search once; / and Danish letters type literally; modified shortcuts retain native routing")
+        s.check("Danish Shift+7 opens search directly from workspaces once; / and Danish letters type literally; modified shortcuts retain native routing")
     finally:
         for code in (8, SHIFT, 29):
             if keyboard.poll() is None:
@@ -466,6 +536,7 @@ def cursor_follow(s, wait_for):
 
 
 def run(s, wait_for):
+    overview_search(s, wait_for)
     s.setup("dwindle", 0, 1)
     original = placement(s)
     addresses = {w["address"] for w in s.windows().values()}

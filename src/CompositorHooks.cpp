@@ -48,9 +48,9 @@ namespace hyprspace::hooks {
         CFunctionHook*                  cursorRenderingHook = nullptr;
         CFunctionHook *                 relativeMotionHook = nullptr, *absoluteMotionHook = nullptr;
         CFunctionHook *                 closestPositionHook = nullptr, *cursorMovedHook = nullptr;
-        double                          axisScale    = 1.0;
-        bool                            keyRelease   = false;
-        bool                            deviceMotion = false;
+        double                          axisScale             = 1.0;
+        bool                            keyRelease            = false;
+        bool                            deviceMotion          = false;
         bool                            confineRelativeMotion = false;
         std::optional<SBoxF>            absoluteConfinement;
         std::optional<Vector2D>         desktopPoint;
@@ -394,8 +394,8 @@ namespace hyprspace::hooks {
         }
 
         void pointerRelative(CInputManager* self, IPointer::SMotionEvent event) {
-            using Fn                                     = void (*)(CInputManager*, IPointer::SMotionEvent);
-            const bool                          previous = std::exchange(deviceMotion, true);
+            using Fn                                             = void (*)(CInputManager*, IPointer::SMotionEvent);
+            const bool                          previous         = std::exchange(deviceMotion, true);
             const bool                          previousRelative = std::exchange(confineRelativeMotion, true);
             const auto                          previousAbsolute = std::exchange(absoluteConfinement, std::nullopt);
             const Hyprutils::Utils::CScopeGuard restore([=] {
@@ -407,8 +407,8 @@ namespace hyprspace::hooks {
         }
 
         void pointerAbsolute(CInputManager* self, IPointer::SMotionAbsoluteEvent event) {
-            using Fn                                     = void (*)(CInputManager*, IPointer::SMotionAbsoluteEvent);
-            const bool                          previous = std::exchange(deviceMotion, true);
+            using Fn                                             = void (*)(CInputManager*, IPointer::SMotionAbsoluteEvent);
+            const bool                          previous         = std::exchange(deviceMotion, true);
             const bool                          previousRelative = std::exchange(confineRelativeMotion, false);
             const auto                          bounds           = g_overviewSession && event.device && event.device->getType() == HID_TYPE_POINTER
                                                                        ? session().cursorConfinementBoundsAt(Pointer::mgr()->position())
@@ -684,6 +684,7 @@ namespace hyprspace::hooks {
                     return original(self, event, keyboard) && !owned;
                 }
                 const bool boardRoute = owned && board && (board->reservesKey(sym, mods, text) || reserved(sym, mods));
+                const bool searchView = owned && !board && CWindowBoard::searchShortcut(sym, mods, text);
                 const auto viewKey    = config::overviewWindowViewKey();
                 const bool windowView =
                     owned && !searching && viewKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == viewKey && (mods == 0 || (board && mods == HL_MODIFIER_SHIFT));
@@ -695,7 +696,7 @@ namespace hyprspace::hooks {
                 const bool close      = owned && !board && mods == 0 && closeKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == closeKey;
                 const auto inspection = owned && session().zoomHeld() && !zoom && !empty && !close && !searching ? inspectionKey(sym, mods) : EInspectionKey::NONE;
                 stopReservedRepeat();
-                keys.push_back({keyboard, e.keycode, navigation || zoom || empty || close || inspection != EInspectionKey::NONE, owned, zoom,
+                keys.push_back({keyboard, e.keycode, navigation || zoom || empty || close || searchView || inspection != EInspectionKey::NONE, owned, zoom,
                                 zoom ? session().zoomPress() : std::nullopt, empty, inspection, session().zoomGeneration()});
                 it = std::prev(keys.end());
                 if (windowView) {
@@ -729,6 +730,12 @@ namespace hyprspace::hooks {
                         if (!it->oneShot)
                             startReservedRepeat(keyboard, e.keycode);
                     }
+                    return false;
+                }
+                if (searchView) {
+                    it->oneShot = true;
+                    if (session().windowView("flat").success)
+                        session().windowBoard()->onKey(sym, mods, text);
                     return false;
                 }
                 if (boardRoute) {
@@ -1422,13 +1429,13 @@ namespace hyprspace::hooks {
         keyHook = inputHook = focusHook = coordsHook = warpHook = nullptr;
         pointerHook = imeModsHook = axisHook = mouseBindHook = nullptr;
         relativeMotionHook = absoluteMotionHook = nullptr;
-        closestPositionHook = cursorMovedHook   = nullptr;
-        layoutPointerHook                       = nullptr;
-        cursorRenderingHook                     = nullptr;
-        axisScale                               = 1.0;
-        keyRelease                              = false;
-        deviceMotion                            = false;
-        confineRelativeMotion                   = false;
+        closestPositionHook = cursorMovedHook = nullptr;
+        layoutPointerHook                     = nullptr;
+        cursorRenderingHook                   = nullptr;
+        axisScale                             = 1.0;
+        keyRelease                            = false;
+        deviceMotion                          = false;
+        confineRelativeMotion                 = false;
         absoluteConfinement.reset();
         desktopPoint.reset();
         ownsKeyboard      = {};

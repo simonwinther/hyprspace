@@ -185,6 +185,11 @@ window board on the currently selected output. It gathers windows from every
 output covered by the overview. Other outputs remain dimmed. The usual overview
 still opens first, and G returns to it.
 
+Press **/** directly from the workspace overview to open All windows with the
+search field focused. Type an app name, a window title, or both: `chrome project`
+finds Chrome windows whose titles contain “project”. Enter or a click focuses
+the selected window on its original workspace and monitor.
+
 | Control | Action |
 |---|---|
 | Toolbar / Shift+G | Choose All windows, Apps, Workspaces or Monitors |

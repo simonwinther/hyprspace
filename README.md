@@ -114,7 +114,7 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | Click a preview | Focus that window |
 | G | Toggle the global window board and workspace overview |
 | Shift + G in the window board | Cycle All windows, Apps, Workspaces and Monitors |
-| / in the window board | Search titles, apps, workspace names and monitor names |
+| / | Search open windows by title, app, workspace or monitor from either overview view |
 | R in the window board | Toggle recent-first order |
 | Arrows or Tab / Shift+Tab, then Enter or S | Select and open a workspace |
 | N or + Empty workspace | Select an empty workspace on the monitor under the pointer |
@@ -143,7 +143,10 @@ app, workspace or monitor; **All windows** gives a flat grid. Grouping changes
 the previews while your native windows keep their workspace, layout and size.
 Cards keep a readable minimum size and scroll when they need more room.
 
-Press **/** to search. Letters, spaces and digits become search text; **Ctrl+U**
+Press **/** directly from the workspace overview to open the window board with
+search focused, or to search while already browsing the board. Search an app
+name such as `chrome`, a window title, or both, such as `chrome project`.
+Letters, spaces and digits become search text; **Ctrl+U**
 clears it. Arrows or Tab browse the results, and Enter or a click opens the
 selected window on its own monitor. Hold **Z** to inspect that window with the
 existing zoom and pan controls. **R** orders each group by a snapshot of recent

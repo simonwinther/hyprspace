@@ -84,6 +84,7 @@ namespace hyprspace {
         void                           refresh();
         void                           cycleGrouping();
         void                           setGrouping(EWindowGrouping grouping);
+        static bool                    searchShortcut(xkb_keysym_t sym, uint32_t mods, const std::string& text);
         bool                           reservesKey(xkb_keysym_t sym, uint32_t mods, const std::string& text) const;
         void                           onKey(xkb_keysym_t sym, uint32_t mods, const std::string& text);
         void                           pointer(const Vector2D& pos, bool userMotion);

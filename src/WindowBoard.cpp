@@ -29,14 +29,6 @@ namespace hyprspace {
     namespace {
         uint64_t nextBoardGeneration = 0;
 
-        bool searchShortcut(xkb_keysym_t sym, uint32_t mods, const std::string& text) {
-            if (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META))
-                return false;
-            // Navigation uses unshifted symbols, but / can require Shift or
-            // AltGr. Prefer the character produced by the keyboard's layout.
-            return text == "/" || (text.empty() && mods == 0 && sym == XKB_KEY_slash);
-        }
-
         SBoxF intersection(const SBoxF& a, const SBoxF& b) {
             const double x = std::max(a.x, b.x), y = std::max(a.y, b.y);
             return {x, y, std::max(0.0, std::min(a.x + a.w, b.x + b.w) - x), std::max(0.0, std::min(a.y + a.h, b.y + b.h) - y)};
@@ -445,6 +437,14 @@ namespace hyprspace {
 
     bool CWindowBoard::searchCaretVisible() const {
         return m_active && m_searchFocused && m_caretVisible && hooks::keyboardOwned();
+    }
+
+    bool CWindowBoard::searchShortcut(xkb_keysym_t sym, uint32_t mods, const std::string& text) {
+        if (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META))
+            return false;
+        // Navigation uses unshifted symbols, but / can require Shift or
+        // AltGr. Prefer the character produced by the keyboard's layout.
+        return text == "/" || (text.empty() && mods == 0 && sym == XKB_KEY_slash);
     }
 
     bool CWindowBoard::reservesKey(xkb_keysym_t sym, uint32_t mods, const std::string& text) const {
@@ -1012,7 +1012,7 @@ namespace hyprspace {
                 text("Escape clears the search", {m_viewport.x, m_viewport.cy() + 20, m_viewport.w, 28}, fade(ink, 0.6F), opacity, true);
         }
         const auto followLabel = m_session.cursorFollowHint();
-        const auto followHint = followLabel.empty() ? "" : followLabel + " · ";
+        const auto followHint  = followLabel.empty() ? "" : followLabel + " · ";
         const auto hints = m_inspecting ? std::format("Release {} to return · {}Wheel / + − zoom · Space or right-drag to pan", zoomKey, followHint)
                                         : (viewKey.empty() ? "" : std::format("{}  Workspaces    Shift+{}  Group    ", viewKey, viewKey)) + "/  Search    R  Recent    " +
                                               (zoomKey.empty() ? "" : std::format("Hold {}  Inspect    ", zoomKey)) + "Enter  Open";
