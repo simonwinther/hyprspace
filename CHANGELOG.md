@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/simonwinther/hyprspace/compare/v1.7.0...v1.8.0) (2026-10-15)
+
+
+### Miscellaneous Chores
+
+* **release:** review direct window search for 1.8.0 ([1409b95](https://github.com/simonwinther/hyprspace/commit/1409b951886bc3f78d6294bc14e6f157b841c2a2))
+
 ## [1.7.0](https://github.com/simonwinther/hyprspace/compare/v1.6.0...v1.7.0) (2026-10-14)
 
 - Keep the cursor inside the inspected monitor during magnified cursor-follow, including while panning. Returning to the fitted view, releasing Z or disabling Follow restores free movement immediately.
