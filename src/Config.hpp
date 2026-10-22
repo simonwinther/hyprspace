@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace hyprspace::config {
 
@@ -27,6 +28,7 @@ namespace hyprspace::config {
     CHyprColor overviewHoverBorder();
     bool       overviewShowLabels();
     bool       overviewIncludeSpecial();
+    bool       overviewExcludesWorkspace(std::string_view name);
     [[deprecated("compatibility option has no effect")]]
     bool         overviewAllWorkspaces();
     bool         overviewAllMonitors();
@@ -35,6 +37,7 @@ namespace hyprspace::config {
     CHyprColor   overviewTileBorderColor();
     CHyprColor   overviewTitleBgColor();
     std::string  overviewFont();
+    std::string  overviewPreviewFilter();
     xkb_keysym_t overviewZoomKey();
     xkb_keysym_t overviewEmptyWorkspaceKey();
     xkb_keysym_t overviewCloseWorkspaceKey();
@@ -61,8 +64,10 @@ namespace hyprspace::config {
     std::string switcherFont();
 
     // --- shared ---
-    bool followMouse();
-    bool warpCursor();
-    bool diagnosticsEnabled();
+    bool        followMouse();
+    bool        warpCursor();
+    bool        diagnosticsEnabled();
+    bool        spacesEnabled();
+    std::string spacesTheme();
 
 } // namespace hyprspace::config

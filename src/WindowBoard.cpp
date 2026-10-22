@@ -1,4 +1,6 @@
 #include "WindowBoard.hpp"
+#include "Spaces.hpp"
+#include "SpaceSelector.hpp"
 
 #include "Access.hpp"
 #include "Config.hpp"
@@ -6,6 +8,7 @@
 #include "DesktopDb.hpp"
 #include "Overview.hpp"
 #include "PassElements.hpp"
+#include "SpaceStyle.hpp"
 #include "PreviewStyle.hpp"
 #include "Texture.hpp"
 
@@ -18,8 +21,6 @@
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
-#include <hyprland/src/render/pass/BorderPassElement.hpp>
-#include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -146,8 +147,9 @@ namespace hyprspace {
         const auto&  reserved = mon->m_reservedArea;
         const SBoxF  usable{reserved.left(), reserved.top(), std::max(1.0, mon->m_size.x - reserved.left() - reserved.right()),
                             std::max(1.0, mon->m_size.y - reserved.top() - reserved.bottom())};
-        const double padding = std::min<double>(config::overviewPadding(), std::min(usable.w, usable.h) * 0.08);
-        const SBoxF  viewport{usable.x + padding, usable.y + padding + 132, std::max(1.0, usable.w - padding * 2), std::max(1.0, usable.h - padding * 2 - 166)};
+        const auto   content = spaceSelector().contentBounds(mon);
+        const double padding = std::min<double>(config::overviewPadding(), std::min(content.w, content.h) * 0.055);
+        const SBoxF  viewport{content.x + padding, content.y + padding + 132, std::max(1.0, content.w - padding * 2), std::max(1.0, content.h - padding * 2 - 166)};
         const double gap = std::clamp<double>(config::overviewGap(), 8, 32);
         if (m_usable != usable || m_viewport != viewport || m_gap != gap) {
             m_session.pauseCursorFollow();
@@ -157,27 +159,35 @@ namespace hyprspace {
         m_viewport = viewport;
         m_gap      = gap;
 
-        std::vector<SItem> fresh;
-        for (const auto& window : Desktop::windowState()->windows()) {
-            if (!window || !window->m_isMapped || window->isHidden() || !window->m_workspace || !m_session.covers(window->m_monitor.lock()) ||
-                (window->m_workspace->m_isSpecialWorkspace && !config::overviewIncludeSpecial()))
+        std::vector<SItem>                                              fresh;
+        std::unordered_map<const Desktop::View::CWindow*, const SItem*> oldItems;
+        for (const auto& old : m_items)
+            if (const auto window = old.window.lock())
+                oldItems.emplace(window.get(), &old);
+        for (const auto& reference : spaces::windowRefs()) {
+            const auto window = reference.lock();
+            if (!window || !window->m_isMapped || window->isHidden() || !window->m_workspace || !spaces::inActive(window->m_workspace) ||
+                !m_session.covers(window->m_monitor.lock()) || (window->m_workspace->m_isSpecialWorkspace && !config::overviewIncludeSpecial()) ||
+                config::overviewExcludesWorkspace(window->m_workspace->m_name))
                 continue;
-            const auto     old    = std::ranges::find_if(m_items, [&](const auto& candidate) { return candidate.window == window; });
-            const uint64_t key    = old == m_items.end() ? m_nextKey++ : old->input.key;
+            const auto     old    = oldItems.find(window.get());
+            const uint64_t key    = old == oldItems.end() ? m_nextKey++ : old->second->input.key;
             const auto     cls    = window->m_class.empty() ? window->m_initialClass : window->m_class;
             const auto     app    = appIdentity(cls);
             const auto     source = window->m_monitor.lock();
             const auto     ws     = window->m_workspace;
-            fresh.push_back({{.key           = key,
-                              .monitor       = source->m_id,
-                              .workspace     = ws->m_id,
-                              .monitorName   = source->m_name,
-                              .workspaceName = ws->m_name,
-                              .appId         = app.id,
-                              .appName       = app.name,
-                              .appClass      = cls,
-                              .title         = window->m_title.empty() ? app.name : window->m_title,
-                              .recent        = m_recency.contains(key) ? m_recency.at(key) : std::numeric_limits<size_t>::max()},
+            fresh.push_back({{.key              = key,
+                              .monitor          = source->m_id,
+                              .workspace        = ws->m_id,
+                              .monitorName      = source->m_name,
+                              .workspaceName    = ws->m_name,
+                              .appId            = app.id,
+                              .appName          = app.name,
+                              .appClass         = cls,
+                              .title            = window->m_title.empty() ? app.name : window->m_title,
+                              .recent           = m_recency.contains(key) ? m_recency.at(key) : std::numeric_limits<size_t>::max(),
+                              .workspaceDisplay = spaces::label(ws),
+                              .workspaceOrder   = spaces::localNumber(ws)},
                              window});
         }
         std::vector<SWindowViewInput> input;
@@ -345,9 +355,14 @@ namespace hyprspace {
         const auto card = std::ranges::find(m_layout.cards, m_selected, &SWindowViewCard::key);
         if (card == m_layout.cards.end())
             return;
-        if (card->box.y - m_scroll < m_viewport.y)
+        // Short outputs can fit only part of a readable card. Align its top
+        // rather than revealing the top and immediately scrolling it away to
+        // reveal the bottom; manual scrolling can inspect the remaining area.
+        if (card->box.h >= m_viewport.h)
             m_scroll = card->box.y - m_viewport.y;
-        if (card->box.y + card->box.h - m_scroll > m_viewport.y + m_viewport.h)
+        else if (card->box.y - m_scroll < m_viewport.y)
+            m_scroll = card->box.y - m_viewport.y;
+        else if (card->box.y + card->box.h - m_scroll > m_viewport.y + m_viewport.h)
             m_scroll = card->box.y + card->box.h - m_viewport.y - m_viewport.h;
         m_scroll = std::clamp(m_scroll, 0.0, std::max(0.0, m_layout.height - m_viewport.h));
     }
@@ -375,6 +390,8 @@ namespace hyprspace {
     }
 
     void CWindowBoard::setGrouping(EWindowGrouping grouping) {
+        if (m_grouping != grouping)
+            m_generation = ++nextBoardGeneration;
         m_grouping = grouping;
         m_scroll   = 0;
         m_dirty    = true;
@@ -385,14 +402,185 @@ namespace hyprspace {
         setGrouping(static_cast<EWindowGrouping>((static_cast<int>(m_grouping) + 1) % 4));
     }
 
+    SInputContext CWindowBoard::inputContext() const {
+        return {EInputContext::Windows, m_searchFocused ? EInputMode::Insert : EInputMode::Normal, "query", m_generation, true};
+    }
+
+    CWindowBoard::SInputSnapshot CWindowBoard::snapshotInput() const {
+        const auto selected = item(m_selected);
+        return {m_search, m_grouping, m_recent, selected ? selected->window : PHLWINDOWREF{}, m_scroll, inputContext().mode};
+    }
+
+    void CWindowBoard::restoreInput(const SInputSnapshot& snapshot) {
+        m_search       = snapshot.search;
+        m_grouping     = snapshot.grouping;
+        m_recent       = snapshot.recent;
+        m_searchOffset = 0;
+        m_dirty        = true;
+        m_generation   = ++nextBoardGeneration;
+        refresh();
+        if (const auto selected = snapshot.selected.lock())
+            selectWindow(selected);
+        updateScroll(snapshot.scroll);
+        setInputMode(snapshot.mode);
+        m_session.damage();
+    }
+
+    void CWindowBoard::setInputMode(EInputMode mode) {
+        if (mode == EInputMode::Insert)
+            focusSearch();
+        else
+            blurSearch();
+        m_session.damage();
+    }
+
+    void CWindowBoard::searchChanged(const std::string& previous) {
+        resetCaret();
+        if (query() != previous) {
+            m_dirty  = true;
+            m_scroll = 0;
+            refresh();
+        } else
+            m_session.damage();
+    }
+
+    void CWindowBoard::editInput(ETextAction action, bool extend) {
+        if (!m_active || !m_searchFocused)
+            return;
+        const auto previous = query();
+        switch (action) {
+        case ETextAction::Backspace:
+            m_search.backspace();
+            break;
+        case ETextAction::Delete:
+            m_search.eraseForward();
+            break;
+        case ETextAction::Left:
+            m_search.left(extend);
+            break;
+        case ETextAction::Right:
+            m_search.right(extend);
+            break;
+        case ETextAction::Home:
+            m_search.home(extend);
+            break;
+        case ETextAction::End:
+            m_search.end(extend);
+            break;
+        case ETextAction::SelectAll:
+            m_search.selectAll();
+            break;
+        case ETextAction::Clear:
+            m_search.clear();
+            break;
+        }
+        searchChanged(previous);
+    }
+
+    void CWindowBoard::insertText(const std::string& text) {
+        if (!m_active || !m_searchFocused)
+            return;
+        const auto previous = query();
+        m_search.insert(text);
+        searchChanged(previous);
+    }
+
+    bool CWindowBoard::perform(EInputAction action) {
+        if (!m_active)
+            return false;
+        switch (action) {
+        case EInputAction::Search:
+            setInputMode(EInputMode::Insert);
+            m_search.selectAll();
+            return true;
+        case EInputAction::FocusText:
+            setInputMode(EInputMode::Insert);
+            return true;
+        case EInputAction::FinishEditing:
+            setInputMode(EInputMode::Normal);
+            return true;
+        case EInputAction::Accept:
+            if (m_searchFocused)
+                setInputMode(EInputMode::Normal);
+            else
+                commit();
+            return true;
+        case EInputAction::CycleGrouping:
+            cycleGrouping();
+            return true;
+        case EInputAction::ToggleRecent:
+            m_recent     = !m_recent;
+            m_generation = ++nextBoardGeneration;
+            m_dirty      = true;
+            refresh();
+            return true;
+        case EInputAction::PagePrevious:
+        case EInputAction::PageNext:
+            updateScroll(m_scroll + (action == EInputAction::PagePrevious ? -1 : 1) * m_viewport.h * .85);
+            return true;
+        case EInputAction::Back:
+            return false; // The controller restores the parent layer.
+        default:
+            break;
+        }
+        if (m_layout.cards.empty())
+            return false;
+        const auto                found = std::ranges::find(m_layout.cards, m_selected, &SWindowViewCard::key);
+        const int                 index = found == m_layout.cards.end() ? 0 : found - m_layout.cards.begin();
+        int                       next  = index;
+        std::optional<EDirection> direction;
+        switch (action) {
+        case EInputAction::First:
+            next = 0;
+            break;
+        case EInputAction::Last:
+            next = m_layout.cards.size() - 1;
+            break;
+        case EInputAction::NextField:
+        case EInputAction::NextMatch:
+            next = (index + 1) % m_layout.cards.size();
+            break;
+        case EInputAction::PrevField:
+        case EInputAction::PrevMatch:
+            next = (index + m_layout.cards.size() - 1) % m_layout.cards.size();
+            break;
+        case EInputAction::MoveLeft:
+            direction = EDirection::LEFT;
+            break;
+        case EInputAction::MoveRight:
+            direction = EDirection::RIGHT;
+            break;
+        case EInputAction::MoveUp:
+            direction = EDirection::UP;
+            break;
+        case EInputAction::MoveDown:
+            direction = EDirection::DOWN;
+            break;
+        default:
+            return false;
+        }
+        if (direction) {
+            std::vector<STile> tiles;
+            for (size_t i = 0; i < m_layout.cards.size(); ++i)
+                tiles.push_back({.key = i, .box = m_layout.cards[i].box, .order = i});
+            next = navigate(tiles, index, *direction);
+        }
+        select(m_layout.cards[next].key);
+        return true;
+    }
+
     void CWindowBoard::focusSearch() {
         m_session.cancelZoom();
+        if (!m_searchFocused)
+            m_generation = ++nextBoardGeneration;
         m_searchFocused = true;
         resetCaret();
         m_session.damage();
     }
 
     void CWindowBoard::blurSearch() {
+        if (m_searchFocused)
+            m_generation = ++nextBoardGeneration;
         m_searchFocused = false;
         stopCaret();
     }
@@ -439,161 +627,9 @@ namespace hyprspace {
         return m_active && m_searchFocused && m_caretVisible && hooks::keyboardOwned();
     }
 
-    bool CWindowBoard::searchShortcut(xkb_keysym_t sym, uint32_t mods, const std::string& text) {
-        if (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META))
-            return false;
-        // Navigation uses unshifted symbols, but / can require Shift or
-        // AltGr. Prefer the character produced by the keyboard's layout.
-        return text == "/" || (text.empty() && mods == 0 && sym == XKB_KEY_slash);
-    }
-
-    bool CWindowBoard::reservesKey(xkb_keysym_t sym, uint32_t mods, const std::string& text) const {
-        if (!m_active)
-            return false;
-        if (m_searchFocused) {
-            if (mods == HL_MODIFIER_CTRL && (sym == XKB_KEY_u || sym == XKB_KEY_a))
-                return true;
-            if (mods == 0 && sym == XKB_KEY_Delete)
-                return true;
-            if (mods == HL_MODIFIER_SHIFT && (sym == XKB_KEY_Left || sym == XKB_KEY_Right || sym == XKB_KEY_Home || sym == XKB_KEY_End))
-                return true;
-        }
-        if (m_searchFocused && (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0 && !text.empty())
-            return true;
-        if (!m_searchFocused && searchShortcut(sym, mods, text))
-            return true;
-        if (mods == HL_MODIFIER_SHIFT)
-            return sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab;
-        if (mods != 0)
-            return false;
-        switch (sym) {
-        case XKB_KEY_Escape:
-        case XKB_KEY_Return:
-        case XKB_KEY_KP_Enter:
-        case XKB_KEY_Tab:
-        case XKB_KEY_Left:
-        case XKB_KEY_Right:
-        case XKB_KEY_Up:
-        case XKB_KEY_Down:
-        case XKB_KEY_Home:
-        case XKB_KEY_End:
-        case XKB_KEY_Page_Up:
-        case XKB_KEY_Page_Down:
-        case XKB_KEY_BackSpace:
-        case XKB_KEY_r:
-            return true;
-        default:
-            return false;
-        }
-    }
-
     void CWindowBoard::commit() {
         if (selectedTarget())
             m_session.commitWindowView();
-    }
-
-    void CWindowBoard::onKey(xkb_keysym_t sym, uint32_t mods, const std::string& text) {
-        if (!m_active)
-            return;
-        if (sym == XKB_KEY_Escape) {
-            if (m_searchFocused || !query().empty())
-                clearSearch();
-            else
-                (void)m_session.windowView("off");
-            return;
-        }
-        if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter) {
-            commit();
-            return;
-        }
-        if (m_searchFocused) {
-            const auto before = query();
-            if (sym == XKB_KEY_BackSpace)
-                m_search.backspace();
-            else if (sym == XKB_KEY_Delete)
-                m_search.eraseForward();
-            else if (mods == HL_MODIFIER_CTRL && sym == XKB_KEY_u)
-                m_search.clear();
-            else if (mods == HL_MODIFIER_CTRL && sym == XKB_KEY_a)
-                m_search.selectAll();
-            else if (sym == XKB_KEY_Left)
-                m_search.left(mods == HL_MODIFIER_SHIFT);
-            else if (sym == XKB_KEY_Right)
-                m_search.right(mods == HL_MODIFIER_SHIFT);
-            else if (sym == XKB_KEY_Home)
-                m_search.home(mods == HL_MODIFIER_SHIFT);
-            else if (sym == XKB_KEY_End)
-                m_search.end(mods == HL_MODIFIER_SHIFT);
-            else if (!text.empty() && (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0)
-                m_search.insert(text);
-            else
-                goto navigation;
-            resetCaret();
-            if (query() != before) {
-                m_dirty  = true;
-                m_scroll = 0;
-                refresh();
-            } else
-                m_session.damage();
-            return;
-        }
-        if (searchShortcut(sym, mods, text)) {
-            focusSearch();
-            return;
-        }
-        if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) {
-            (void)m_session.windowView("off");
-            if (auto* view = m_session.keyboardView()) {
-                view->onKey(sym, mods, true);
-                for (const auto& other : m_session.views)
-                    other->close(false);
-                m_session.stopInput();
-            }
-            return;
-        }
-        if (sym == XKB_KEY_r) {
-            m_recent = !m_recent;
-            m_dirty  = true;
-            refresh();
-            return;
-        }
-        if (sym == XKB_KEY_s || sym == XKB_KEY_space) {
-            commit();
-            return;
-        }
-    navigation:
-        if (m_layout.cards.empty())
-            return;
-        const auto found = std::ranges::find(m_layout.cards, m_selected, &SWindowViewCard::key);
-        const int  index = found == m_layout.cards.end() ? 0 : found - m_layout.cards.begin();
-        int        next  = index;
-        if (sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab)
-            next = (index + ((mods & HL_MODIFIER_SHIFT) || sym == XKB_KEY_ISO_Left_Tab ? -1 : 1) + m_layout.cards.size()) % m_layout.cards.size();
-        else if (sym == XKB_KEY_Home)
-            next = 0;
-        else if (sym == XKB_KEY_End)
-            next = m_layout.cards.size() - 1;
-        else if (sym == XKB_KEY_Page_Up || sym == XKB_KEY_Page_Down) {
-            updateScroll(m_scroll + (sym == XKB_KEY_Page_Up ? -1 : 1) * m_viewport.h * 0.85);
-            return;
-        } else {
-            std::optional<EDirection> direction;
-            if (sym == XKB_KEY_Left || sym == XKB_KEY_h)
-                direction = EDirection::LEFT;
-            if (sym == XKB_KEY_Right || sym == XKB_KEY_l)
-                direction = EDirection::RIGHT;
-            if (sym == XKB_KEY_Up || sym == XKB_KEY_k)
-                direction = EDirection::UP;
-            if (sym == XKB_KEY_Down || sym == XKB_KEY_j)
-                direction = EDirection::DOWN;
-            if (!direction)
-                return;
-            std::vector<STile> tiles;
-            for (size_t i = 0; i < m_layout.cards.size(); ++i)
-                tiles.push_back({.key = i, .box = m_layout.cards[i].box, .order = i});
-            next = navigate(tiles, index, *direction);
-        }
-        select(m_layout.cards[next].key);
     }
 
     void CWindowBoard::pointer(const Vector2D& pos, bool userMotion) {
@@ -847,37 +883,39 @@ namespace hyprspace {
         std::vector<UP<IPassElement>> out;
         if (!mon || !rendering())
             return out;
-        const double scale    = mon->m_scale;
-        const float  opacity  = progress();
-        const auto   ink      = config::overviewLabelColor();
-        const auto   accent   = config::overviewActiveBorder();
+        const double scale      = mon->m_scale;
+        const float  opacity    = progress();
+        const auto   rgba       = [](const CHyprColor& c) { return SRgba{c.r, c.g, c.b, c.a}; };
+        const auto   color      = [](const SRgba& c) { return CHyprColor{c.r, c.g, c.b, c.a}; };
+        const auto   background = rgba(config::overviewBgColor()), label = rgba(config::overviewLabelColor()), active = rgba(config::overviewActiveBorder());
+        const std::array<double, 12> colors{background.r, background.g, background.b, background.a, label.r,  label.g,
+                                            label.b,      label.a,      active.r,     active.g,     active.b, active.a};
+        const auto                   theme = config::spacesTheme();
+        struct SStyleCache {
+            std::array<double, 12> colors;
+            std::string            theme;
+            spaceStyle::SPalette   controls, overview;
+        };
+        static std::optional<SStyleCache> cached;
+        if (!cached || cached->colors != colors || cached->theme != theme)
+            cached = SStyleCache{colors, theme, spaceStyle::palette(background, {}, label, active, theme), spaceStyle::palette(background, {}, label, active)};
+        const auto&  style         = cached->controls;
+        const auto&  overviewStyle = cached->overview;
+        const auto   ink = color(style.text), muted = color(style.muted), accent = color(style.focus);
+        const auto   overviewInk = color(overviewStyle.text), overviewMuted = color(overviewStyle.muted);
         const auto   font     = config::overviewFont();
-        const auto   viewKey  = keyLabel(config::overviewWindowViewKey());
         const auto   zoomKey  = keyLabel(config::overviewZoomKey());
         const double rounding = config::overviewRounding();
         const auto   px       = [&](const SBoxF& box) { return CBox{box.x * scale, box.y * scale, box.w * scale, box.h * scale}; };
         auto         rect     = [&](SBoxF box, CHyprColor color, double round = 0, bool clip = false) {
             if (clip)
                 box = intersection(box, m_viewport);
-            if (box.w <= 0 || box.h <= 0)
-                return;
-            // Fractional boxes lose their last row/column when the native
-            // border region is converted to integer pixels. Snap the fill and
-            // outline identically so every edge and rounded corner survives.
-            out.emplace_back(
-                makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = px(box).round(), .color = color, .round = static_cast<int>(std::round(round * scale))}));
+            renderPass::appendSolidFill(out, box, color, scale, round);
         };
         auto border = [&](SBoxF box, CHyprColor color, double width, double round, bool clip = false) {
             if (clip)
                 box = intersection(box, m_viewport);
-            if (box.w <= 0 || box.h <= 0)
-                return;
-            // Hyprland scales borderSize itself; the box and radius are physical.
-            // Let it derive the outer radius from that actual scaled width.
-            out.emplace_back(makeUnique<CBorderPassElement>(CBorderPassElement::SBorderData{.box        = px(box).round(),
-                                                                                            .grad1      = Config::CGradientValueData(color),
-                                                                                            .round      = static_cast<int>(std::round(round * scale)),
-                                                                                            .borderSize = std::max(1, static_cast<int>(std::round(width)))}));
+            renderPass::appendOutline(out, box, color, scale, width, round);
         };
         auto text = [&](const std::string& label, const SBoxF& box, CHyprColor color, float alpha, bool centered = false, bool clip = false) {
             if (box.w <= 1 || box.h <= 1)
@@ -898,31 +936,31 @@ namespace hyprspace {
             return out;
 
         text(std::format("Windows · {}{}", m_layout.cards.size(), query().empty() ? "" : std::format(" of {}", m_items.size())),
-             {m_viewport.x, m_viewport.y - 132, std::max(1.0, m_viewport.w - 158), 30}, ink, opacity);
-        rect(returnBox(), fade(config::overviewTitleBgColor(), opacity * 0.65F), 8);
-        text(viewKey.empty() ? "Workspaces" : viewKey + "  Workspaces", returnBox(), ink, opacity, true);
+             {m_viewport.x, m_viewport.y - 132, std::max(1.0, m_viewport.w - 158), 30}, overviewInk, opacity);
+        rect(returnBox(), fade(color(style.surface), opacity), 8);
+        text("Workspaces", returnBox(), ink, opacity, true);
         const auto                       boxes = groupingBoxes();
         const std::array<const char*, 4> labels{"All windows", "Apps", "Workspaces", "Monitors"};
         const auto                       local = m_pointer - mon->m_position;
         for (size_t i = 0; i < boxes.size(); ++i) {
             const bool selected = static_cast<size_t>(m_grouping) == i;
             const bool hovered  = boxes[i].contains(local.x, local.y);
-            rect(boxes[i], fade(selected ? accent : config::overviewTitleBgColor(), opacity * (selected ? 0.17F : hovered ? 0.85F : 0.5F)), 8);
+            rect(boxes[i], fade(color(selected ? style.selected : hovered ? style.hover : style.surface), opacity), 8);
             if (selected)
                 border(boxes[i], fade(accent, opacity), 1, 8);
-            text(labels[i], boxes[i], selected ? accent : ink, opacity, true);
+            text(labels[i], boxes[i], ink, opacity, true);
         }
-        rect(recentBox(), fade(m_recent ? accent : config::overviewTitleBgColor(), opacity * (m_recent ? 0.17F : 0.5F)), 8);
+        rect(recentBox(), fade(color(m_recent ? style.selected : recentBox().contains(local.x, local.y) ? style.hover : style.surface), opacity), 8);
         if (m_recent)
             border(recentBox(), fade(accent, opacity), 1, 8);
-        text("Recent", recentBox(), m_recent ? accent : ink, opacity, true);
+        text("Recent", recentBox(), ink, opacity, true);
         const auto search = searchBox();
-        rect(search, fade(config::overviewTitleBgColor(), opacity * 0.85F), 9);
-        border(search, fade(m_searchFocused ? accent : config::overviewTileBorderColor(), opacity), m_searchFocused ? 2 : 1, 9);
+        rect(search, fade(color(style.raised), opacity), 9);
+        border(search, fade(m_searchFocused ? accent : color(style.border), opacity), m_searchFocused ? 2 : 1, 9);
         const auto content = searchContentBox();
         searchMetrics();
         const auto [from, to] = m_searchFocused && hooks::keyboardOwned() ? m_search.selection() : std::pair<size_t, size_t>{0, 0};
-        const auto input = query().empty() ? textures().text("Search windows…", font, fade(ink, 0.5F), static_cast<int>(content.w), scale)
+        const auto input = query().empty() ? textures().text("Search windows…", font, muted, static_cast<int>(content.w), scale)
                                            : textures().inputText(query(), font, ink, static_cast<int>(content.w), m_searchOffset, scale, from, to, fade(accent, 0.28F));
         if (input) {
             const auto                   size = input->m_size / scale;
@@ -936,7 +974,7 @@ namespace hyprspace {
         for (const auto& heading : m_layout.headings) {
             auto box = heading.box;
             box.y -= m_scroll;
-            text(std::format("{} · {}", heading.label, heading.count), box, ink, opacity * (1 - inspection), false, true);
+            text(std::format("{} · {}", heading.label, heading.count), box, overviewMuted, opacity * (1 - inspection), false, true);
         }
         auto drawCard = [&](const SWindowViewCard& card) {
             const auto chosen = item(card.key);
@@ -970,28 +1008,31 @@ namespace hyprspace {
                                                   .round = static_cast<int>(rounding * scale),
                                                   .blur  = hidden::shouldBlurWindow(window)};
                 data.clipBox = px(m_viewport);
-                out.emplace_back(makeUnique<CWindowPreviewPassElement>(std::move(data), window));
+                const bool stableSize = !m_openness->isBeingAnimated() && !m_reflow->isBeingAnimated() && !m_inspectionMix->isBeingAnimated() &&
+                                        !m_lensProgress->isBeingAnimated();
+                out.emplace_back(makeUnique<CWindowPreviewPassElement>(std::move(data), window, stableSize));
             } else {
                 if (const auto icon = textures().icon(chosen->input.appClass, static_cast<int>(64 * scale)).texture) {
                     CTexPassElement::SRenderData data{.tex = icon, .box = px({preview.cx() - 32, preview.cy() - 32, 64, 64}), .a = alpha, .clipBox = px(m_viewport)};
                     out.emplace_back(makeUnique<CTexPassElement>(std::move(data)));
                 }
-                text("Preview unavailable", {preview.x, preview.cy() + 40, preview.w, 24}, fade(ink, 0.65F), alpha, true, true);
+                text("Preview unavailable", {preview.x, preview.cy() + 40, preview.w, 24}, overviewMuted, alpha, true, true);
             }
             const SBoxF caption{box.x, box.y + box.h - 52, box.w, 52};
-            rect(caption, fade(config::overviewTitleBgColor(), alpha), 0, true);
+            renderPass::appendSolidFill(out, box, fade(color(style.surface), alpha), scale, rounding, intersection(caption, m_viewport));
             if (const auto icon = textures().icon(chosen->input.appClass, static_cast<int>(24 * scale)).texture) {
                 CTexPassElement::SRenderData data{.tex = icon, .box = px({caption.x + 12, caption.cy() - 12, 24, 24}), .a = alpha, .clipBox = px(m_viewport)};
                 out.emplace_back(makeUnique<CTexPassElement>(std::move(data)));
             }
             text(chosen->input.title.empty() ? chosen->input.appName : chosen->input.title, {caption.x + 46, caption.y + 2, caption.w - 58, 24}, ink, alpha, false, true);
-            std::string location = workspaceLabel(chosen->input.workspace, chosen->input.workspaceName);
+            std::string location =
+                chosen->input.workspaceDisplay.empty() ? workspaceLabel(chosen->input.workspace, chosen->input.workspaceName) : chosen->input.workspaceDisplay;
             if (m_session.views.size() > 1)
                 location += " · " + chosen->input.monitorName;
             const auto fullscreen = Fullscreen::controller()->getFullscreenModes(window).internal;
             if (fullscreen != Fullscreen::FSMODE_NONE)
                 location += fullscreen == Fullscreen::FSMODE_FULLSCREEN ? " · fullscreen" : " · maximized";
-            text(location, {caption.x + 46, caption.y + 25, caption.w - 58, 23}, fade(ink, 0.65F), alpha, false, true);
+            text(location, {caption.x + 46, caption.y + 25, caption.w - 58, 23}, muted, alpha, false, true);
             border(box,
                    fade(selected  ? accent
                         : hovered ? config::overviewHoverBorder()
@@ -1007,20 +1048,22 @@ namespace hyprspace {
             drawCard(*selected);
 
         if (m_layout.cards.empty()) {
-            text(m_items.empty() ? "No windows on these outputs" : "No matching windows", {m_viewport.x, m_viewport.cy() - 20, m_viewport.w, 40}, ink, opacity, true);
+            text(m_items.empty() ? "No windows on these outputs" : "No matching windows", {m_viewport.x, m_viewport.cy() - 20, m_viewport.w, 40}, overviewInk, opacity,
+                 true);
             if (!query().empty())
-                text("Escape clears the search", {m_viewport.x, m_viewport.cy() + 20, m_viewport.w, 28}, fade(ink, 0.6F), opacity, true);
+                text(m_searchFocused ? "Enter / Esc finishes editing" : "/ edits the search · Ctrl+U clears while editing",
+                     {m_viewport.x, m_viewport.cy() + 20, m_viewport.w, 28}, overviewMuted, opacity, true);
         }
         const auto followLabel = m_session.cursorFollowHint();
         const auto followHint  = followLabel.empty() ? "" : followLabel + " · ";
-        const auto hints = m_inspecting ? std::format("Release {} to return · {}Wheel / + − zoom · Space or right-drag to pan", zoomKey, followHint)
-                                        : (viewKey.empty() ? "" : std::format("{}  Workspaces    Shift+{}  Group    ", viewKey, viewKey)) + "/  Search    R  Recent    " +
-                                              (zoomKey.empty() ? "" : std::format("Hold {}  Inspect    ", zoomKey)) + "Enter  Open";
-        text(hints, {m_viewport.x, m_viewport.y + m_viewport.h + 8, m_viewport.w, 26}, fade(ink, 0.65F), opacity, true);
+        const auto hints       = m_searchFocused ? std::string("Enter / Esc  Finish editing · Ctrl+U  Clear")
+                                 : m_inspecting  ? std::format("Release {} to return · {}Wheel / + − zoom · Space or right-drag to pan", zoomKey, followHint)
+                                                 : std::string("hjkl / arrows  Move · /  Search · Space  Commands · Enter  Open · Esc  Back");
+        text(hints, {m_viewport.x, m_viewport.y + m_viewport.h + 8, m_viewport.w, 26}, overviewMuted, opacity, true);
         if (m_layout.height > m_viewport.h && inspection < 0.01F) {
             const double height = std::max(24.0, m_viewport.h * m_viewport.h / m_layout.height);
             rect({m_viewport.x + m_viewport.w + 8, m_viewport.y + m_scroll / std::max(1.0, m_layout.height - m_viewport.h) * (m_viewport.h - height), 3, height},
-                 fade(ink, opacity * 0.5F), 1.5);
+                 fade(overviewMuted, opacity * 0.65F), 1.5);
         }
         return out;
     }

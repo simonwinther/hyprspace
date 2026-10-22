@@ -1,18 +1,50 @@
 #include "PassElements.hpp"
 
 #include "Switcher.hpp"
+#include "PreviewFilter.hpp"
 
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/output/MonitorResources.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/render/pass/BorderPassElement.hpp>
+#include <hyprland/src/render/pass/RectPassElement.hpp>
 
 #include <hyprutils/utils/ScopeGuard.hpp>
 
 namespace hyprspace {
 
-    CWindowPreviewPassElement::CWindowPreviewPassElement(SRenderData data, PHLWINDOW window) : CTexPassElement(std::move(data)), m_window(window) {}
+    namespace renderPass {
+        void appendSolidFill(std::vector<UP<IPassElement>>& out, const SBoxF& logical, const CHyprColor& color, double scale, double radius, std::optional<SBoxF> clip) {
+            const auto shape = renderGeometry::physicalShape(logical, scale, radius);
+            if (!shape)
+                return;
+            CRectPassElement::SRectData data{.box = CBox{shape->box.x, shape->box.y, shape->box.w, shape->box.h}, .color = color, .round = shape->radius};
+            if (clip) {
+                const auto clipping = renderGeometry::physicalShape(*clip, scale);
+                if (!clipping)
+                    return;
+                data.clipBox = CBox{clipping->box.x, clipping->box.y, clipping->box.w, clipping->box.h};
+            }
+            out.emplace_back(makeUnique<CRectPassElement>(std::move(data)));
+        }
+
+        void appendOutline(std::vector<UP<IPassElement>>& out, const SBoxF& logical, const CHyprColor& color, double scale, double width, double radius) {
+            const auto shape = renderGeometry::physicalShape(logical, scale, radius, width);
+            if (!shape || shape->borderWidth == 0)
+                return;
+            out.emplace_back(makeUnique<CBorderPassElement>(CBorderPassElement::SBorderData{
+                .box        = CBox{shape->box.x, shape->box.y, shape->box.w, shape->box.h},
+                .grad1      = Config::CGradientValueData(color),
+                .round      = shape->radius,
+                .borderSize = shape->borderWidth,
+            }));
+        }
+    } // namespace renderPass
+
+    CWindowPreviewPassElement::CWindowPreviewPassElement(SRenderData data, PHLWINDOW window, bool stableSize) :
+        CTexPassElement(std::move(data)), m_window(window), m_stableSize(stableSize) {}
 
     bool CWindowPreviewPassElement::needsPrecomputeBlur() {
         const auto WINDOW = m_window.lock();
@@ -29,8 +61,11 @@ namespace hyprspace {
         if (!WINDOW || !WINDOW->m_isMapped || !m_data.tex || !m_data.tex->ok())
             return out;
 
+        const auto PREVIEW = previewFilteredTexture(m_data.tex, {m_data.box.w, m_data.box.h}, m_stableSize);
+
         auto plainTexture = [&] {
             auto data = m_data;
+            data.tex = PREVIEW;
             data.blur = false;
             out.emplace_back(makeUnique<CTexPassElement>(std::move(data)));
         };
@@ -86,7 +121,7 @@ namespace hyprspace {
             renderData.primarySurfaceUVBottomRight = oldUVEnd;
         }};
 
-        GL->renderTexture(m_data.tex, m_data.box,
+        GL->renderTexture(PREVIEW, m_data.box,
                           Render::GL::CHyprOpenGLImpl::STextureRenderData{
                               .blur                  = true,
                               .blurA                 = m_data.blurA,

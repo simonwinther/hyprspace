@@ -17,10 +17,12 @@ namespace hyprspace {
         float plateVisibility;
     };
 
-    inline SWorkspacePreviewStyle workspacePreviewStyle(bool anchor, bool selected, float progress) {
+    inline SWorkspacePreviewStyle workspacePreviewStyle(bool anchor, float progress) {
         const float p          = previewUnit(progress);
         const float visibility = anchor ? 1.F : p;
-        return {visibility, visibility * (1.F - (selected ? 0.F : 0.1F) * p), visibility * p};
+        // Selection is indicated by the border. Keep every preview at its
+        // configured window opacity so navigation never changes brightness.
+        return {visibility, visibility, visibility * p};
     }
 
     inline SWorkspacePreviewStyle closingWorkspacePreviewStyle(const SWorkspacePreviewStyle& start, bool anchor, float remaining) {

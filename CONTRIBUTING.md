@@ -37,6 +37,19 @@ layout cycling. See the [companion guide](companion/README.md) for launcher setu
 
 Follow the [installation instructions](README.md#install) for build dependencies.
 Build fixtures use `ripgrep` and `jq`; release tooling uses Python 3.11 or later.
+The launch helper uses Rust/Cargo 1.74 or later. `make assets` rebuilds only the
+helper and its service shims; `make install-assets` installs them without
+replacing or reloading the compositor plugin. Its source and dependency lock
+live in `contrib/launch-helper`, with Cargo output under `build/launch-helper`.
+`CARGO` selects the build tool; packagers can set `LAUNCH_HELPER` to an already
+built executable. `make test` includes its Rust and process-level tests.
+
+After editing the helper, check formatting and warnings with:
+
+```bash
+cargo fmt --manifest-path contrib/launch-helper/Cargo.toml -- --check
+cargo clippy --locked --manifest-path contrib/launch-helper/Cargo.toml --target-dir build/launch-helper --all-targets -- -D warnings
+```
 
 ```bash
 make -j2

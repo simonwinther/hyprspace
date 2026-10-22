@@ -9,12 +9,24 @@ from resize import area, inside, window_box
 
 
 N, X, Z, SUPER = 49, 45, 44, 125
+SPACE = 57
 MIDDLE = 274
 
 
-def press(s, code=N):
+def tap(s, code):
     s.key(code, 1)
     s.key(code, 0)
+
+
+def press(s, code=N):
+    if code == N:
+        tap(s, SPACE)
+    tap(s, code)
+
+
+def begin_new_workspace(s):
+    tap(s, SPACE)
+    s.key(N, 1)
 
 
 def reset(s, wait_for, source=0, destination=1):
@@ -113,7 +125,7 @@ def allocation(s, wait_for):
         assert {name: state[:2] for name, state in after["monitors"].items()} == {
             name: state[:2] for name, state in before["monitors"].items()
         }, (before, after)
-        s.check(f"follow_mouse={follow}: N allocates and reuses the pointer output's lowest free workspace without changing native focus; Escape preserves the desktop")
+        s.check(f"follow_mouse={follow}: Space n allocates and reuses the pointer output's lowest free workspace without changing native focus; Escape preserves the desktop")
 
     reset(s, wait_for)
     # Numeric and range assignments reserve IDs even when the owning monitor
@@ -158,6 +170,9 @@ def allocation(s, wait_for):
     s.close()
 
     reset(s, wait_for)
+    # Spaces deliberately caps its canvas padding. Exercise the legacy
+    # unrenderable-layout rollback with its uncapped geometry explicitly.
+    s.ctl("keyword", "plugin:hyprspace:spaces:enabled", "false")
     opened(s, wait_for)
     s.move(center(button(s, 0)))
     before = identities(s)
@@ -210,9 +225,14 @@ def reuse(s, wait_for):
     workspace = wait_for(lambda: next((w for w in s.data("workspaces") if w["name"] == "hs-empty-named"), None))
     opened(s, wait_for)
     s.move(center(button(s, 0)))
+    before = identities(s)
     press(s)
     selected(s, wait_for, 0, workspace["id"])
     assert s.status()["target"]["name"] == "hs-empty-named"
+    assert identities(s) == before
+    press(s)
+    selected(s, wait_for, 0, workspace["id"])
+    assert identities(s) == before
     s.check("normal named empty workspaces remain eligible destinations")
     s.close()
 
@@ -274,7 +294,8 @@ def buttons_and_drops(s, wait_for):
             monitor = next(m for m in s.data("monitors") if m["name"] == s.names[other])
             work = area(monitor)
             assert inside(box, work), (box, work)
-            assert box["w"] > 80 and box["h"] >= 20, box
+            # Narrow outputs use the responsive plus-only header action.
+            assert box["w"] >= 32 and box["h"] >= 32, box
             workspace_tiles = [t for t in view(s, other)["tiles"] if t["window"] == "0x0"]
             assert all(t["y"] >= box["y"] + box["h"] for t in workspace_tiles), (box, workspace_tiles)
         s.move(center(button(s, index)))
@@ -406,7 +427,7 @@ def keys(s, wait_for):
     invalid = s.run("hyprctl", "dispatch", "hyprspace:emptyworkspace", "extra")
     assert "takes no arguments" in invalid, invalid
     s.move(center(button(s, 0)))
-    s.key(N, 1)
+    begin_new_workspace(s)
     try:
         workspace = selected(s, wait_for, 0)
         before = identities(s)
@@ -420,12 +441,12 @@ def keys(s, wait_for):
         s.key(N, 0)
     press(s)
     selected(s, wait_for, 1)
-    s.check("one N press owns its repeats and release while crossing outputs; a fresh press prepares the new pointer output")
+    s.check("one Space n command owns its final-key repeats and release while crossing outputs; a fresh command prepares the new pointer output")
 
     reset(s, wait_for)
     opened(s, wait_for)
     s.move(center(button(s, 0)))
-    s.key(N, 1)
+    begin_new_workspace(s)
     try:
         selected(s, wait_for, 0)
         s.close()
@@ -442,32 +463,33 @@ def keys(s, wait_for):
         s.key(29, 1)
         s.key(N, 0)
         s.key(29, 0)
-        press(s, X)
+        press(s)
         selected(s, wait_for, 1)
     finally:
         s.key(29, 0)
         s.key(N, 0)
-    s.check("a held workspace key keeps its repeat and release lease across close, reopen, remapping and modifier changes")
+    s.check("a held leader command keeps its repeat and release lease across close, reopen, deprecated settings and modifier changes")
 
     reset(s, wait_for)
     s.ctl("keyword", "plugin:hyprspace:overview:empty_workspace_key", "x")
     opened(s, wait_for)
     s.move(center(button(s, 0)))
     before = identities(s)
+    tap(s, N)
+    tap(s, X)
+    assert identities(s) == before and s.status()["input"]["mode"] == "normal"
     press(s)
-    assert identities(s) == before
-    press(s, X)
     selected(s, wait_for, 0)
     s.ctl("keyword", "plugin:hyprspace:overview:empty_workspace_key", "")
     s.move(center(button(s, 1)))
     before = identities(s)
-    press(s, X)
-    press(s)
+    tap(s, X)
+    tap(s, N)
     assert identities(s) == before
-    # The button and dispatcher remain available with the key disabled.
-    s.ctl("dispatch", "hyprspace:emptyworkspace")
+    press(s)
     selected(s, wait_for, 1)
-    s.check("the workspace key can be remapped or disabled while the dispatcher remains available")
+    assert s.ctl("dispatch", "hyprspace:emptyworkspace") == "ok"
+    s.check("deprecated workspace-key settings remain parseable while bare letters stay Normal navigation and Space n remains the fixed action")
 
     reset(s, wait_for)
     marker = s.root / "empty-workspace-modified"
@@ -493,18 +515,16 @@ def keys(s, wait_for):
     s.check("modified N follows native bindings and foreground typing retains N without allocating")
 
     reset(s, wait_for)
+    # Pinned legacy keyword parsing bypasses the native typed validator. The
+    # runtime grammar must remain safe even if it accepts this reserved alias.
     s.ctl("keyword", "plugin:hyprspace:overview:zoom_key", "n")
     opened(s, wait_for)
     s.move(s.preview_point("hs-A"))
     before = identities(s)
-    s.key(N, 1)
-    try:
-        wait_for(lambda: s.status()["zoom"]["held"])
-        assert identities(s) == before
-    finally:
-        s.key(N, 0)
-    wait_for(lambda: not s.status()["zoom"]["held"])
-    s.check("a conflicting zoom shortcut retains precedence over empty-workspace allocation")
+    tap(s, N)
+    assert not s.status()["zoom"]["held"] and identities(s) == before
+    assert s.status()["input"]["mode"] == "normal"
+    s.check("a reserved alias accepted by legacy keyword parsing cannot replace Normal n navigation or allocate a workspace")
 
 
 def zoom(s, wait_for):
@@ -515,14 +535,15 @@ def zoom(s, wait_for):
     try:
         wait_for(lambda: s.status()["zoom"]["held"] and s.status()["zoom"]["inspection_ready"])
         assert view(s, 0)["empty_workspace_button"] is None
-        # N cancels inspection and presents the new destination in the grid.
-        press(s)
+        # Space remains the inspection pan key while zoom is held. The same
+        # action remains callable and returns the prepared destination to grid.
+        s.ctl("dispatch", "hyprspace:emptyworkspace")
         selected(s, wait_for, 0)
         wait_for(lambda: not s.status()["zoom"]["held"] and not s.status()["zoom"]["returning"])
         assert button(s, 0)
     finally:
         s.key(Z, 0)
-    s.check("the button hides during inspection and N returns zoom to the grid before selecting the destination")
+    s.check("the button hides during inspection and the workspace dispatcher returns zoom to the grid before selecting the destination")
 
 
 def mouse_shortcut(s, wait_for):
@@ -688,7 +709,7 @@ def run(s, wait_for):
         s.button(0)
         s.button(0, 273)
         s.button(0, MIDDLE)
-        for code in (N, X, Z, SUPER, 29):
+        for code in (N, X, Z, SUPER, 29, SPACE):
             s.key(code, 0)
         s.close()
         s.ctl("reload")

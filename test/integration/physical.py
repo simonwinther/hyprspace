@@ -160,7 +160,7 @@ class Physical(Suite):
             connection.settimeout(2)
             connection.connect(str(path))
             connection.sendall(message.encode())
-            return connection.recv(65536).decode()
+            return connection.recv(1024 * 1024).decode()
 
     def setup(self, layout, source, destination):
         self.close()

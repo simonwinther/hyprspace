@@ -175,8 +175,22 @@ def edge_point(work, direction):
 
 
 def edge_browsing(s, wait_for):
+    try:
+        edge_browsing_cases(s, wait_for)
+    finally:
+        s.key(Z, 0)
+        s.close()
+        for workspace in (30, 31):
+            s.ctl("keyword", "workspace", f"{workspace},persistent:false")
+
+
+def edge_browsing_cases(s, wait_for):
     s.setup("dwindle", 0, 1)
     primary_destinations(s)
+    # Twelve destinations retain an interior cell with neighbors in all four
+    # directions after the space toolbar reserves its content area.
+    for workspace in (30, 31):
+        s.ctl("keyword", "workspace", f"{workspace},monitor:{s.names[0]},persistent:true,layout:dwindle")
     s.ctl("dispatch", "movetoworkspacesilent", f'25,address:{s.windows()["hs-B"]["address"]}')
     opened(s, wait_for)
     monitor = s.names[0]
@@ -197,7 +211,7 @@ def edge_browsing(s, wait_for):
     s.key(Z, 1)
     wait_for(lambda: len(zoom_edges(s, monitor)) == 4)
     assert {hint["direction"]: hint["workspace"] for hint in zoom_edges(s, monitor)} == {
-        "left": 24, "right": 26, "up": 21, "down": 28,
+        "left": 24, "right": 26, "up": 21, "down": 29,
     }
     enlarged = tile(s, 25)
     follow_hint = next(v["cursor_follow_hint"] for v in s.status()["views"] if v["monitor"] == monitor)
@@ -212,7 +226,7 @@ def edge_browsing(s, wait_for):
     s.check("the upper-left follow hint stays above the fitted preview and cannot trigger or cover edge navigation")
     s.move(center(enlarged))
     s.run("grim", "-s", "1", "-o", monitor, str(s.root / "zoom-edge-hints.png"))
-    for direction, destination in (("left", 24), ("right", 26), ("up", 21), ("down", 28)):
+    for direction, destination in (("left", 24), ("right", 26), ("up", 21), ("down", 29)):
         select(25)
         s.move(center(tile(s, 25)))
         hint = next(h for h in zoom_edges(s, monitor) if h["direction"] == direction)
@@ -279,9 +293,11 @@ def edge_browsing(s, wait_for):
         wait_for(lambda: s.layer(panel_namespace))
         wait_for(lambda: area(next(m for m in s.data("monitors") if m["name"] == monitor))["y"] > work["y"])
         panel_work = area(next(m for m in s.data("monitors") if m["name"] == monitor))
-        select(25)
+        # The reserved panel can change the grid's row count. Its final tile
+        # still has a neighbor above, independently of that reflow.
+        select(31)
         wait_for(lambda: any(h["direction"] == "up" and h["y"] >= panel_work["y"] for h in zoom_edges(s, monitor)))
-        s.move(center(tile(s, 25)))
+        s.move(center(tile(s, 31)))
         up = next(h for h in zoom_edges(s, monitor) if h["direction"] == "up")
         assert up["y"] >= panel_work["y"] and panel_work["y"] > work["y"]
         panel_native = s.geometry()
@@ -291,7 +307,7 @@ def edge_browsing(s, wait_for):
         s.move((box["x"] + 20, box["y"] + 20))
         wait_for(lambda: not s.status()["cursor_owned"])
         time.sleep(0.4)
-        assert s.status()["zoom"]["held"] and s.status()["zoom"]["workspace"] == 25
+        assert s.status()["zoom"]["held"] and s.status()["zoom"]["workspace"] == 31
         # Returning to exactly the previous arrow point is still real motion:
         # pointer coordinates must have followed the intervening panel visit.
         s.move(center(up))
@@ -733,8 +749,10 @@ def lifecycle(s, wait_for):
         wait_for(lambda: tile(s, 11)["w"] > baseline[(s.names[0], 11)]["w"] * 2)
         enlarged = tile(s, 11)
         s.run("grim", "-s", "1", "-o", s.names[0], str(s.root / "held-zoom.png"))
-        assert inside(enlarged, work)
-        assert enlarged["w"] >= work["w"] * 0.75
+        content = s.status()["space_selector"]["layout"][s.names[0]]["content"]
+        assert inside(enlarged, content)
+        # The fitted preview uses the space canvas while preserving native aspect.
+        assert enlarged["w"] >= min(content["w"], content["h"] * work["w"] / work["h"]) * .75
         assert abs(enlarged["w"] / enlarged["h"] - work["w"] / work["h"]) < 0.001
         assert same_geometry(
             {key: value for key, value in baseline.items() if key[0] != s.names[0]},
@@ -864,6 +882,7 @@ def lifecycle(s, wait_for):
         released(s, wait_for)
         other_key(Z, 1)
         inspection(s, wait_for, 1)
+        s.move(center(tile(s, 11)))
         wheel(s, -2)
         inspection(s, wait_for, 1.15 ** 2)
         secondary.terminate()
@@ -1119,7 +1138,14 @@ def cursor_follow(s, wait_for):
         s.move((box["x"] + 70, box["y"] + box["h"] / 2))
         s.button(1)
         s.button(0)
-        wait_for(lambda: entry.with_suffix(".click").exists())
+        try:
+            wait_for(lambda: entry.with_suffix(".click").exists())
+        except AssertionError:
+            (s.root / "follow-panel-click-timeout.json").write_text(json.dumps({
+                "box": box, "cursor": s.data("cursorpos"), "layers": s.data("layers"), "status": s.status(),
+            }, indent=2))
+            s.run("grim", "-s", "1", "-o", s.names[0], str(s.root / "follow-panel-click-timeout.png"))
+            raise
         assert s.status()["keyboard_owned"]
         tap(F)
         wait_for(lambda: s.status()["cursor_owned"])
@@ -1217,6 +1243,9 @@ def cursor_follow(s, wait_for):
         opened(s, wait_for)
         s.key(Z, 1)
         inspection(s, wait_for, 1)
+        # The space toolbar changes the fitted content bounds; a small grid
+        # cell's old pointer position can be outside its fitted preview.
+        s.move(center(tile(s, 11)))
         wheel(s, -32)
         inspection(s, wait_for, 4)
         if not s.status()["zoom"]["cursor_follow_enabled"]:
@@ -1282,15 +1311,17 @@ def cursor_follow(s, wait_for):
                 else:
                     s.key(Z, 1)
                     tap(F)
-                    assert not s.status()["zoom"]["held"]
-                    if setting == "window_view_key":
-                        assert s.status()["window_board"]["active"]
+                    assert s.status()["zoom"]["held"]
+                    assert s.status()["zoom"]["cursor_follow_enabled"]
+                    assert not s.status()["window_board"]["active"]
+                    tap(F)
+                    assert not s.status()["zoom"]["cursor_follow_enabled"]
                     s.key(Z, 0)
                 assert not s.status()["zoom"]["cursor_follow_enabled"]
                 s.close()
             finally:
                 s.ctl("keyword", "plugin:hyprspace:overview:" + setting, default)
-        s.check("custom zoom, empty-workspace and window-view shortcuts on F take precedence over cursor-follow")
+        s.check("custom zoom keeps precedence; deprecated empty/window key settings do not shadow active inspection controls")
 
         opened(s, wait_for)
         s.key(Z, 1)
@@ -1316,6 +1347,7 @@ def cursor_follow(s, wait_for):
         s.ctl("keyword", "plugin:hyprspace:overview:show_follow_hint", "false")
         assert s.status()["zoom"]["cursor_follow_enabled"] and not s.status()["zoom"]["cursor_follow_hint"]
         assert all(v["cursor_follow_hint"] is None for v in s.status()["views"])
+        s.move(center(tile(s, 11)))
         wheel(s, -32)
         inspection(s, wait_for, 4)
         s.motion(20, 0)
@@ -1550,6 +1582,7 @@ def wheel_inspection(s, wait_for):
         inspection(s, wait_for, 1)
         changed = tile(s, 11)
         assert changed["w"] < fitted["w"] or changed["h"] < fitted["h"]
+        s.move(center(changed))
         wheel(s, -2)
         inspection(s, wait_for, 1.15 ** 2)
         s.ctl("keyword", "monitor", f"{monitor},addreserved,0,0,0,0")
@@ -1638,7 +1671,6 @@ def camera_pan(s, wait_for):
     try:
         s.setup("dwindle", 0, 1)
         primary_destinations(s)
-        work = area(next(m for m in s.data("monitors") if m["name"] == monitor))
         saved_cursor = overrides()
         overrides("set 0 crosshair")
         overrides("set 1 ew-resize")
@@ -1694,7 +1726,9 @@ def camera_pan(s, wait_for):
         assert s.status()["live"] and not s.status()["dragging"]
         assert abs(s.status()["zoom"]["extra_goal"] - 1.15 ** 2) < 0.0001
 
-        relative_to(s, (work["x"] + work["w"] - 70, work["y"] + work["h"] - 70))
+        # Stay inside the fitted canvas when releasing the pan; the rail and
+        # header reserve output space outside its valid grab region.
+        relative_to(s, (fitted["x"] + fitted["w"] - 70, fitted["y"] + fitted["h"] - 70))
         positive = tile(s, 11)
         assert abs(positive["x"] - fitted["x"]) < 0.1 and abs(positive["y"] - fitted["y"]) < 0.1
         assert inside(fitted, positive, 0.1)
@@ -1707,7 +1741,7 @@ def camera_pan(s, wait_for):
         assert abs(reversed_box["x"] - positive["x"] - moved_pointer["x"] + pointer["x"]) < 0.1
         assert abs(reversed_box["y"] - positive["y"] - moved_pointer["y"] + pointer["y"]) < 0.1
 
-        relative_to(s, (work["x"] + 70, work["y"] + 70))
+        relative_to(s, (fitted["x"] + 70, fitted["y"] + 70))
         negative = tile(s, 11)
         assert abs(negative["x"] + negative["w"] - fitted["x"] - fitted["w"]) < 0.1
         assert abs(negative["y"] + negative["h"] - fitted["y"] - fitted["h"]) < 0.1
@@ -1906,7 +1940,9 @@ def transitions(s, wait_for):
             left, top = max(box["x"], work["x"]), max(box["y"], work["y"])
             right = min(box["x"] + box["w"], work["x"] + work["w"])
             bottom = min(box["y"] + box["h"], work["y"] + work["h"])
-            if right - left > 32 and bottom - top > 32:
+            # A thin entering slice moves away during a real input roundtrip.
+            # Its complete visible card has a stable center while still returning.
+            if left == box["x"] and right == box["x"] + box["w"] and right - left > 64 and bottom - top > 64:
                 return (left + right) / 2, (top + bottom) / 2
             return None
 
@@ -1947,10 +1983,13 @@ def transitions(s, wait_for):
         s.key(Z, 1)
         wait_for(lambda: zoom_edges(s, s.names[0]))
         s.move(center(baseline[(s.names[0], 22)]))
-        pointer = s.data("cursorpos")
         namespace = "waybar-zoom-return"
         panel = s.spawn(["python3", str(s.artifact("layer.py")), str(s.root / "zoom-return-panel"), namespace, "bottom"])
         try:
+            # Grid placement changes with reserved UI space; explicitly enter
+            # the panel before measuring a stationary foreground restoration.
+            s.move(center(wait_for(lambda: s.layer(namespace))))
+            pointer = s.data("cursorpos")
             wait_for(lambda: s.layer(namespace) and not s.status()["cursor_owned"])
             assert s.status()["zoom"]["held"]
             s.key(Z, 0)

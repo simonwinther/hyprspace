@@ -673,49 +673,59 @@ def settle_animation(s, wait_for):
         assert workspace(s, 11)["monitor"] == s.names[0]
         s.check(f"{action} leaves native placement unchanged and creates no settle animation")
 
-    for action in ("new pickup", "keyboard navigation", "native command", "close", "reload", "external move", "output removal"):
-        identity, _, state = begin()
-        assert state.get("workspace_settle"), state
-        try:
-            if action == "new pickup":
-                s.move(center(tile(s, identity)))
-                assert s.status().get("workspace_settle"), "settle finished before testing pickup takeover"
-                s.button(1)
-                state = s.status()
-                assert state["dragging"] and state["drag"]["kind"] == "workspace", state
-                assert state["drag"]["workspace"] == identity and not state.get("workspace_settle"), state
-                s.key(1, 1)
-                s.key(1, 0)
-            elif action == "keyboard navigation":
+    # Takeover cases need a pending transition, independent of IPC latency.
+    # Measure the default glide above before extending only this private clock.
+    fixture = s.artifact("test-overview.so")
+    assert fixture.is_file(), "build integration-fixtures before the workspace drag suite"
+    s.ctl("plugin", "load", str(fixture))
+    try:
+        s.ctl("dispatch", "hyprspace-test:workspace-settle-clock", "hold")
+        for action in ("new pickup", "keyboard navigation", "native command", "close", "reload", "external move", "output removal"):
+            identity, _, state = begin()
+            assert state.get("workspace_settle"), state
+            try:
+                if action == "new pickup":
+                    s.move(center(tile(s, identity)))
+                    assert s.status().get("workspace_settle"), "settle finished before testing pickup takeover"
+                    s.button(1)
+                    state = s.status()
+                    assert state["dragging"] and state["drag"]["kind"] == "workspace", state
+                    assert state["drag"]["workspace"] == identity and not state.get("workspace_settle"), state
+                    s.key(1, 1)
+                    s.key(1, 0)
+                elif action == "keyboard navigation":
+                    release(s)
+                    assert s.status().get("workspace_settle"), "settle finished before testing keyboard takeover"
+                    s.key(15, 1)  # Tab selects the next tile on the destination.
+                    s.key(15, 0)
+                    assert s.status()["target"]["workspace"] == 12, s.status()
+                elif action == "native command":
+                    s.ctl("dispatch", "setfloating", "address:" + s.windows()["hs-A"]["address"])
+                    assert s.windows()["hs-A"]["floating"]
+                elif action == "close":
+                    s.close()
+                    assert not s.status()["live"]
+                elif action == "reload":
+                    s.ctl("reload")
+                elif action == "external move":
+                    s.ctl("dispatch", "moveworkspacetomonitor", f"{identity} {s.names[2]}")
+                    assert workspace(s, identity)["monitor"] == s.names[2]
+                else:
+                    s.ctl("keyword", "monitor", f"{s.names[1]},disable")
+                    s.await_outputs(2)
+                assert not s.status().get("workspace_settle"), s.status()
+                assert s.status()["layout_targets_unique"]
+                if action not in ("external move", "output removal"):
+                    assert workspace(s, identity)["monitor"] == s.names[1]
+                s.check(f"{action} cancels the cosmetic workspace settle without blocking input or undoing the completed native transfer")
+            finally:
                 release(s)
-                assert s.status().get("workspace_settle"), "settle finished before testing keyboard takeover"
-                s.key(15, 1)  # Tab selects the next tile on the destination.
-                s.key(15, 0)
-                assert s.status()["target"]["workspace"] == 12, s.status()
-            elif action == "native command":
-                s.ctl("dispatch", "setfloating", "address:" + s.windows()["hs-A"]["address"])
-                assert s.windows()["hs-A"]["floating"]
-            elif action == "close":
-                s.close()
-                assert not s.status()["live"]
-            elif action == "reload":
-                s.ctl("reload")
-            elif action == "external move":
-                s.ctl("dispatch", "moveworkspacetomonitor", f"{identity} {s.names[2]}")
-                assert workspace(s, identity)["monitor"] == s.names[2]
-            else:
-                s.ctl("keyword", "monitor", f"{s.names[1]},disable")
-                s.await_outputs(2)
-            assert not s.status().get("workspace_settle"), s.status()
-            assert s.status()["layout_targets_unique"]
-            if action not in ("external move", "output removal"):
-                assert workspace(s, identity)["monitor"] == s.names[1]
-            s.check(f"{action} cancels the cosmetic workspace settle without blocking input or undoing the completed native transfer")
-        finally:
-            release(s)
-            if action == "output removal":
-                s.ctl("keyword", "monitor", f"{s.names[1]},960x600@60,-1000x-200,1.25,transform,1")
-                s.await_outputs(3)
+                if action == "output removal":
+                    s.ctl("keyword", "monitor", f"{s.names[1]},960x600@60,-1000x-200,1.25,transform,1")
+                    s.await_outputs(3)
+    finally:
+        s.ctl("dispatch", "hyprspace-test:workspace-settle-clock", "reset")
+        s.ctl("plugin", "unload", str(fixture))
 
 
 def run(s, wait_for):

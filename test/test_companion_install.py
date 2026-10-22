@@ -38,7 +38,7 @@ class CompanionInstallTests(unittest.TestCase):
             record["binaries"][name] = installer.digest(path)
         (self.providers / "menus.so").touch()
         (self.source / "compatibility.json").write_text(json.dumps(record))
-        self.helper = ROOT / "contrib/hyprspace-launch"
+        self.helper = ROOT / "build/hyprspace-launch"
         self.data = self.home / "data"
         self.bin = self.home / "bin"
         self.config = self.home / "config"
@@ -51,6 +51,7 @@ class CompanionInstallTests(unittest.TestCase):
         release = self.stage()
         self.assertEqual(installer.digest(release / "bin/walker"), installer.digest(self.source / "walker"))
         self.assertTrue((release / "launch-assets/launch-bin/uwsm").is_symlink())
+        self.assertTrue((release / "launch-assets/hyprspace-launch").read_bytes().startswith(b"\x7fELF"))
         self.assertFalse((self.bin / "walker").exists())
         self.assertEqual(self.stage(), release)
         (release / "bin/walker").write_bytes(b"corrupted")

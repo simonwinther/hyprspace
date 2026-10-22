@@ -7,11 +7,28 @@
 #pragma once
 
 #include "globals.hpp"
+#include "RenderGeometry.hpp"
 
 #include <hyprland/src/render/pass/PassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
 
+#include <optional>
+#include <vector>
+
 namespace hyprspace {
+
+    inline CBox physicalRenderBox(const SBoxF& box, double scale) {
+        const auto pixels = renderGeometry::physicalBox(box, scale);
+        return {pixels.x, pixels.y, pixels.w, pixels.h};
+    }
+
+    namespace renderPass {
+        // Feature renderers supply logical coordinates only. This boundary owns
+        // native shape construction and the physical-pixel geometry contract.
+        void appendSolidFill(std::vector<UP<IPassElement>>& out, const SBoxF& logical, const CHyprColor& color, double scale, double radius = 0,
+                             std::optional<SBoxF> clip = std::nullopt);
+        void appendOutline(std::vector<UP<IPassElement>>& out, const SBoxF& logical, const CHyprColor& color, double scale, double width = 1, double radius = 0);
+    } // namespace renderPass
 
     class CSwitcher;
 
@@ -19,7 +36,7 @@ namespace hyprspace {
     // itself remains independent of monitor framebuffers and blur resources.
     class CWindowPreviewPassElement : public CTexPassElement {
       public:
-        CWindowPreviewPassElement(SRenderData data, PHLWINDOW window);
+        CWindowPreviewPassElement(SRenderData data, PHLWINDOW window, bool stableSize = true);
 
         std::vector<UP<IPassElement>> draw() override;
         bool                          needsLiveBlur() override;
@@ -34,6 +51,7 @@ namespace hyprspace {
 
       private:
         PHLWINDOWREF m_window;
+        bool         m_stableSize = true;
     };
 
     class CSwitcherPassElement : public IPassElement {

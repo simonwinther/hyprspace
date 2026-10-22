@@ -3,12 +3,12 @@
 #include "CompositorHooks.hpp"
 #include "Config.hpp"
 #include "Texture.hpp"
+#include "PassElements.hpp"
+#include "SpaceStyle.hpp"
 
 #include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/output/Monitor.hpp>
-#include <hyprland/src/render/pass/BorderPassElement.hpp>
-#include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -102,21 +102,28 @@ namespace hyprspace {
                                           std::string setting = "") {
             entries.push_back({id, std::move(title), std::move(keys), std::move(description), std::move(tags), std::move(setting), topic});
         };
-        const auto zoom = keyLabel(s.zoom), windows = keyLabel(s.windows), empty = keyLabel(s.empty), follow = keyLabel(s.follow), help = keyLabel(s.help);
+        const auto zoom = keyLabel(s.zoom), follow = keyLabel(s.follow);
+        const auto leader = [](EInputAction action) {
+            for (const auto& binding : INPUT_LEADER_BINDINGS)
+                if (binding.action == action)
+                    return std::format("Space → {}", binding.key);
+            return std::string{};
+        };
         const auto held = [&](std::string keys) { return !s.wheelZoom || zoom.empty() ? "Disabled" : zoom + " + " + keys; };
-        add("help", 1, "Find a control", help.empty() ? "Disabled" : help,
-            "Open this guide from workspaces or the window board. Use / to search every topic, including your configured shortcuts.", "help documentation guide manual",
-            "overview:help_key");
+        add("help", 1, "Find a control", "? / Space → ?",
+            "Open this guide from any navigation view. Use / to search every topic. Close help to return to the previous view and its draft.",
+            "help documentation guide manual");
         add("overview", 1, "Open the overview", nativeShortcut("hyprspace:overview"),
             "Use your configured Hyprland binding to open workspaces. Your application keeps its place while you browse.", "overview open start launch");
         add("navigate", 1, "Choose a workspace", "hjkl / arrows", "Move to the nearest workspace in a direction. Tab and Shift+Tab step through the tiles.",
             "selection navigation vim keyboard");
-        add("open", 1, "Open the selection", "Enter / Space / S", "Commit the selected workspace. Clicking a window preview also focuses that window.",
+        add("open", 1, "Open the selection", "Enter", "In Normal mode, commit the selected workspace. Clicking a window preview also focuses that window.",
             "confirm accept focus enter click");
         add("cancel", 1, "Return to your desktop", "Esc / right-click",
-            "Close the overview and return to your original workspace. Escape first cancels an active drag or exits the window board.", "cancel dismiss exit back");
+            "In Insert mode, Escape finishes editing and retains the query. In Normal mode, it returns to the previous layer, then to your original desktop.",
+            "cancel dismiss exit back");
         add("digits", 1, "Jump to a workspace", "1–9 / 0", "Open a numbered workspace immediately. 0 selects workspace 10.", "number digit direct jump");
-        add("ends", 1, "First or last workspace", "Home / End", "Select the first or last workspace without committing it. Press Enter to open it.",
+        add("ends", 1, "First or last workspace", "gg / G / Home / End", "Select the first or last workspace without committing it. Press Enter to open it.",
             "navigation first last");
         add("scrolling", 1, "Browse a scrolling workspace", "Wheel / PgUp / PgDn",
             "Scroll the workspace under the pointer. Its edge arrows reveal hidden columns while keeping the overview open.", "scroll scrolling columns touchpad tape");
@@ -141,40 +148,44 @@ namespace hyprspace {
         add("zoom-neighbor", 2, "Browse while inspecting", "Pointer at an edge",
             "At the fitted zoom level, pause over a directional edge arrow to inspect its neighboring workspace. Extra magnification pauses this navigation.",
             "zoom edge arrows neighbors dwell");
-        add("window-board", 3, "Switch to the window board", windows.empty() ? "Disabled" : windows,
-            "Gather windows from every covered output onto one board. Press the same key to return to workspaces.", "windows board global apps monitors",
-            "overview:window_view_key");
-        add("groups", 3, "Group the window board", windows.empty() ? "Toolbar" : "Shift + " + windows,
+        add("window-board", 3, "Switch to the window board", leader(EInputAction::ShowWindows),
+            std::format("Gather windows from every covered output onto one board. {} returns to workspaces; Escape returns to the previous layer.",
+                        leader(EInputAction::ShowWorkspaces)),
+            "windows board global apps monitors");
+        add("groups", 3, "Group the window board", leader(EInputAction::CycleGrouping),
             "Cycle All windows, Apps, Workspaces and Monitors. The toolbar selects a group directly.", "group grouping apps applications outputs monitors");
         add("window-search", 3, "Find a window", "/",
             "Press / from workspaces to open the window board and search immediately. Match window titles, applications, workspace names and monitor names. "
-            "Combine an app name and title to find a specific window, then press Enter to focus it.",
+            "Combine an app name and title to find a specific window. Enter finishes editing; navigate the results, then Enter opens the selected window.",
             "search find filter title app class monitor");
-        add("recent", 3, "Show recent windows first", "R",
+        add("recent", 3, "Show recent windows first", leader(EInputAction::ToggleRecent),
             "Switch between location order and recent-first order within each group. The selected window keeps its identity.", "recent recency order sort history");
         add("window-navigation", 3, "Choose a window", "hjkl / arrows / Tab",
-            "Move through the board. Keyboard navigation scrolls the selected window into view. Enter opens its original window.", "navigate vim selection focus");
+            "In Normal mode, move through the board; n and N step through matches. Keyboard navigation scrolls the selected window into view. Enter opens its original "
+            "window.",
+            "navigate vim selection focus");
         add("search-editing", 3, "Edit a search", "Ctrl+A / Ctrl+U",
-            "Ctrl+A selects the query; Ctrl+U clears it. Backspace, Delete, arrows and Home/End edit text. Shift extends a selection.",
+            "Use / or i to enter Insert mode. Ctrl+A selects the query; Ctrl+U clears it. Backspace, Delete, arrows and Home/End edit text. Shift extends a selection. "
+            "Enter or Escape returns to Normal mode and retains the query.",
             "search query text unicode edit erase delete");
-        add("empty", 4, "Prepare an empty workspace", empty.empty() ? "Middle-click / + Empty" : empty + " / middle-click",
+        add("empty", 4, "Prepare an empty workspace", leader(EInputAction::NewWorkspace) + " / middle-click",
             "Select an empty workspace on the pointer's output and keep the overview open. Enter opens it; a subsequent launch uses that workspace.",
-            "empty new workspace prepare create launch", "overview:empty_workspace_key");
+            "empty new workspace prepare create launch");
         add("move-window", 4, "Move a window", "Super + left-drag",
             "Drag a preview to rearrange its window or move it into a workspace on another output. Escape cancels the drag.",
             "move rearrange window drag monitor output");
-        add("close-workspace", 4, "Close an empty workspace", s.closeWorkspace == XKB_KEY_NoSymbol ? "Disabled" : keyLabel(s.closeWorkspace),
+        add("close-workspace", 4, "Close an empty workspace", leader(EInputAction::CloseWorkspace),
             "Remove the selected empty normal workspace and keep the overview open. An active workspace switches to the nearest remaining tile on its monitor. "
             "Workspaces with windows and the last normal workspace on a monitor are protected.",
-            "close remove dismiss delete empty workspace quit q", "overview:close_workspace_key");
+            "close remove dismiss delete empty workspace");
         add("resize-window", 4, "Resize a window", "Super + right-drag", "Resize a window from its preview, scaled into the workspace tile. Escape cancels the resize.",
             "resize size window drag");
         add("move-workspace", 4, "Move a whole workspace", s.workspaceMods ? modifiers(s.workspaceMods) + " + drag" : "Disabled",
             "Left-drag a regular workspace to another output. Its number, name and layout travel with it; pinned windows stay on their original monitor.",
             "move workspace monitor output drag pinned", "overview:workspace_drag_modifiers");
         add("bindings", 5, "Configure keybindings", "Hyprland config",
-            "Change zoom_key, empty_workspace_key, close_workspace_key, window_view_key, follow_key or help_key under plugin:hyprspace:overview. An empty key disables "
-            "its shortcut.",
+            "Use Hyprland bindings for opening the overview. Inside it, the shared Normal and Insert modes provide navigation, commands and text editing. "
+            "Zoom and cursor-follow settings remain under plugin:hyprspace:overview.",
             "keys keybind keybinds keybinding keybindings bindings shortcuts controls configuration customize remap", "overview:*_key");
         add("hint", 5, "Show or hide the follow hint", s.showFollowHint ? "Shown" : "Hidden",
             "Set show_follow_hint to false to hide the zoom hint. Your saved follow preference stays available through its toggle key.",
@@ -188,8 +199,73 @@ namespace hyprspace {
         add("warp", 5, "Move the pointer after opening a window", s.warpCursor ? "Enabled" : "Disabled",
             "warp_cursor controls whether committing a selection moves the pointer into that window.", "pointer mouse warp focus configuration", "warp_cursor");
         add("help-search", 1, "Search this guide", "/ → type → Enter",
-            "Search across all topics. Enter returns to browsing results; j/k move between entries and h/l choose topics. Escape leaves search, then closes help.",
+            "Search across all topics in Insert mode. Enter or Escape returns to Normal mode and retains the query. j/k move between entries, n/N step through matches "
+            "and h/l choose topics. Escape in Normal mode returns to the previous view.",
             "help search find filter topics vim");
+        add("input-modes", 1, "Navigate or edit", "Normal / Insert",
+            "Normal mode uses hjkl and arrows to navigate, Space for commands, / to search and i to edit a text field. Insert mode treats letters as text. "
+            "Enter or Escape finishes editing without clearing the draft.",
+            "modes normal insert keyboard editing navigation draft");
+        add("reorder-spaces", 4, "Reorder spaces", "Shift+J / Shift+K",
+            "In the Spaces chooser or manager, move the selected space down or up. Its saved order changes without switching spaces. Filtered lists move between "
+            "matching spaces and retain the order of hidden entries.",
+            "spaces reorder order sort move keyboard");
+        add("search-icons", 4, "Find a space icon", "Tab → Icon → /",
+            "Search icons by name or meaning, such as school or gaming. Enter or Escape finishes the search; hjkl and Page Up/Down choose an icon. Tab reaches "
+            "Color and Ctrl+Enter saves the complete draft.",
+            "space icon icons search appearance color colour");
+        for (const auto& binding : INPUT_LEADER_BINDINGS) {
+            const char* id    = nullptr;
+            size_t      topic = 1;
+            std::string description;
+            switch (binding.action) {
+            case EInputAction::ToggleSpaces:
+                id = "spaces";
+                description =
+                    "Open the Spaces chooser inside the overview. Search or navigate its contexts, then Enter switches context. Escape returns to the previous layer.";
+                break;
+            case EInputAction::OpenManager:
+                id          = "manage-spaces";
+                topic       = 4;
+                description = "Open the complete space manager. Shift+J/K reorders spaces; the shared leader commands create, edit and remove the selected space.";
+                break;
+            case EInputAction::Edit:
+                id          = "edit-space";
+                topic       = 4;
+                description = "Edit the chosen space's name, icon and color. Use i to edit its name, Tab to reach Icon, / to search icons, and Ctrl+Enter to save.";
+                break;
+            case EInputAction::Create:
+                id          = "create-space";
+                topic       = 4;
+                description = "Create a space with its own workspace context. Choose a name, icon and color; Ctrl+Enter saves the form.";
+                break;
+            case EInputAction::ShowWorkspaces:
+                id          = "workspaces";
+                description = "Return to the workspace grid from another navigation view.";
+                break;
+            case EInputAction::MoveWindow:
+                id          = "move-window-to-space";
+                topic       = 4;
+                description = "Move only the selected window to another space, from either the workspace grid or window view. "
+                              "The destination picker starts with Selected window; you can explicitly change the transfer type.";
+                break;
+            case EInputAction::MoveWorkspace:
+                id          = "move-workspace-to-space";
+                topic       = 4;
+                description = "Move the selected workspace and every window it contains to another space, from either the workspace grid or window view. "
+                              "The destination picker starts with Whole workspace; you can explicitly change the transfer type.";
+                break;
+            case EInputAction::Remove:
+                id          = "remove-space";
+                topic       = 4;
+                description = "Review removal of the chosen space before confirming. The form identifies the affected space and destination.";
+                break;
+            default:
+                break;
+            }
+            if (id)
+                add(id, topic, std::string(binding.label), leader(binding.action), std::move(description), "space command navigation context");
+        }
         return entries;
     }
 
@@ -272,25 +348,6 @@ namespace hyprspace {
         return m_active && mon && m_layout.search.contains(point.x - mon->m_position.x, point.y - mon->m_position.y);
     }
 
-    bool CHelpOverlay::reservesKey(xkb_keysym_t sym, uint32_t mods) const {
-        if (!m_active || sym == XKB_KEY_Print || sym == XKB_KEY_Sys_Req || (sym >= 0x10080000 && sym <= 0x1008FFFF) ||
-            (sym >= XKB_KEY_Shift_L && sym <= XKB_KEY_Hyper_R) || (sym >= XKB_KEY_ISO_Lock && sym <= XKB_KEY_ISO_Level5_Lock) || sym == XKB_KEY_Mode_switch ||
-            sym == XKB_KEY_Num_Lock || sym == XKB_KEY_Scroll_Lock)
-            return false;
-        return (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0 ||
-               (m_searchFocused && mods == HL_MODIFIER_CTRL && (sym == XKB_KEY_a || sym == XKB_KEY_u));
-    }
-
-    bool CHelpOverlay::oneShot(xkb_keysym_t sym, const std::string& text) const {
-        if (!m_searchFocused && sym != XKB_KEY_h && sym != XKB_KEY_j && sym != XKB_KEY_k && sym != XKB_KEY_l && sym != XKB_KEY_Left && sym != XKB_KEY_Right &&
-            sym != XKB_KEY_Up && sym != XKB_KEY_Down && sym != XKB_KEY_Tab && sym != XKB_KEY_ISO_Left_Tab && sym != XKB_KEY_Home && sym != XKB_KEY_End &&
-            sym != XKB_KEY_Page_Up && sym != XKB_KEY_Page_Down)
-            return true;
-        return sym == XKB_KEY_Escape || sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter ||
-               (text.empty() && config::overviewHelpKey() != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == config::overviewHelpKey()) ||
-               (!m_searchFocused && (text == "/" || sym == XKB_KEY_slash || xkb_keysym_to_lower(sym) == config::overviewHelpKey()));
-    }
-
     void CHelpOverlay::focusSearch(bool selectAll) {
         if (!m_searchFocused) {
             m_searchFocused = true;
@@ -299,6 +356,123 @@ namespace hyprspace {
         if (selectAll)
             m_search.selectAll();
         resetCaret();
+    }
+
+    SInputContext CHelpOverlay::inputContext() const {
+        return {EInputContext::Help, m_searchFocused ? EInputMode::Insert : EInputMode::Normal, "query", m_generation, true};
+    }
+
+    void CHelpOverlay::setInputMode(EInputMode mode) {
+        if (mode == EInputMode::Insert)
+            focusSearch(false);
+        else
+            blurSearch();
+        m_session.damage();
+    }
+
+    void CHelpOverlay::editInput(ETextAction action, bool extend) {
+        if (!m_active || !m_searchFocused)
+            return;
+        const auto previous = m_search.text();
+        switch (action) {
+        case ETextAction::Backspace:
+            m_search.backspace();
+            break;
+        case ETextAction::Delete:
+            m_search.eraseForward();
+            break;
+        case ETextAction::Left:
+            m_search.left(extend);
+            break;
+        case ETextAction::Right:
+            m_search.right(extend);
+            break;
+        case ETextAction::Home:
+            m_search.home(extend);
+            break;
+        case ETextAction::End:
+            m_search.end(extend);
+            break;
+        case ETextAction::SelectAll:
+            m_search.selectAll();
+            break;
+        case ETextAction::Clear:
+            m_search.clear();
+            break;
+        }
+        if (previous != m_search.text())
+            queryChanged();
+        else
+            resetCaret();
+    }
+
+    void CHelpOverlay::insertText(const std::string& text) {
+        if (!m_active || !m_searchFocused)
+            return;
+        const auto previous = m_search.text();
+        m_search.insert(text);
+        if (previous != m_search.text())
+            queryChanged();
+        else
+            resetCaret();
+    }
+
+    bool CHelpOverlay::perform(EInputAction action) {
+        if (!m_active)
+            return false;
+        switch (action) {
+        case EInputAction::Search:
+            focusSearch();
+            return true;
+        case EInputAction::FocusText:
+            setInputMode(EInputMode::Insert);
+            return true;
+        case EInputAction::FinishEditing:
+        case EInputAction::Accept:
+            setInputMode(EInputMode::Normal);
+            return true;
+        case EInputAction::MoveLeft:
+            setTopic(m_browser.topic() ? m_browser.topic() - 1 : HELP_TOPICS.size() - 1);
+            return true;
+        case EInputAction::MoveRight:
+            setTopic((m_browser.topic() + 1) % HELP_TOPICS.size());
+            return true;
+        case EInputAction::MoveDown:
+        case EInputAction::NextField:
+            m_browser.move(1);
+            break;
+        case EInputAction::MoveUp:
+        case EInputAction::PrevField:
+            m_browser.move(-1);
+            break;
+        case EInputAction::NextMatch:
+            if (m_browser.count())
+                m_browser.select((m_browser.selected() + 1) % m_browser.count());
+            break;
+        case EInputAction::PrevMatch:
+            if (m_browser.count())
+                m_browser.select((m_browser.selected() + m_browser.count() - 1) % m_browser.count());
+            break;
+        case EInputAction::PageNext:
+            m_browser.move(std::max(1, static_cast<int>(m_layout.results.h / m_layout.rowHeight)));
+            break;
+        case EInputAction::PagePrevious:
+            m_browser.move(-std::max(1, static_cast<int>(m_layout.results.h / m_layout.rowHeight)));
+            break;
+        case EInputAction::First:
+            m_browser.edge(false);
+            break;
+        case EInputAction::Last:
+            m_browser.edge(true);
+            break;
+        case EInputAction::Back:
+            return false; // The controller restores the parent layer.
+        default:
+            return false;
+        }
+        ensureVisible();
+        m_session.damage();
+        return true;
     }
     void CHelpOverlay::blurSearch() {
         if (m_searchFocused) {
@@ -332,76 +506,6 @@ namespace hyprspace {
         else if (bottom > m_scroll + m_layout.results.h)
             m_scroll = bottom - m_layout.results.h;
         m_scroll = std::clamp(m_scroll, 0.0, std::max(0.0, m_browser.count() * m_layout.rowHeight - m_layout.results.h));
-    }
-
-    void CHelpOverlay::onKey(xkb_keysym_t sym, uint32_t mods, const std::string& text) {
-        if (!m_active)
-            return;
-        if (sym == XKB_KEY_Escape) {
-            if (m_searchFocused)
-                blurSearch();
-            else
-                m_session.closeHelp();
-            return;
-        }
-        if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter) {
-            blurSearch();
-            return;
-        }
-        if (text.empty() && config::overviewHelpKey() != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == config::overviewHelpKey()) {
-            m_session.closeHelp();
-            return;
-        }
-        if (m_searchFocused) {
-            const auto before = m_search.text();
-            if (sym == XKB_KEY_BackSpace)
-                m_search.backspace();
-            else if (sym == XKB_KEY_Delete)
-                m_search.eraseForward();
-            else if (mods == HL_MODIFIER_CTRL && sym == XKB_KEY_a)
-                m_search.selectAll();
-            else if (mods == HL_MODIFIER_CTRL && sym == XKB_KEY_u)
-                m_search.clear();
-            else if (sym == XKB_KEY_Left)
-                m_search.left(mods == HL_MODIFIER_SHIFT);
-            else if (sym == XKB_KEY_Right)
-                m_search.right(mods == HL_MODIFIER_SHIFT);
-            else if (sym == XKB_KEY_Home)
-                m_search.home(mods == HL_MODIFIER_SHIFT);
-            else if (sym == XKB_KEY_End)
-                m_search.end(mods == HL_MODIFIER_SHIFT);
-            else if (sym == XKB_KEY_Up || sym == XKB_KEY_Down || sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab) {
-                blurSearch();
-                m_browser.move(sym == XKB_KEY_Up || sym == XKB_KEY_ISO_Left_Tab || mods == HL_MODIFIER_SHIFT ? -1 : 1);
-                ensureVisible();
-            } else if (!text.empty() && (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0)
-                m_search.insert(text);
-            if (before != m_search.text())
-                queryChanged();
-            else if (m_searchFocused)
-                resetCaret();
-        } else if ((text == "/" || sym == XKB_KEY_slash) && !(mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)))
-            focusSearch();
-        else if (xkb_keysym_to_lower(sym) == config::overviewHelpKey() && config::overviewHelpKey() != XKB_KEY_NoSymbol)
-            m_session.closeHelp();
-        else if (sym == XKB_KEY_h || sym == XKB_KEY_Left)
-            setTopic(m_browser.topic() ? m_browser.topic() - 1 : HELP_TOPICS.size() - 1);
-        else if (sym == XKB_KEY_l || sym == XKB_KEY_Right)
-            setTopic((m_browser.topic() + 1) % HELP_TOPICS.size());
-        else {
-            if (sym == XKB_KEY_j || sym == XKB_KEY_Down || (sym == XKB_KEY_Tab && mods != HL_MODIFIER_SHIFT))
-                m_browser.move(1);
-            else if (sym == XKB_KEY_k || sym == XKB_KEY_Up || sym == XKB_KEY_ISO_Left_Tab || (sym == XKB_KEY_Tab && mods == HL_MODIFIER_SHIFT))
-                m_browser.move(-1);
-            else if (sym == XKB_KEY_Page_Down)
-                m_browser.move(std::max(1, static_cast<int>(m_layout.results.h / m_layout.rowHeight)));
-            else if (sym == XKB_KEY_Page_Up)
-                m_browser.move(-std::max(1, static_cast<int>(m_layout.results.h / m_layout.rowHeight)));
-            else if (sym == XKB_KEY_Home || sym == XKB_KEY_End)
-                m_browser.edge(sym == XKB_KEY_End);
-            ensureVisible();
-        }
-        m_session.damage();
     }
 
     void CHelpOverlay::pointer(const Vector2D& point) {
@@ -492,20 +596,28 @@ namespace hyprspace {
         std::vector<UP<IPassElement>> out;
         if (!m_active || !mon || !m_session.covers(mon))
             return out;
-        const double scale = mon->m_scale;
-        const auto   ink = config::overviewLabelColor(), accent = config::overviewActiveBorder();
-        const auto   plate = config::overviewTitleBgColor().modifyA(1.F);
-        const auto   px    = [&](const SBoxF& box) { return CBox{box.x * scale, box.y * scale, box.w * scale, box.h * scale}; };
-        const auto   rect  = [&](SBoxF box, CHyprColor color, double round = 0) {
-            if (box.w > 0 && box.h > 0)
-                out.emplace_back(
-                    makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = px(box).round(), .color = color, .round = static_cast<int>(round * scale)}));
+        const double scale      = mon->m_scale;
+        const auto   rgba       = [](const CHyprColor& c) { return SRgba{c.r, c.g, c.b, c.a}; };
+        const auto   color      = [](const SRgba& c) { return CHyprColor{c.r, c.g, c.b, c.a}; };
+        const auto   background = rgba(config::overviewBgColor()), label = rgba(config::overviewLabelColor()), active = rgba(config::overviewActiveBorder());
+        const std::array<double, 12> colors{background.r, background.g, background.b, background.a, label.r,  label.g,
+                                            label.b,      label.a,      active.r,     active.g,     active.b, active.a};
+        const auto                   theme = config::spacesTheme();
+        struct SStyleCache {
+            std::array<double, 12> colors;
+            std::string            theme;
+            spaceStyle::SPalette   controls;
         };
-        const auto border = [&](SBoxF box, CHyprColor color, double round = 0) {
-            out.emplace_back(makeUnique<CBorderPassElement>(CBorderPassElement::SBorderData{
-                .box = px(box).round(), .grad1 = Config::CGradientValueData(color), .round = static_cast<int>(round * scale), .borderSize = 1}));
-        };
-        const auto drawTexture = [&](SP<Render::ITexture> texture, SBoxF box, std::optional<SBoxF> clip = std::nullopt, bool centerY = true) {
+        static std::optional<SStyleCache> cached;
+        if (!cached || cached->colors != colors || cached->theme != theme)
+            cached = SStyleCache{colors, theme, spaceStyle::palette(background, {}, label, active, theme)};
+        const auto& style = cached->controls;
+        const auto  ink = color(style.text), muted = color(style.muted), accent = color(style.focus);
+        const auto  plate       = color(style.surface);
+        const auto  px          = [&](const SBoxF& box) { return CBox{box.x * scale, box.y * scale, box.w * scale, box.h * scale}; };
+        const auto  rect        = [&](SBoxF box, CHyprColor color, double round = 0) { renderPass::appendSolidFill(out, box, color, scale, round); };
+        const auto  border      = [&](SBoxF box, CHyprColor color, double round = 0) { renderPass::appendOutline(out, box, color, scale, 1, round); };
+        const auto  drawTexture = [&](SP<Render::ITexture> texture, SBoxF box, std::optional<SBoxF> clip = std::nullopt, bool centerY = true) {
             if (!texture)
                 return;
             const auto                   size = texture->m_size / scale;
@@ -524,19 +636,19 @@ namespace hyprspace {
             return out;
         const auto& panel = m_layout.panel;
         rect(panel, plate, 16);
-        border(panel, fade(ink, .16F), 16);
+        border(panel, color(style.border), 16);
         text("Hyprspace help", {m_layout.search.x, panel.y + 20, m_layout.search.w - 80, 30}, ink, true);
-        rect(m_layout.close, fade(ink, .055F), 6);
-        text("Esc", {m_layout.close.x + 15, m_layout.close.y, m_layout.close.w - 20, m_layout.close.h}, fade(ink, .7F));
-        rect(m_layout.search, fade(ink, .045F), 9);
-        border(m_layout.search, m_searchFocused ? accent : fade(ink, .13F), 9);
+        rect(m_layout.close, color(style.hover), 6);
+        text("Esc", {m_layout.close.x + 15, m_layout.close.y, m_layout.close.w - 20, m_layout.close.h}, ink);
+        rect(m_layout.search, color(style.raised), 9);
+        border(m_layout.search, m_searchFocused ? accent : color(style.border), 9);
         const auto content = searchContent();
         searchMetrics();
         const auto [from, to] = m_searchFocused && hooks::keyboardOwned() ? m_search.selection() : std::pair<size_t, size_t>{0, 0};
-        const auto input = m_search.text().empty()
-                               ? textures().text(m_searchFocused ? "Type to search all help…" : "/  Search controls and settings", m_font, fade(ink, .5F),
-                                                 static_cast<int>(content.w), scale)
-                               : textures().inputText(m_search.text(), m_font, ink, static_cast<int>(content.w), m_searchOffset, scale, from, to, fade(accent, .25F));
+        const auto input =
+            m_search.text().empty()
+                ? textures().text(m_searchFocused ? "Type to search all help…" : "/  Search controls and settings", m_font, muted, static_cast<int>(content.w), scale)
+                : textures().inputText(m_search.text(), m_font, ink, static_cast<int>(content.w), m_searchOffset, scale, from, to, fade(accent, .25F));
         drawTexture(input, content, content);
         if (m_searchFocused && m_caretVisible && hooks::keyboardOwned()) {
             const auto&  metrics = searchMetrics();
@@ -547,12 +659,12 @@ namespace hyprspace {
         for (size_t i = 0; i < HELP_TOPICS.size() && m_layout.topics.w > 0; ++i) {
             const auto box = topicBox(i);
             if (i == m_browser.topic() && m_search.text().empty())
-                rect(box, fade(accent, .12F), 7);
-            text(HELP_TOPICS[i], {box.x + 12, box.y, box.w - 20, box.h}, i == m_browser.topic() && m_search.text().empty() ? accent : fade(ink, .72F));
+                rect(box, color(style.selected), 7);
+            text(HELP_TOPICS[i], {box.x + 12, box.y, box.w - 20, box.h}, i == m_browser.topic() && m_search.text().empty() ? ink : muted);
         }
         text(std::format("{} · {} {}", m_search.text().empty() ? HELP_TOPICS[m_browser.topic()] : "Search results", m_browser.count(),
                          m_browser.count() == 1 ? "entry" : "entries"),
-             m_layout.heading, fade(ink, .6F));
+             m_layout.heading, muted);
         const auto local = m_pointer - mon->m_position;
         for (size_t i = 0; i < m_browser.count(); ++i) {
             const auto box = rowBox(i);
@@ -562,38 +674,38 @@ namespace hyprspace {
             const double clippedY = std::max(box.y, m_layout.results.y);
             const SBoxF  clipped{box.x, clippedY, box.w, std::max(0.0, std::min(box.y + box.h, m_layout.results.y + m_layout.results.h) - clippedY)};
             if (i == m_browser.selected() || box.contains(local.x, local.y))
-                rect(clipped, fade(i == m_browser.selected() ? accent : ink, i == m_browser.selected() ? .12F : .035F), 7);
+                rect(clipped, color(i == m_browser.selected() ? style.selected : style.hover), 7);
             const double keysW = std::min(190.0, box.w * .37);
-            text(entry.keys, {box.x + 12, box.y, keysW - 20, box.h}, i == m_browser.selected() ? accent : fade(ink, .6F), false, m_layout.results);
+            text(entry.keys, {box.x + 12, box.y, keysW - 20, box.h}, i == m_browser.selected() ? ink : muted, false, m_layout.results);
             text(entry.title, {box.x + keysW, box.y, box.w - keysW - 12, box.h}, ink, i == m_browser.selected(), m_layout.results);
         }
         const double listHeight = m_browser.count() * m_layout.rowHeight;
         if (listHeight > m_layout.results.h) {
             const auto&  box   = m_layout.results;
             const double thumb = std::min(box.h, std::max(20.0, box.h * box.h / listHeight));
-            rect({box.x + box.w - 3, box.y, 3, box.h}, fade(ink, .035F), 1.5);
-            rect({box.x + box.w - 3, box.y + m_scroll / (listHeight - box.h) * (box.h - thumb), 3, thumb}, fade(ink, .25F), 1.5);
+            rect({box.x + box.w - 3, box.y, 3, box.h}, color(style.raised), 1.5);
+            rect({box.x + box.w - 3, box.y + m_scroll / (listHeight - box.h) * (box.h - thumb), 3, thumb}, color(style.border), 1.5);
         }
         if (!m_browser.count()) {
             text("No matching help", m_layout.results, ink, true);
-            text("Try “keybinds”, “follow” or “resize”.", {m_layout.results.x, m_layout.results.cy() + 24, m_layout.results.w, 26}, fade(ink, .6F));
+            text("Try “keybinds”, “follow” or “resize”.", {m_layout.results.x, m_layout.results.cy() + 24, m_layout.results.w, 26}, muted);
         }
         if (const auto entry = m_browser.selection()) {
             const auto box = m_layout.detail;
-            rect(box, fade(ink, .035F), 9);
+            rect(box, color(style.raised), 9);
             const bool compact = box.h < 150;
             text(entry->title, {box.x + 16, box.y + (compact ? 8 : 10), box.w - 32, compact ? 26.0 : 30.0}, ink, true);
             const double settingH = entry->setting.empty() ? 0 : 22;
             const double bodyTop  = compact ? 36 : 45;
             const SBoxF  body{box.x + 16, box.y + bodyTop, box.w - 32, std::max(1.0, box.h - bodyTop - 8 - settingH)};
-            drawTexture(textures().paragraph(entry->description, m_font, fade(ink, .8F), static_cast<int>(body.w), static_cast<int>(body.h), scale), body, box, false);
+            drawTexture(textures().paragraph(entry->description, m_font, ink, static_cast<int>(body.w), static_cast<int>(body.h), scale), body, box, false);
             if (!entry->setting.empty())
-                text(entry->setting, {box.x + 16, box.y + box.h - 28, box.w - 32, 22}, fade(accent, .85F));
+                text(entry->setting, {box.x + 16, box.y + box.h - 28, box.w - 32, 22}, muted);
         }
         const bool compact = panel.w < 720;
-        text(m_searchFocused ? (compact ? "Enter  Results   Esc  Back   Ctrl+U  Clear" : "Enter  Browse results     Esc  Leave search     Ctrl+U  Clear")
-                             : (compact ? "j/k ↑↓ · h/l ←→ · / Search · Esc Back" : "j/k  Entries     h/l  Topics     /  Search     Esc Close help"),
-             m_layout.footer, fade(ink, .55F));
+        text(m_searchFocused ? (compact ? "Enter/Esc Done · Ctrl+U Clear" : "Enter / Esc  Finish editing     Ctrl+U  Clear")
+                             : (compact ? "j/k ↑↓ · / Search · Esc Back" : "j/k  Entries     h/l  Topics     /  Search     Esc  Back"),
+             m_layout.footer, muted);
         return out;
     }
 } // namespace hyprspace

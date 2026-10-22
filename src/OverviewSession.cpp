@@ -9,9 +9,12 @@
 #include "WindowBoard.hpp"
 #include "HelpOverlay.hpp"
 #include "OverlayPolicy.hpp"
+#include "Spaces.hpp"
+#include "InputController.hpp"
 
 #include <cstdio>
 #include <cstdlib>
+#include <unordered_map>
 
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/shared/animation/AnimationTree.hpp>
@@ -200,6 +203,7 @@ namespace hyprspace {
     }
 
     void COverviewSession::begin() {
+        inputController().reset();
         closeHelp();
         cancelWorkspaceSettle();
         m_emptyButtonPressed = false;
@@ -234,6 +238,7 @@ namespace hyprspace {
     }
 
     void COverviewSession::stopInput() {
+        inputController().reset();
         closeHelp();
         if (m_windowBoard)
             m_windowBoard->leave();
@@ -245,6 +250,8 @@ namespace hyprspace {
     }
 
     void COverviewSession::hideWindow(PHLWINDOW w) {
+        if (!w || !spaces::inActive(w->m_workspace))
+            return;
         m_visibility.hide(
             PHLWINDOWREF{w}, [](const auto& window) { return window->alpha(Desktop::View::WINDOW_ALPHA_FADE)->goal(); },
             [](const auto& window) { window->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(0.F); });
@@ -343,19 +350,19 @@ namespace hyprspace {
             return {.success = false, .error = "hyprspace: closeworkspace requires the workspace overview"};
         if (gestureActive() || pendingResize || m_pan)
             return {.success = false, .error = "hyprspace: finish the current gesture before closing a workspace"};
-        const auto target = selection.command();
-        auto workspace = target ? State::workspaceState()->query().id(target->workspace.id).run() : nullptr;
-        const auto mon = workspace ? workspace->m_monitor.lock() : nullptr;
-        auto* view = mon ? emptyWorkspaceView(mon) : nullptr;
+        const auto target    = selection.command();
+        auto       workspace = target ? State::workspaceState()->query().id(target->workspace.id).run() : nullptr;
+        const auto mon       = workspace ? workspace->m_monitor.lock() : nullptr;
+        auto*      view      = mon ? emptyWorkspaceView(mon) : nullptr;
         if (!valid(workspace) || !view || workspace->m_isSpecialWorkspace || workspace->m_name != target->workspace.name)
             return {.success = false, .error = "hyprspace: select a normal workspace to close"};
         if (workspace->getWindowCount() != 0)
             return {.success = false, .error = "hyprspace: only empty workspaces can be closed"};
 
-        const auto source = view->workspaceCell(target->workspace);
+        const auto     source = view->workspaceCell(target->workspace);
         const Vector2D center{source.cx() + mon->m_position.x, source.cy() + mon->m_position.y};
-        PHLWORKSPACE replacement;
-        double distance = std::numeric_limits<double>::infinity();
+        PHLWORKSPACE   replacement;
+        double         distance = std::numeric_limits<double>::infinity();
         for (const auto& candidate : view->inspectTargets()) {
             if (candidate.window || candidate.workspace == target->workspace)
                 continue;
@@ -365,7 +372,7 @@ namespace hyprspace {
             const double next = (Vector2D{candidate.preview.cx(), candidate.preview.cy()} - center).size();
             if (next < distance) {
                 replacement = ws;
-                distance = next;
+                distance    = next;
             }
         }
         if (!replacement)
@@ -396,16 +403,22 @@ namespace hyprspace {
 
     std::expected<PHLWORKSPACE, std::string> COverviewSession::resolveEmptyWorkspace(PHLMONITOR monitor, bool isEmpty) {
         prunePreparedWorkspaces();
-        std::vector<SEmptyWorkspaceCandidate> candidates;
-        const auto                            workspaces = State::workspaceState()->workspacesCopy();
+        std::vector<SEmptyWorkspaceCandidate>     candidates;
+        std::unordered_map<int64_t, PHLWORKSPACE> existing;
+        const auto                                workspaces = State::workspaceState()->workspacesCopy();
         for (const auto& ws : workspaces) {
-            if (!valid(ws))
+            if (!valid(ws) || !spaces::inActive(ws))
                 continue;
-            const auto owner   = ws->m_monitor.lock();
-            bool       allowed = true;
+            const auto owner = ws->m_monitor.lock();
+            const auto local = spaces::localNumber(ws);
+            // Numeric choices use space-local numbers. Named workspaces have
+            // no local number, so retain their native identity for reuse.
+            const auto identity = local > 0 ? local : ws->m_id;
+            existing.emplace(identity, ws);
+            bool allowed = true;
             if (const auto rule = Config::workspaceRuleMgr()->getWorkspaceRuleFor(ws); rule && !rule->m_monitor.empty())
                 allowed = State::monitorState()->query().relativeTo(monitor).configString(rule->m_monitor).run() == monitor;
-            candidates.push_back({.id       = ws->m_id,
+            candidates.push_back({.id       = identity,
                                   .monitor  = owner ? owner->m_id : MONITOR_INVALID,
                                   .empty    = ws->getWindowCount() == 0,
                                   .special  = ws->m_isSpecialWorkspace,
@@ -427,8 +440,12 @@ namespace hyprspace {
         const auto  choice = chooseEmptyWorkspace(candidates, monitor->m_id, rules, &error);
         if (!choice)
             return std::unexpected(error);
-        const auto ws =
-            choice->existing ? State::workspaceState()->query().id(choice->id).run() : State::workspaceState()->create(choice->id, monitor->m_id, "", isEmpty);
+        PHLWORKSPACE ws;
+        if (choice->existing) {
+            if (const auto found = existing.find(choice->id); found != existing.end())
+                ws = found->second;
+        } else
+            ws = spaces::enabled() ? spaces::workspace(choice->id, monitor, true) : State::workspaceState()->create(choice->id, monitor->m_id, "", isEmpty);
         if (!valid(ws) || ws->m_monitor != monitor)
             return std::unexpected("hyprspace: could not prepare an empty workspace on this monitor");
         return ws;
@@ -467,7 +484,7 @@ namespace hyprspace {
 
     void COverviewSession::reconcileVisibility() {
         prunePreparedWorkspaces();
-        m_visibility.restoreIf([&](const auto& w) { return !covers(w->m_monitor.lock()); },
+        m_visibility.restoreIf([&](const auto& w) { return !covers(w->m_monitor.lock()) || !spaces::inActive(w->m_workspace); },
                                [](const auto& w, float alpha) {
                                    if (w->m_isMapped) {
                                        w->alpha(Desktop::View::WINDOW_ALPHA_FADE)->setValueAndWarp(alpha);
@@ -942,8 +959,8 @@ namespace hyprspace {
         if (zoomHeld() || factor <= 1.000001)
             return;
         const auto cursor = Pointer::mgr()->position();
-        if (!live() || !m_cursorOwned || helpActive() || gestureActive() || pendingResize || !overlaysAllowed() || !hooks::keyboardOwned() ||
-            hooks::mappingPointer() || hooks::foregroundPointerAt(cursor, true))
+        if (!live() || !m_cursorOwned || helpActive() || gestureActive() || pendingResize || !overlaysAllowed() || !hooks::keyboardOwned() || hooks::mappingPointer() ||
+            hooks::foregroundPointerAt(cursor, true))
             return;
         SZoomCursorTravel returning;
         if (windowViewActive()) {
@@ -964,12 +981,11 @@ namespace hyprspace {
         const auto mon = returning.monitor.lock();
         if (!mon || !mon->logicalBox().containsPoint(cursor))
             return;
-        if (returning.boardGeneration &&
-            !m_windowBoard->viewport().contains(cursor.x - mon->m_position.x, cursor.y - mon->m_position.y))
+        if (returning.boardGeneration && !m_windowBoard->viewport().contains(cursor.x - mon->m_position.x, cursor.y - mon->m_position.y))
             return;
         m_zoomCursorTravel = returning;
-        const auto box    = zoomCursorTravelBox();
-        const auto point  = box ? mapPreviewPoint({cursor.x, cursor.y}, *box, {0, 0, 1, 1}) : std::nullopt;
+        const auto box     = zoomCursorTravelBox();
+        const auto point   = box ? mapPreviewPoint({cursor.x, cursor.y}, *box, {0, 0, 1, 1}) : std::nullopt;
         if (!point || !std::isfinite(point->x) || !std::isfinite(point->y)) {
             m_zoomCursorTravel.reset();
             return;
@@ -977,7 +993,7 @@ namespace hyprspace {
         m_zoomCursorTravel->point  = *point;
         m_zoomCursorTravel->box    = *box;
         m_zoomCursorTravel->cursor = cursor;
-        m_pointer = cursor;
+        m_pointer                  = cursor;
     }
 
     bool COverviewSession::updateZoomCursorTravelPointer() {
@@ -998,8 +1014,8 @@ namespace hyprspace {
 
     bool COverviewSession::zoomCursorTravelAvailableAt(const Vector2D& pos) const {
         const auto mon = m_zoomCursorTravel ? m_zoomCursorTravel->monitor.lock() : nullptr;
-        return mon && live() && !zoomHeld() && m_cursorOwned && !helpActive() && !gestureActive() && !pendingResize && overlaysAllowed() &&
-               hooks::keyboardOwned() && !hooks::mappingPointer() && mon->logicalBox().containsPoint(pos) &&
+        return mon && live() && !zoomHeld() && m_cursorOwned && !helpActive() && !gestureActive() && !pendingResize && overlaysAllowed() && hooks::keyboardOwned() &&
+               !hooks::mappingPointer() && mon->logicalBox().containsPoint(pos) &&
                (hooks::devicePointerMotion() || Pointer::mgr()->position() == m_zoomCursorTravel->cursor);
     }
 
@@ -1034,8 +1050,8 @@ namespace hyprspace {
         const auto mon = m_zoomCursorTravel->monitor.lock();
         // Device displacement is folded into the local point by pointer().
         // External warps and explicit interactions end the return instead.
-        if (!mon || !live() || zoomHeld() || !m_cursorOwned || helpActive() || gestureActive() || pendingResize || !overlaysAllowed() ||
-            !hooks::keyboardOwned() || hooks::mappingPointer() || Pointer::mgr()->position() != m_zoomCursorTravel->cursor) {
+        if (!mon || !live() || zoomHeld() || !m_cursorOwned || helpActive() || gestureActive() || pendingResize || !overlaysAllowed() || !hooks::keyboardOwned() ||
+            hooks::mappingPointer() || Pointer::mgr()->position() != m_zoomCursorTravel->cursor) {
             m_zoomCursorTravel.reset();
             return;
         }
@@ -1054,11 +1070,12 @@ namespace hyprspace {
             // or changing native focus during an overview animation.
             Pointer::mgr()->warpTo(next);
         }
-        m_pointer = Pointer::mgr()->position();
+        m_pointer                  = Pointer::mgr()->position();
         m_zoomCursorTravel->cursor = m_pointer;
-        m_zoomCursorTravel->box = *box;
-        const bool animating = m_zoomCursorTravel->boardGeneration ? m_windowBoard->inspectionReturning() :
-            std::ranges::any_of(views, [&](const auto& view) { return view->monitor() == mon && !view->zoomNavigationReady(); });
+        m_zoomCursorTravel->box    = *box;
+        const bool animating       = m_zoomCursorTravel->boardGeneration
+                                         ? m_windowBoard->inspectionReturning()
+                                         : std::ranges::any_of(views, [&](const auto& view) { return view->monitor() == mon && !view->zoomNavigationReady(); });
         if (animating)
             g_pHyprRenderer->damageMonitor(mon);
         else

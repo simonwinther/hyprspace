@@ -7,11 +7,15 @@
 #include "../../src/WindowBoard.hpp"
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 #include "../../src/CompositorHooks.hpp"
+#include "../../src/PassElements.hpp"
+#include <hyprland/src/render/pass/BorderPassElement.hpp>
+#include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <nlohmann/json.hpp>
 
 #include <hyprland/src/config/ConfigManager.hpp>
@@ -28,16 +32,86 @@
 using namespace hyprspace;
 
 namespace {
+    CHyprSignalListener borderFrameListener;
+    PHLMONITORREF       borderMonitor;
+
+    // Native GPU regression for the integer damage region around a fractional
+    // focus ring. Both controls use the same pixel phase; only the right one
+    // passes through the production geometry adapter.
+    CBox borderBox(PHLMONITOR monitor, bool snapped) {
+        const double scale = monitor->m_scale;
+        const SBoxF  logical{(snapped ? 340.2 : 60.2) / scale, 110.2 / scale, 220.72 / scale, 44.72 / scale};
+        return snapped ? physicalRenderBox(logical, scale) : CBox{logical.x * scale, logical.y * scale, logical.w * scale, logical.h * scale};
+    }
+
+    void renderBorderFixture(eRenderStage stage) {
+        const auto monitor = borderMonitor.lock();
+        if (stage != RENDER_POST_WINDOWS || !monitor || g_pHyprRenderer->m_renderData.pMonitor.lock() != monitor)
+            return;
+        monitor->m_forceFullFrames = 2;
+        g_pHyprRenderer->m_renderPass.add(
+            makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = CBox{20, 70, 560, 130}, .color = CHyprColor{0.025F, 0.035F, 0.05F, 1.F}}));
+        for (const bool snapped : {false, true}) {
+            if (snapped) {
+                const double                  scale = monitor->m_scale;
+                const SBoxF                   logical{340.2 / scale, 110.2 / scale, 220.72 / scale, 44.72 / scale};
+                std::vector<UP<IPassElement>> elements;
+                renderPass::appendSolidFill(elements, logical, CHyprColor{0.08F, 0.1F, 0.14F, 1.F}, scale, 8);
+                renderPass::appendOutline(elements, logical, CHyprColor{0.F, 1.F, 1.F, 1.F}, scale, 1, 8);
+                for (auto& element : elements)
+                    g_pHyprRenderer->m_renderPass.add(std::move(element));
+            } else {
+                const auto box    = borderBox(monitor, false);
+                const auto radius = renderGeometry::physicalRadius(8, monitor->m_scale);
+                g_pHyprRenderer->m_renderPass.add(
+                    makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = box, .color = CHyprColor{0.08F, 0.1F, 0.14F, 1.F}, .round = radius}));
+                g_pHyprRenderer->m_renderPass.add(
+                    makeUnique<CBorderPassElement>(CBorderPassElement::SBorderData{.box        = box,
+                                                                                   .grad1      = Config::CGradientValueData(CHyprColor{0.F, 1.F, 1.F, 1.F}),
+                                                                                   .round      = radius,
+                                                                                   .borderSize = renderGeometry::logicalBorderWidth(1)}));
+            }
+        }
+    }
+
+    SDispatchResult borderGeometry(std::string name) {
+        if (name == "off") {
+            if (const auto monitor = borderMonitor.lock())
+                g_pHyprRenderer->damageMonitor(monitor);
+            borderMonitor.reset();
+            return {};
+        }
+        const auto monitor = State::monitorState()->query().name(name).run();
+        if (!monitor)
+            return {.success = false, .error = "unknown border fixture output"};
+        borderMonitor = monitor;
+        g_pHyprRenderer->damageMonitor(monitor);
+        const auto boxJson = [](const CBox& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
+        return {.success = false,
+                .error   = nlohmann::json{{"monitor", name},
+                                          {"scale", monitor->m_scale},
+                                          {"transform", monitor->m_transform},
+                                          {"radius", renderGeometry::physicalRadius(8, monitor->m_scale)},
+                                          {"width", std::round(monitor->m_scale)},
+                                          {"raw", boxJson(borderBox(monitor, false))},
+                                          {"fixed", boxJson(borderBox(monitor, true))}}
+                               .dump()};
+    }
+
     CHyprSignalListener cursorFrameListener;
-    nlohmann::json     cursorFrames = nlohmann::json::object();
-    uint64_t           cursorFrameSequence = 0;
+    nlohmann::json      cursorFrames        = nlohmann::json::object();
+    uint64_t            cursorFrameSequence = 0;
 
     nlohmann::json captureCursorFrame(PHLMONITOR mon) {
-        const auto cursor = Pointer::mgr()->position();
-        nlohmann::json frame{{"frame", ++cursorFrameSequence}, {"held", session().zoomHeld()}, {"cursor", {{"x", cursor.x}, {"y", cursor.y}}},
+        const auto     cursor = Pointer::mgr()->position();
+        nlohmann::json frame{{"frame", ++cursorFrameSequence},
+                             {"held", session().zoomHeld()},
+                             {"cursor", {{"x", cursor.x}, {"y", cursor.y}}},
                              {"cursor_return", !session().zoomHeld() && session().zoomCursorTravelAvailableAt(cursor)},
                              {"cursor_travel", session().zoomCursorTravelAvailableAt(cursor)},
-                             {"cells", nlohmann::json::object()}, {"returning", false}, {"camera_settled", false}};
+                             {"cells", nlohmann::json::object()},
+                             {"returning", false},
+                             {"camera_settled", false}};
         const auto boxJson = [](const SBoxF& box) { return nlohmann::json{{"x", box.x}, {"y", box.y}, {"w", box.w}, {"h", box.h}}; };
         for (const auto& view : session().views)
             if (!view->closing() && view->monitor() == mon) {
@@ -117,6 +191,35 @@ namespace {
         }
     };
     template struct CInspectionAccess<&COverview::m_inspectionProgress>;
+
+    auto& workspaceSettleConfig(COverviewSession& overview);
+    template <auto Member> struct CWorkspaceSettleAccess {
+        friend auto& workspaceSettleConfig(COverviewSession& overview) {
+            return overview.*Member;
+        }
+    };
+    template struct CWorkspaceSettleAccess<&COverviewSession::m_workspaceSettleConfig>;
+
+    SP<Hyprutils::Animation::SAnimationPropertyConfig> settleClockConfig;
+    float                                             originalSettleSpeed = 0;
+    void resetSettleClock() {
+        if (settleClockConfig)
+            settleClockConfig->internalSpeed = originalSettleSpeed;
+        settleClockConfig.reset();
+    }
+    SDispatchResult workspaceSettleClock(std::string args) {
+        resetSettleClock();
+        if (args == "reset")
+            return {};
+        if (args != "hold")
+            return {.success = false, .error = "expected hold or reset"};
+        if (!g_overviewSession || !workspaceSettleConfig(session()))
+            return {.success = false, .error = "settle animation must have been initialized"};
+        settleClockConfig                = workspaceSettleConfig(session());
+        originalSettleSpeed               = settleClockConfig->internalSpeed;
+        settleClockConfig->internalSpeed = 30.F;
+        return {};
+    }
 
     auto& boardReflow(CWindowBoard& board);
     template <auto Member> struct CBoardReflowAccess {
@@ -549,6 +652,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:zoom-cursor-sample", zoomCursorSample);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:zoom-cursor-release", zoomCursorRelease);
     cursorFrameListener = Event::bus()->m_events.render.stage.listen(recordCursorFrame);
+    borderFrameListener = Event::bus()->m_events.render.stage.listen(renderBorderFixture);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:border-geometry", borderGeometry);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:cursor-overrides", cursorOverrideProbe);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:pointer-state", pointerState);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:capture", captureProbe);
@@ -556,12 +661,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:transition-close", transitionClose);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:transition-frame", transitionFrame);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:resize-clock", resizeClock);
+    HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:workspace-settle-clock", workspaceSettleClock);
     HyprlandAPI::addDispatcherV2(handle, "hyprspace-test:cursor", cursorProbe);
     return {"hyprspace-overview-test", "Private overview regression fixture", "hyprspace", "1"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    borderFrameListener = {};
+    borderMonitor.reset();
     cursorFrameListener = {};
     cursorFrames.clear();
     resetClock();
+    resetSettleClock();
 }

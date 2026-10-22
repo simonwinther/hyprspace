@@ -4,6 +4,7 @@
 #include "OverviewSession.hpp"
 #include "SearchInput.hpp"
 #include "Raster.hpp"
+#include "InputModel.hpp"
 
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
@@ -43,10 +44,12 @@ namespace hyprspace {
         double scrollOffset() const {
             return m_scroll;
         }
+        SInputContext                 inputContext() const;
+        bool                          perform(EInputAction action);
+        void                          setInputMode(EInputMode mode);
+        void                          editInput(ETextAction action, bool extend = false);
+        void                          insertText(const std::string& text);
         bool                          overSearch(const Vector2D& point) const;
-        bool                          reservesKey(xkb_keysym_t sym, uint32_t mods) const;
-        bool                          oneShot(xkb_keysym_t sym, const std::string& text) const;
-        void                          onKey(xkb_keysym_t sym, uint32_t mods, const std::string& text);
         void                          pointer(const Vector2D& point);
         void                          button(uint32_t button, bool pressed, uint32_t mods, const Vector2D& point);
         void                          scroll(const SScrollInput& input);

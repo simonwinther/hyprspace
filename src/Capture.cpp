@@ -1,9 +1,11 @@
 #include "Capture.hpp"
+#include "Spaces.hpp"
 
 #include "Access.hpp"
 #include "CaptureGeometry.hpp"
 #include "CompositorHooks.hpp"
 #include "Diagnostics.hpp"
+#include "PreviewFilter.hpp"
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
@@ -138,6 +140,8 @@ namespace hyprspace {
     }
 
     void uninstallCaptureHooks() {
+        Render::GL::g_pHyprOpenGL->makeEGLCurrent();
+        destroyPreviewFilters();
         scaledCapture.reset();
         if (scissorHook)
             HyprlandAPI::removeFunctionHook(PHANDLE, scissorHook);
@@ -161,10 +165,11 @@ namespace hyprspace {
 
     void CWindowCapture::endFrame() {
         std::erase_if(m_fbs, [](const auto& kv) { return !kv.second.seen; });
+        prunePreviewFilters();
     }
 
     void CWindowCapture::capture(PHLWINDOW window, PHLMONITOR monitor, Clock::time_point now) {
-        if (!window || !monitor || !window->m_isMapped)
+        if (!window || !monitor || !window->m_isMapped || !spaces::inActive(window->m_workspace))
             return;
 
         const auto                    measuredStart = diagnostics::enabled ? std::optional{diagnostics::Clock::now()} : std::nullopt;
@@ -295,6 +300,7 @@ namespace hyprspace {
         entry.fb                                 = std::move(fb);
         entry.size                               = LOGICAL;
         entry.valid                              = true;
+        previewFilterCaptured(entry.fb->getTexture());
         if (geometry->downsampled())
             ++resources.downsampled;
 
@@ -341,6 +347,7 @@ namespace hyprspace {
         }
 
         m_fbs.clear();
+        clearPreviewFilters();
     }
 
 } // namespace hyprspace

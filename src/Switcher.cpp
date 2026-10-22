@@ -1,8 +1,10 @@
 #include "Switcher.hpp"
+#include "Spaces.hpp"
 
 #include "Config.hpp"
 #include "Focus.hpp"
 #include "Texture.hpp"
+#include "PassElements.hpp"
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/config/shared/animation/AnimationTree.hpp>
@@ -15,7 +17,6 @@
 #include <hyprland/src/animation/AnimationManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
 
 #include <xkbcommon/xkbcommon-keysyms.h>
@@ -51,7 +52,7 @@ namespace hyprspace {
             auto eligible = [&](const PHLWINDOW& w) {
                 if (!w || !w->m_isMapped || w->isHidden())
                     return false;
-                if (!w->m_workspace)
+                if (!w->m_workspace || !spaces::inActive(w->m_workspace))
                     return false;
                 if (wsOnly && w->m_workspace != MONITOR->m_activeWorkspace)
                     return false;
@@ -272,16 +273,20 @@ namespace hyprspace {
             return true;
 
         case XKB_KEY_Left:
+        case XKB_KEY_h:
             advance(false);
             return true;
         case XKB_KEY_Right:
+        case XKB_KEY_l:
             advance(true);
             return true;
 
         case XKB_KEY_Up:
+        case XKB_KEY_k:
             selectIndex(switcherRowStep(static_cast<int>(m_entries.size()), m_selected, m_layout.columns, -1));
             return true;
         case XKB_KEY_Down:
+        case XKB_KEY_j:
             selectIndex(switcherRowStep(static_cast<int>(m_entries.size()), m_selected, m_layout.columns, 1));
             return true;
         case XKB_KEY_Home:
@@ -410,11 +415,8 @@ namespace hyprspace {
         const int    ICON     = std::max(1, static_cast<int>(std::ceil(m_layout.iconSize * SCALE)));
         const CBox   CLIP     = {m_layout.panel.x * SCALE, m_layout.panel.y * SCALE, m_layout.panel.w * SCALE, m_layout.panel.h * SCALE};
 
-        auto rect = [&](const SBoxF& b, const CHyprColor& col, int round) {
-            out.emplace_back(makeUnique<CRectPassElement>(CRectPassElement::SRectData{
-                .box = CBox{b.x * SCALE, b.y * SCALE, b.w * SCALE, b.h * SCALE}, .color = col, .round = static_cast<int>(round * SCALE), .clipBox = CLIP}));
-        };
-        auto tex = [&](SP<Render::ITexture> t, const CBox& box, float a) {
+        auto rect = [&](const SBoxF& b, const CHyprColor& col, int round) { renderPass::appendSolidFill(out, b, col, SCALE, round, m_layout.panel); };
+        auto tex  = [&](SP<Render::ITexture> t, const CBox& box, float a) {
             out.emplace_back(makeUnique<CTexPassElement>(
                 CTexPassElement::SRenderData{.tex = t, .box = CBox{box.x * SCALE, box.y * SCALE, box.w * SCALE, box.h * SCALE}, .a = a, .clipBox = CLIP}));
         };

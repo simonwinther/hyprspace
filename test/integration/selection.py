@@ -40,22 +40,22 @@ def shortcuts(s, wait_for):
             assert s.status()["target"]["workspace"] == 21
             log = s.root / "input.log"
             log.write_text("")
-            s.key(31, 1)  # S commits while Z is still held.
+            s.key(28, 1)  # Enter commits in Normal mode while Z is still held.
             wait_for(lambda: not s.status()["views"])
-            s.key(31, 1)  # A repeat and late releases must remain captured.
-            s.key(31, 0)
+            s.key(28, 1)  # A repeat and late releases must remain captured.
+            s.key(28, 0)
             if mode != "grid":
                 s.key(44, 0)
             assert s.data("activeworkspace")["id"] == 21
             assert s.data("activewindow")["address"] == s.windows()["hs-B"]["address"]
             assert not s.status()["zoom"]["held"] and s.status()["modifiers"] == 0
             time.sleep(0.1)
-            assert " 115" not in log.read_text()
-            s.run("wtype", "s")
-            wait_for(lambda: " 115" in log.read_text())
-            s.check(f"{mode}: both Shift+Tab chords go backward, S commits the selection and fresh typing resumes")
+            assert " 65293" not in log.read_text()
+            s.run("wtype", "-k", "Return")
+            wait_for(lambda: " 65293" in log.read_text())
+            s.check(f"{mode}: both Shift+Tab chords go backward, Enter commits the selection and fresh application input resumes")
     finally:
-        for code in (15, 31, 42, 44, 54):
+        for code in (15, 28, 42, 44, 54):
             s.key(code, 0)
         s.close()
         for workspace in (21, 22):

@@ -1,0 +1,500 @@
+{
+  "generation": {
+    "schema": 1,
+    "build": "473f940d80ff46ec8414ac421bdcdf8d",
+    "files": {
+      "bindings.conf": {
+        "source": "/home/simon/dev/hyprspace/contrib/bindings.conf",
+        "sha256": "d029bc93a23116cea1005ec250b52cfa239bb0660d3e82c4232188a23cf2a5a2"
+      },
+      "build-config": {
+        "source": "/home/simon/dev/hyprspace/build/.build-config",
+        "sha256": "fdfa1837970f11af254d05d0d8bf6bca3bcc96c54997e41df314141c12abf89b"
+      },
+      "client.py": {
+        "source": "/home/simon/dev/hyprspace/test/integration/client.py",
+        "sha256": "289d711a8abe4ab1e02500c123fc9145a6a86453fec806cbbb1f97aa853e235e"
+      },
+      "companion-versions.json": {
+        "source": "/home/simon/dev/hyprspace/companion/versions.json",
+        "sha256": "294534fccb06fd9b7724d6f440a0e3b88b43c16f0f1371cdac03a726864931dc"
+      },
+      "elephant-2.22.0.patch": {
+        "source": "/home/simon/dev/hyprspace/companion/elephant-2.22.0.patch",
+        "sha256": "c30a5c6a9f10c8f76161c6f0f842feaffbc595a7dfa5905816e925fb4c6acabf"
+      },
+      "hyprspace-launch": {
+        "source": "/home/simon/dev/hyprspace/build/hyprspace-launch",
+        "sha256": "7a2a8fefce95d9c50ae9b168c454e1b43db96aa6847b43f311ef956ab0641c6b"
+      },
+      "hyprspace.so": {
+        "source": "/home/simon/dev/hyprspace/build/hyprspace.so",
+        "sha256": "184822d1fe209b817f7ab47410de505dbb4c98164a65ca2f72c9b87edd319b34"
+      },
+      "layer.py": {
+        "source": "/home/simon/dev/hyprspace/test/integration/layer.py",
+        "sha256": "c3b01e1e11aa449e897f5c402cd6edff3cb898d4be9b2dc1273ca8ca323011d0"
+      },
+      "lib/libliftoff.so.0": {
+        "source": "/home/simon/dev/hyprspace/build/test-tools/wlroots/usr/lib/libliftoff.so.0.5.0",
+        "sha256": "f062e3f341937c84e40979406a494f35f00f20a3de208a39070dadba04cfe08f"
+      },
+      "lib/libwlroots-0.20.so": {
+        "source": "/home/simon/dev/hyprspace/build/test-tools/wlroots/usr/lib/libwlroots-0.20.so",
+        "sha256": "7edca9a7d65855addda68e29ba5db94d57c803eb5fa7d0f86db3136b90ca9837"
+      },
+      "test-activation": {
+        "source": "/home/simon/dev/hyprspace/build/test-activation",
+        "sha256": "d41460e41957b159a9984904a1a6f0f55c1a373293bf61f2570b5f5b5f0c3e42"
+      },
+      "test-capture-client": {
+        "source": "/home/simon/dev/hyprspace/build/test-capture-client",
+        "sha256": "43e5de26f36bc739b35489107ee9d30a11ed8686d37ad88461aa296ef7f5a5e9"
+      },
+      "test-dispatchers.so": {
+        "source": "/home/simon/dev/hyprspace/build/test-dispatchers.so",
+        "sha256": "c8c55f9c8e6e999338c7895150c4acd626ee3b8eed3313cc3275393717cbb728"
+      },
+      "test-headless": {
+        "source": "/home/simon/dev/hyprspace/build/test-headless",
+        "sha256": "2473648f6e427f11f7c4cfca7115367e21714dc90a324cd52b8eb1fe5d6815e2"
+      },
+      "test-ime": {
+        "source": "/home/simon/dev/hyprspace/build/test-ime",
+        "sha256": "99669e068a7fb92e152df0db4b00c75e7293eb465233c4f4fb44c5e08b77bc85"
+      },
+      "test-lock": {
+        "source": "/home/simon/dev/hyprspace/build/test-lock",
+        "sha256": "63de0d366a9b109651e311ee9ac89f723d6e913983df0066218c17d52fc8339a"
+      },
+      "test-overview.so": {
+        "source": "/home/simon/dev/hyprspace/build/test-overview.so",
+        "sha256": "b98540340eb2e1b0154a05cc25d5144e73d9aef66cae769c697ecfa27464262d"
+      },
+      "test-pointer": {
+        "source": "/home/simon/dev/hyprspace/build/test-pointer",
+        "sha256": "1841fbe70b829e1f9dca95d4056c2f04cbabbd4ea2e8588a8f859f8473c0a76e"
+      },
+      "walker-2.17.0.patch": {
+        "source": "/home/simon/dev/hyprspace/companion/walker-2.17.0.patch",
+        "sha256": "840065fdd8092f9e734153df8aeb29f10155bb9e9099ac2f1b2b37649a01b9c1"
+      }
+    },
+    "revision": "2e805c9f9b403c1d13dde384b41da5b806450cc7",
+    "dirty": true,
+    "generation": "1890db3042e04026a2ceeafe4575343a",
+    "snapshot": "/tmp/hs-i.wgmeey9s/artifacts",
+    "created": 1792702599.0077417
+  },
+  "cases": [
+    {
+      "label": "ordinary",
+      "transform": 0,
+      "scale": 1,
+      "blur": "off",
+      "samples": {
+        "linear": [
+          [
+            146,
+            20,
+            23
+          ],
+          [
+            20,
+            146,
+            23
+          ],
+          [
+            20,
+            20,
+            149
+          ],
+          [
+            146,
+            146,
+            23
+          ]
+        ],
+        "sharp": [
+          [
+            146,
+            20,
+            23
+          ],
+          [
+            20,
+            146,
+            23
+          ],
+          [
+            20,
+            20,
+            149
+          ],
+          [
+            146,
+            146,
+            23
+          ]
+        ]
+      },
+      "max_channel_difference": 0,
+      "filter": {
+        "allocations": 2,
+        "animated_bypasses": 0,
+        "bytes": 385584,
+        "entries": 1,
+        "failures": 0,
+        "hits": 0,
+        "mode": "sharp",
+        "passes": 20,
+        "peak_bytes": 385584
+      }
+    },
+    {
+      "label": "ordinary",
+      "transform": 0,
+      "scale": 1,
+      "blur": "live",
+      "samples": {
+        "linear": [
+          [
+            149,
+            23,
+            26
+          ],
+          [
+            22,
+            148,
+            25
+          ],
+          [
+            22,
+            22,
+            152
+          ],
+          [
+            148,
+            148,
+            25
+          ]
+        ],
+        "sharp": [
+          [
+            149,
+            23,
+            26
+          ],
+          [
+            22,
+            148,
+            25
+          ],
+          [
+            22,
+            22,
+            152
+          ],
+          [
+            148,
+            148,
+            25
+          ]
+        ]
+      },
+      "max_channel_difference": 0,
+      "filter": {
+        "allocations": 4,
+        "animated_bypasses": 0,
+        "bytes": 385584,
+        "entries": 1,
+        "failures": 0,
+        "hits": 0,
+        "mode": "sharp",
+        "passes": 50,
+        "peak_bytes": 385584
+      }
+    },
+    {
+      "label": "ordinary",
+      "transform": 0,
+      "scale": 1,
+      "blur": "cached",
+      "samples": {
+        "linear": [
+          [
+            150,
+            24,
+            24
+          ],
+          [
+            23,
+            149,
+            23
+          ],
+          [
+            23,
+            23,
+            149
+          ],
+          [
+            149,
+            149,
+            23
+          ]
+        ],
+        "sharp": [
+          [
+            150,
+            24,
+            24
+          ],
+          [
+            23,
+            149,
+            23
+          ],
+          [
+            23,
+            23,
+            149
+          ],
+          [
+            149,
+            149,
+            23
+          ]
+        ]
+      },
+      "max_channel_difference": 0,
+      "filter": {
+        "allocations": 6,
+        "animated_bypasses": 0,
+        "bytes": 385584,
+        "entries": 1,
+        "failures": 0,
+        "hits": 0,
+        "mode": "sharp",
+        "passes": 86,
+        "peak_bytes": 385584
+      }
+    },
+    {
+      "label": "portrait-fractional",
+      "transform": 1,
+      "scale": 1.25,
+      "blur": "off",
+      "samples": {
+        "linear": [
+          [
+            146,
+            20,
+            23
+          ],
+          [
+            20,
+            146,
+            23
+          ],
+          [
+            20,
+            20,
+            149
+          ],
+          [
+            146,
+            146,
+            23
+          ]
+        ],
+        "sharp": [
+          [
+            146,
+            20,
+            23
+          ],
+          [
+            20,
+            146,
+            23
+          ],
+          [
+            20,
+            20,
+            149
+          ],
+          [
+            146,
+            146,
+            23
+          ]
+        ]
+      },
+      "max_channel_difference": 0,
+      "filter": {
+        "allocations": 8,
+        "animated_bypasses": 0,
+        "bytes": 421504,
+        "entries": 1,
+        "failures": 0,
+        "hits": 0,
+        "mode": "sharp",
+        "passes": 124,
+        "peak_bytes": 421504
+      }
+    },
+    {
+      "label": "portrait-fractional",
+      "transform": 1,
+      "scale": 1.25,
+      "blur": "live",
+      "samples": {
+        "linear": [
+          [
+            148,
+            22,
+            26
+          ],
+          [
+            23,
+            149,
+            26
+          ],
+          [
+            22,
+            22,
+            151
+          ],
+          [
+            148,
+            148,
+            25
+          ]
+        ],
+        "sharp": [
+          [
+            148,
+            22,
+            26
+          ],
+          [
+            23,
+            149,
+            26
+          ],
+          [
+            22,
+            22,
+            151
+          ],
+          [
+            148,
+            148,
+            25
+          ]
+        ]
+      },
+      "max_channel_difference": 0,
+      "filter": {
+        "allocations": 10,
+        "animated_bypasses": 0,
+        "bytes": 421504,
+        "entries": 1,
+        "failures": 0,
+        "hits": 0,
+        "mode": "sharp",
+        "passes": 154,
+        "peak_bytes": 421504
+      }
+    },
+    {
+      "label": "portrait-fractional",
+      "transform": 1,
+      "scale": 1.25,
+      "blur": "cached",
+      "samples": {
+        "linear": [
+          [
+            149,
+            23,
+            23
+          ],
+          [
+            24,
+            150,
+            24
+          ],
+          [
+            23,
+            23,
+            149
+          ],
+          [
+            149,
+            149,
+            23
+          ]
+        ],
+        "sharp": [
+          [
+            149,
+            23,
+            23
+          ],
+          [
+            24,
+            150,
+            24
+          ],
+          [
+            23,
+            23,
+            149
+          ],
+          [
+            149,
+            149,
+            23
+          ]
+        ]
+      },
+      "max_channel_difference": 0,
+      "filter": {
+        "allocations": 12,
+        "animated_bypasses": 0,
+        "bytes": 421504,
+        "entries": 1,
+        "failures": 0,
+        "hits": 0,
+        "mode": "sharp",
+        "passes": 192,
+        "peak_bytes": 421504
+      }
+    }
+  ],
+  "runtime": "/tmp/hs-i.wgmeey9s",
+  "full_size_bypass": {
+    "before": {
+      "allocations": 16,
+      "animated_bypasses": 0,
+      "bytes": 1221696,
+      "entries": 1,
+      "failures": 0,
+      "hits": 0,
+      "mode": "sharp",
+      "passes": 218,
+      "peak_bytes": 1221696
+    },
+    "after": {
+      "allocations": 16,
+      "animated_bypasses": 0,
+      "bytes": 1221696,
+      "entries": 1,
+      "failures": 0,
+      "hits": 0,
+      "mode": "sharp",
+      "passes": 218,
+      "peak_bytes": 1221696
+    }
+  }
+}

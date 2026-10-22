@@ -20,7 +20,7 @@ On a system running the supported Hyprland version, install the dependencies
 and select the release explicitly:
 
 ```bash
-sudo pacman -S --needed hyprland base-devel git cmake cpio cairo pango gdk-pixbuf2 librsvg libei nlohmann-json jq python
+sudo pacman -S --needed hyprland base-devel git cmake cpio cairo pango gdk-pixbuf2 librsvg libei nlohmann-json jq python rust
 hyprpm update
 hyprpm add https://github.com/simonwinther/hyprspace.git v1.7.0
 hyprpm enable hyprspace
@@ -110,17 +110,23 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 
 | Control | Action |
 |---|---|
-| Super + A | Open the overview; press again to open the selected workspace or window |
-| Click a preview | Focus that window |
-| G | Toggle the global window board and workspace overview |
-| Shift + G in the window board | Cycle All windows, Apps, Workspaces and Monitors |
-| / | Search open windows by title, app, workspace or monitor from either overview view |
-| R in the window board | Toggle recent-first order |
-| Arrows or Tab / Shift+Tab, then Enter or S | Select and open a workspace |
-| N or + Empty workspace | Select an empty workspace on the monitor under the pointer |
-| Q | Close the selected empty workspace and select its nearest remaining neighbor |
-| Middle-click | Select an empty workspace on that monitor and keep the overview open |
-| ? | Open searchable help; / searches and Escape returns to the current view |
+| Super + A | Open HyperSpace; press again to open the selected workspace or window |
+| Space, then s / Ctrl + Space / current space name | Open the spaces chooser inside HyperSpace |
+| h/j/k/l or arrows | Move in Normal mode; Enter accepts the selection |
+| gg / G | First / last item |
+| Space, then e / a | Edit the highlighted/current space / create a space |
+| Space, then m | Move selected window to space |
+| Space, then Shift+M | Move workspace to space |
+| Space, then d | Remove a space with a transfer preview |
+| Space, then v / w | Window board / workspace canvas |
+| Space, then g / r in the window board | Cycle grouping / toggle recent-first order |
+| / | Search in Insert mode; Enter or Escape returns to Normal with the query retained |
+| i | Resume editing the current query or focused Name field |
+| Tab / Shift+Tab | Next / previous field or item |
+| Ctrl + Enter in a space editor | Save name, icon and color |
+| Space, then n / x | Prepare a workspace / close the selected empty workspace |
+| Middle-click | Prepare an empty workspace on that monitor |
+| ? / Space, then ? | Open searchable help |
 | F while holding Z | Toggle cursor-follow; the choice survives restarts |
 | Hold Z | Fit the selected workspace or board window; release to return to the grid |
 | Wheel / vertical two-finger scroll while holding Z | Zoom around the pointer; scroll back to the fitted view |
@@ -135,10 +141,33 @@ resize and use normal Hyprland bindings. Walker targeting uses the optional
 | Super + L (optional binding) | Cycle dwindle/scrolling on the indicated workspace |
 | Alt + Tab / Alt + Shift + Tab | Cycle windows forward / backward |
 | Release Alt | Focus the selected window |
-| Escape | Step back from board search/grouping; dismiss the workspace overview or switcher |
+| Escape | Leave Insert without clearing text; in Normal, return one level or dismiss the root overview |
 
-Press **G** inside the overview to browse a single
-board containing windows from every covered monitor. The toolbar groups them by
+Spaces keep separate sets of workspaces, with numbers shared across monitors
+inside each space. **Default** starts with your existing windows and workspaces.
+Open HyperSpace with **Super+A**, then click the current space name or press **Ctrl+Space**
+to open the space drawer. **Space, then s** opens it too. Choose with hjkl/arrows and Enter, or click a row. The
+drawer closes and the workspace overview stays open. **Space, then a** creates your own spaces; **Space, then p** opens their manager. Each space remembers its
+workspace placement and selections as displays connect or disconnect. Pinned
+windows and scratchpads belong to their space too.
+
+The drawer overlays the canvas without moving previews and shows each space's
+window count. Choose from 48 searchable Lucide icons and eight colors when
+creating or editing a space; names keep their normal text color. **i** edits Name, **Tab** selects Icon or Color, **/** or **i** searches icons, **hjkl** chooses, and **Ctrl+Enter** saves. An empty space offers
+**Enter space** so you can start opening applications, while the other spaces
+remain available through the current space name. Space management lives in the **···** menu
+beside its title. Drawer clicks also work while Super is still held.
+
+**Move to…** transfers a selected window or a complete workspace to another
+space. **Remove** previews the transfer of every workspace into a destination
+you choose; conflicting local numbers receive free numbers. Default can be
+renamed or removed once another space exists. At least one space remains.
+
+Names and workspace metadata survive restarts; application windows are not
+restarted automatically. See [spaces and compatibility](docs/guide.md#spaces).
+
+Press **Space, then v** inside the overview to browse a single
+board containing the current space's windows from every covered monitor. The toolbar groups them by
 app, workspace or monitor; **All windows** gives a flat grid. Grouping changes
 the previews while your native windows keep their workspace, layout and size.
 Cards keep a readable minimum size and scroll when they need more room.
@@ -147,12 +176,13 @@ Press **/** directly from the workspace overview to open the window board with
 search focused, or to search while already browsing the board. Search an app
 name such as `chrome`, a window title, or both, such as `chrome project`.
 Letters, spaces and digits become search text; **Ctrl+U**
-clears it. Arrows or Tab browse the results, and Enter or a click opens the
-selected window on its own monitor. Hold **Z** to inspect that window with the
-existing zoom and pan controls. **R** orders each group by a snapshot of recent
-focus, so browsing keeps the order steady. Escape clears search first, then
-returns to workspaces, then closes the overview. Window moves and resizes use
-the workspace view; **N** and middle-click return there to prepare an empty
+clears it. Enter or Escape finishes editing while keeping the query. In Normal,
+hjkl/arrows or Tab browse results and Enter opens the selected window on its own
+monitor. **i** resumes editing; a click can open a result directly. Hold **Z** to inspect that window with the
+existing zoom and pan controls. **Space, then r** orders each group by a snapshot
+of recent focus, so browsing keeps the order steady. Escape in Normal restores
+the prior view, query and selection. Window moves and resizes use the workspace
+view; **Space, then n** and middle-click return there to prepare an empty
 workspace.
 
 ![The global window board grouped by app](docs/screenshots/window-views-app.png)
@@ -162,7 +192,7 @@ workspace.
 The overview opens on all monitors by default, with each showing its own
 workspaces. Alt+Tab uses the active normal workspace on the monitor under the
 pointer. Setting `switcher:current_workspace_only = false` includes windows
-across all workspaces and monitors.
+across all workspaces and monitors in the current space.
 
 Hold **Super + Alt** and left-drag anywhere inside a regular workspace tile,
 including over its window previews, then drop anywhere in another monitor's
@@ -175,16 +205,15 @@ panels, monitor gaps or outputs without an overview leave placement unchanged.
 Set `overview:workspace_drag_modifiers` to customize the exact modifiers, or
 leave it empty to disable workspace dragging.
 
-Inside the overview, **middle-click**, press **N** or click **+ Empty workspace**
+Inside the overview, **middle-click**, press **Space, then n** or click **+ New workspace**
 to prepare a destination on the monitor under the pointer. Hyprspace reuses an
 empty workspace there before creating another. The overview stays open and
 highlights the tile: launch an application, drag a window into it, or press Enter
 to open it. The pointer stays where it is and workspace tiles stay in numeric
 order. You can also Super-drag a window directly onto the button. Preparing a destination leaves
 the desktop unchanged until you commit an action, so Escape still dismisses it.
-Change `overview:empty_workspace_key` to another XKB key name, or use an empty
-value to disable the shortcut. If it matches `overview:zoom_key`, zoom keeps that
-key and the empty-workspace shortcut is disabled.
+`overview:empty_workspace_key` is a deprecated compatibility option; it does
+not remap the `Space n` command.
 
 On a small screen, hold **Z** to smoothly enlarge one workspace. While holding
 it, use arrows or Tab/Shift+Tab to browse that monitor's workspaces, or hover

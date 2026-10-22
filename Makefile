@@ -1,5 +1,6 @@
 PREFIX     ?= $(HOME)/.local
 PLUGIN_DIR ?= $(PREFIX)/share/hyprspace
+.DEFAULT_GOAL := all
 
 BUILD_DIR  ?= build
 TARGET     := $(BUILD_DIR)/hyprspace.so
@@ -7,13 +8,29 @@ BUILD_CONFIG := $(BUILD_DIR)/.build-config
 PROTOCOL_DIR := $(shell pkg-config --variable=pkgdatadir wayland-protocols)
 INTEGRATION_ARGS ?=
 HEADLESS_PC = PKG_CONFIG_PATH="$(abspath $(BUILD_DIR))/test-tools/wlroots/usr/lib/pkgconfig:$${PKG_CONFIG_PATH:-}" pkg-config --define-prefix
+CARGO ?= cargo
+LAUNCH_MANIFEST := contrib/launch-helper/Cargo.toml
+LAUNCH_TARGET_DIR := $(abspath $(BUILD_DIR))/launch-helper
+
+# Packagers can supply an already checked Rust helper (for example from Nix).
+ifeq ($(origin LAUNCH_HELPER), undefined)
+LAUNCH_HELPER := $(LAUNCH_TARGET_DIR)/release/hyprspace-launch
+$(LAUNCH_HELPER): $(LAUNCH_MANIFEST) contrib/launch-helper/Cargo.lock $(wildcard contrib/launch-helper/src/*.rs)
+	$(CARGO) build --locked --release --manifest-path "$(LAUNCH_MANIFEST)" --target-dir "$(LAUNCH_TARGET_DIR)"
+endif
 
 SRCS := \
 	src/main.cpp \
 	src/Config.cpp \
+	src/InputController.cpp \
 	src/Capture.cpp \
 	src/DesktopDb.cpp \
 	src/Focus.cpp \
+	src/Spaces.cpp \
+	src/SpaceStore.cpp \
+	src/SpaceHooks.cpp \
+	src/SpaceSelector.cpp \
+	src/SpaceIcons.cpp \
 	src/Overview.cpp \
 	src/OverviewSession.cpp \
 	src/WindowBoard.cpp \
@@ -21,6 +38,7 @@ SRCS := \
 	src/CompositorHooks.cpp \
 	src/Launch.cpp \
 	src/PassElements.cpp \
+	src/PreviewFilter.cpp \
 	src/Raster.cpp \
 	src/Switcher.cpp \
 	src/Texture.cpp
@@ -43,7 +61,7 @@ override CXXFLAGS += -std=c++2b -fPIC $(EXTRA_FLAGS) -Wall -Wno-narrowing -Wno-u
 override CXXFLAGS += $(shell pkg-config --cflags $(PKGS))
 
 override LDFLAGS += -shared
-LDLIBS   += $(shell pkg-config --libs pangocairo cairo gdk-pixbuf-2.0 librsvg-2.0)
+LDLIBS   += $(shell pkg-config --libs pangocairo cairo gdk-pixbuf-2.0 librsvg-2.0) -pthread
 
 .PHONY: all clean install install-assets assets uninstall check test integration-test integration-fixtures companions format reload release-check dist FORCE
 
@@ -51,16 +69,17 @@ PLUGIN_SO := $(abspath $(PLUGIN_DIR))/hyprspace.so
 
 all: $(TARGET) assets
 
-assets:
+assets: $(LAUNCH_HELPER)
 	mkdir -p "$(BUILD_DIR)/launch-bin"
-	bash scripts/atomic-output.sh "$(BUILD_DIR)/hyprspace-launch" install -m 0755 contrib/hyprspace-launch
+	bash scripts/atomic-output.sh "$(BUILD_DIR)/hyprspace-launch" install -m 0755 "$(LAUNCH_HELPER)"
 	@for name in uwsm-app uwsm app2unit; do ln -sfn ../hyprspace-launch "$(BUILD_DIR)/launch-bin/$$name"; done
 
-install-assets: assets
+install-assets: assets third_party/lucide/LICENSE
 	mkdir -p "$(PLUGIN_DIR)/launch-bin" "$(PREFIX)/bin"
-	bash scripts/atomic-output.sh "$(PLUGIN_DIR)/hyprspace-launch" install -m 0755 contrib/hyprspace-launch
+	bash scripts/atomic-output.sh "$(PLUGIN_DIR)/hyprspace-launch" install -m 0755 "$(BUILD_DIR)/hyprspace-launch"
 	@for name in uwsm-app uwsm app2unit; do ln -sfn ../hyprspace-launch "$(PLUGIN_DIR)/launch-bin/$$name"; done
 	ln -sfn "$(abspath $(PLUGIN_DIR))/hyprspace-launch" "$(PREFIX)/bin/hyprspace-launch"
+	install -Dm644 third_party/lucide/LICENSE "$(PLUGIN_DIR)/licenses/lucide-LICENSE"
 
 $(TARGET): $(OBJS) scripts/atomic-output.sh
 	bash scripts/atomic-output.sh "$@" $(CXX) $(LDFLAGS) $(OBJS) $(LDLIBS) -o
@@ -127,10 +146,12 @@ uninstall:
 	-rmdir -- "$(PLUGIN_DIR)/launch-bin" "$(PLUGIN_DIR)" 2>/dev/null || true
 
 test: assets
+	$(CARGO) test --locked --manifest-path "$(LAUNCH_MANIFEST)" --target-dir "$(LAUNCH_TARGET_DIR)"
 	$(MAKE) -C test run
 	bash test/test_build.sh
 	python3 test/test_launch_helper.py
 	python3 test/test_companion_install.py
+	python3 test/test_render_boundary.py
 	python3 test/test_physical_commands.py
 	python3 test/test_integration_runner.py
 	python3 test/test_integration_artifacts.py
@@ -182,6 +203,7 @@ dist: release-check
 	bash scripts/dist.sh "$(TAG)"
 
 clean:
+	$(CARGO) clean --manifest-path "$(LAUNCH_MANIFEST)" --target-dir "$(LAUNCH_TARGET_DIR)"
 	rm -f -- "$(BUILD_DIR)/test-dispatchers.so" "$(BUILD_DIR)/integration.json"
 	rm -f -- $(OBJS) $(DEPS) "$(TARGET)" "$(BUILD_CONFIG)"
 	rm -f -- "$(BUILD_DIR)/hyprspace-launch" "$(BUILD_DIR)/test-pointer" "$(BUILD_DIR)/test-capture-client" "$(BUILD_DIR)/test-activation" "$(BUILD_DIR)/test-lock" "$(BUILD_DIR)/test-ime" "$(BUILD_DIR)/test-headless" "$(BUILD_DIR)/test-overview.so" "$(BUILD_DIR)/xdg-shell-protocol.h"
@@ -192,4 +214,5 @@ clean:
 	$(MAKE) -C test clean
 
 format:
+	$(CARGO) fmt --manifest-path "$(LAUNCH_MANIFEST)"
 	find src test -type f \( -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 clang-format -i

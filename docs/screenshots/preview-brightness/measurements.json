@@ -1,0 +1,276 @@
+{
+  "schema": 1,
+  "measurement": "Native 1920x1080 physical output at scale1.2; identical selected Cairo content and grid geometry. Linear luminance computed from unmodified screenshot RGB. Detail images crop native pixels only.",
+  "before_plugin_sha256": "e5e35599b44beba6a6e4761fc2a0582b63c195f32fb9c64efc8d1afae76d457a",
+  "after_plugin_sha256": "7beaea21b8f60ba39c36f52fcbbaf2c059888a7d8efc7fbd230d75f16cb93a2c",
+  "after_fixture_sha256": "ba2dc5b3f430611c47de419f125199fad00db2649d980ab3f1ede7eb6e8f5153",
+  "cases": [
+    {
+      "opacity": 1,
+      "blur": "off",
+      "luminance": {
+        "dark": {
+          "native": 0.004776953480693729,
+          "before_grid": 0.004776953480693728,
+          "after_grid": 0.004776953480693729,
+          "after_source_bypass": 0.004776953480693729
+        },
+        "gray25": {
+          "native": 0.05126945837404324,
+          "before_grid": 0.05126945837404326,
+          "after_grid": 0.05126945837404324,
+          "after_source_bypass": 0.05126945837404324
+        },
+        "gray50": {
+          "native": 0.21586050011389926,
+          "before_grid": 0.2158605001138993,
+          "after_grid": 0.21586050011389926,
+          "after_source_bypass": 0.21586050011389926
+        },
+        "gray75": {
+          "native": 0.5209955732043543,
+          "before_grid": 0.5209955732043543,
+          "after_grid": 0.5209955732043543,
+          "after_source_bypass": 0.5209955732043543
+        },
+        "strokes25": {
+          "native": 0.2151117915238692,
+          "before_grid": 0.07734613376291194,
+          "after_grid": 0.1847264359831076,
+          "after_source_bypass": 0.15891966301341096
+        },
+        "checker50": {
+          "native": 0.3712975984912702,
+          "before_grid": 0.24229028636280406,
+          "after_grid": 0.37124751988451105,
+          "after_source_bypass": 0.26173126570696387
+        },
+        "text": {
+          "native": 0.08723506379590092,
+          "before_grid": 0.03775357772377769,
+          "after_grid": 0.06814896877539452,
+          "after_source_bypass": 0.06734783601102413
+        },
+        "graybox": {
+          "native": 0.21586050011389926,
+          "before_grid": 0.2158605001138993,
+          "after_grid": 0.21586050011389926,
+          "after_source_bypass": 0.21586050011389926
+        }
+      }
+    },
+    {
+      "opacity": 0.85,
+      "blur": "off",
+      "luminance": {
+        "dark": {
+          "native": 0.004776953480693729,
+          "before_grid": 0.004806162945296474,
+          "after_grid": 0.004806162945296473,
+          "after_source_bypass": 0.004806162945296473
+        },
+        "gray25": {
+          "native": 0.040915196906853184,
+          "before_grid": 0.039745880936575176,
+          "after_grid": 0.03974588093657518,
+          "after_source_bypass": 0.03974588093657518
+        },
+        "gray50": {
+          "native": 0.1589608350608804,
+          "before_grid": 0.1591823836906286,
+          "after_grid": 0.15918238369062865,
+          "after_source_bypass": 0.15918238369062865
+        },
+        "gray75": {
+          "native": 0.3762621229909065,
+          "before_grid": 0.371600445223859,
+          "after_grid": 0.37160044522385893,
+          "after_source_bypass": 0.371600445223859
+        },
+        "strokes25": {
+          "native": 0.1542447143735818,
+          "before_grid": 0.059291298845381965,
+          "after_grid": 0.13571272427013167,
+          "after_source_bypass": 0.11545697440101456
+        },
+        "checker50": {
+          "native": 0.26667461908294904,
+          "before_grid": 0.17772384297894336,
+          "after_grid": 0.2687271115399607,
+          "after_source_bypass": 0.19092483312102063
+        },
+        "text": {
+          "native": 0.06394046953996116,
+          "before_grid": 0.02954561564330368,
+          "after_grid": 0.0514841520203795,
+          "after_source_bypass": 0.04999023306584691
+        },
+        "graybox": {
+          "native": 0.1589608350608804,
+          "before_grid": 0.1591823836906286,
+          "after_grid": 0.15918238369062865,
+          "after_source_bypass": 0.15918238369062865
+        }
+      }
+    },
+    {
+      "opacity": 0.85,
+      "blur": "live",
+      "luminance": {
+        "dark": {
+          "native": 0.005181516702338386,
+          "before_grid": 0.004963001757945959,
+          "after_grid": 0.004963001757945959,
+          "after_source_bypass": 0.004961034885745984
+        },
+        "gray25": {
+          "native": 0.04183843912111016,
+          "before_grid": 0.04101600353700085,
+          "after_grid": 0.04101600353700084,
+          "after_source_bypass": 0.04101600353700084
+        },
+        "gray50": {
+          "native": 0.162029375639111,
+          "before_grid": 0.16033422155285887,
+          "after_grid": 0.16033422155285884,
+          "after_source_bypass": 0.16035760826972972
+        },
+        "gray75": {
+          "native": 0.3779003139735738,
+          "before_grid": 0.3766277357363918,
+          "after_grid": 0.37662773573639174,
+          "after_source_bypass": 0.37662773573639174
+        },
+        "strokes25": {
+          "native": 0.1562291546537509,
+          "before_grid": 0.060109393910787685,
+          "after_grid": 0.13756869465819585,
+          "after_source_bypass": 0.11656117497581721
+        },
+        "checker50": {
+          "native": 0.2698298139089999,
+          "before_grid": 0.17943931640397415,
+          "after_grid": 0.27117601646260003,
+          "after_source_bypass": 0.1929289998527075
+        },
+        "text": {
+          "native": 0.06476944725620047,
+          "before_grid": 0.030121109571689772,
+          "after_grid": 0.05225903713647365,
+          "after_source_bypass": 0.050589304162897614
+        },
+        "graybox": {
+          "native": 0.162029375639111,
+          "before_grid": 0.160365289917376,
+          "after_grid": 0.16036528991737603,
+          "after_source_bypass": 0.16034828010550106
+        }
+      }
+    },
+    {
+      "opacity": 0.85,
+      "blur": "cached",
+      "luminance": {
+        "dark": {
+          "native": 0.005181516702338386,
+          "before_grid": 0.005181516702338387,
+          "after_grid": 0.005181516702338386,
+          "after_source_bypass": 0.005181516702338386
+        },
+        "gray25": {
+          "native": 0.04183843912111016,
+          "before_grid": 0.041828461035889546,
+          "after_grid": 0.04182846103588954,
+          "after_source_bypass": 0.041839351279329
+        },
+        "gray50": {
+          "native": 0.162029375639111,
+          "before_grid": 0.16202937563911096,
+          "after_grid": 0.162029375639111,
+          "after_source_bypass": 0.162029375639111
+        },
+        "gray75": {
+          "native": 0.3779003139735738,
+          "before_grid": 0.37793752655765406,
+          "after_grid": 0.37793752655765406,
+          "after_source_bypass": 0.3779210635404695
+        },
+        "strokes25": {
+          "native": 0.1562291546537509,
+          "before_grid": 0.06096351479110598,
+          "after_grid": 0.13849436015600042,
+          "after_source_bypass": 0.11729870251069467
+        },
+        "checker50": {
+          "native": 0.2698298139089999,
+          "before_grid": 0.181009531783257,
+          "after_grid": 0.2727654179095487,
+          "after_source_bypass": 0.1941576649072782
+        },
+        "text": {
+          "native": 0.06476944725620047,
+          "before_grid": 0.0304990572963959,
+          "after_grid": 0.052767953642060654,
+          "after_source_bypass": 0.05102752905008155
+        },
+        "graybox": {
+          "native": 0.162029375639111,
+          "before_grid": 0.16202937563911096,
+          "after_grid": 0.162029375639111,
+          "after_source_bypass": 0.162029375639111
+        }
+      }
+    }
+  ],
+  "screenshots": {
+    "before.png": {
+      "sha256": "0c804e1d247ae79967f823d9e2d47690d2656f6c10badab34ec729d5ce77f120",
+      "original": "/tmp/hs-i.nq1bw5gp/luminance-0.85-cached-sharp-grid.png"
+    },
+    "after.png": {
+      "sha256": "48d333cf83358c5f9cc8df03f6e89bdc058891bf3cb64a7003816c280880952f",
+      "original": "/tmp/hs-i.1e_qclle/brightness-opacity0.85-blurcached-sharp-grid.png"
+    },
+    "after-source-bypass.png": {
+      "sha256": "57667f5a073a1ab8ecea5c564a4485c30251309e1c28c09184925e32bf9cd533",
+      "original": "/tmp/hs-i.1e_qclle/brightness-opacity0.85-blurcached-sharp-source-bypass.png"
+    },
+    "after-unselected.png": {
+      "sha256": "50db51bd1c2fe9b7edb46d07238d0460d31298529b24493fa0132a7fe1a55d47",
+      "original": "/tmp/hs-i.1e_qclle/brightness-same-window-unselected.png"
+    },
+    "before-detail.png": {
+      "sha256": "fea6501cad7380ab03b947b1ca862f85558bcc2ad2822eded378396235fe07a2",
+      "crop_native_pixels": [
+        383,
+        212,
+        864,
+        493
+      ],
+      "original": "before.png"
+    },
+    "after-detail.png": {
+      "sha256": "b8f7f630a51c955f8359d2f09026936d126cf45feb5652c102201ce0f6b0e6b6",
+      "crop_native_pixels": [
+        383,
+        212,
+        864,
+        493
+      ],
+      "original": "after.png"
+    }
+  },
+  "maximum_selected_unselected_channel_difference": 0.0,
+  "native_checks": [
+    "plugin loads with exact ABI and clean configuration",
+    "opacity 1, blur off: minified strokes/checker/text preserve native light; flat colors and enlarged source agree across filters",
+    "opacity 0.85, blur off: minified strokes/checker/text preserve native light; flat colors and enlarged source agree across filters",
+    "opacity 0.85, blur live: minified strokes/checker/text preserve native light; flat colors and enlarged source agree across filters",
+    "opacity 0.85, blur cached: minified strokes/checker/text preserve native light; flat colors and enlarged source agree across filters",
+    "changing the selected workspace adds no extra fade to the same window's thumbnail",
+    "brightness comparisons preserve target selection and release capture/filter/UI resources and input ownership"
+  ],
+  "native_artifacts": "/tmp/hs-i.1e_qclle",
+  "before_artifacts": "/tmp/hs-i.nq1bw5gp",
+  "acceptance": "Flat patch channels agree with native linear reference within3/255; fine pattern mean light within25% of native source and dense text >=90% of enlarged bypass reference; native crop pixel boundaries shift with scale. Selected/unselected same-window sample channels agree within2/255."
+}

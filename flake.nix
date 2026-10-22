@@ -31,6 +31,13 @@
         inherit system;
         overlays = [ hyprland.overlays.hyprland-packages ];
       };
+      launchHelper = pkgs.rustPlatform.buildRustPackage {
+        pname = "hyprspace-launch";
+        version = "1.0.0";
+        src = ./contrib/launch-helper;
+        cargoLock.lockFile = ./contrib/launch-helper/Cargo.lock;
+        meta.license = pkgs.lib.licenses.mit;
+      };
       # Override the package set so the builder itself uses the compositor's
       # compiler, as well as passing its headers and libraries to the plugin.
       mkHyprlandPlugin = (pkgs.hyprlandPlugins.override {
@@ -48,35 +55,37 @@
               root = ./.;
               fileset = pkgs.lib.fileset.unions [
                 ./Makefile ./src ./scripts/atomic-output.sh
-                ./contrib/hyprspace-launch ./contrib/bindings.conf
+                ./contrib/launch-helper ./contrib/bindings.conf
+                ./third_party/lucide
               ];
             };
             buildInputs = with pkgs; [ cairo pango gdk-pixbuf librsvg nlohmann_json ];
-            nativeBuildInputs = [ pkgs.python3 ];
             dontUseCmakeConfigure = true;
             dontUseMesonConfigure = true;
             enableParallelBuilding = true;
             env.NIX_CFLAGS_COMPILE = hookCompilerFlags;
-            makeFlags = [ "CXX=${compositor.stdenv.cc.targetPrefix}g++" ];
+            makeFlags = [
+              "CXX=${compositor.stdenv.cc.targetPrefix}g++"
+              "LAUNCH_HELPER=${launchHelper}/bin/hyprspace-launch"
+            ];
             installPhase = ''
               runHook preInstall
               install -Dm755 build/hyprspace.so "$out/lib/libhyprspace.so"
-              install -Dm755 contrib/hyprspace-launch "$out/lib/hyprspace-launch"
-              substituteInPlace "$out/lib/hyprspace-launch" \
-                --replace-fail '#!/usr/bin/env python3' '#!${pkgs.python3}/bin/python3'
+              install -Dm755 build/hyprspace-launch "$out/lib/hyprspace-launch"
               mkdir -p "$out/lib/launch-bin" "$out/bin"
               for name in uwsm-app uwsm app2unit; do
                 ln -s ../hyprspace-launch "$out/lib/launch-bin/$name"
               done
               ln -s ../lib/hyprspace-launch "$out/bin/hyprspace-launch"
               install -Dm644 contrib/bindings.conf "$out/share/hyprspace/bindings.conf"
+              install -Dm644 third_party/lucide/LICENSE "$out/share/licenses/hyprspace/lucide-LICENSE"
               runHook postInstall
             '';
-            passthru = { inherit compositor supportedRevision; };
+            passthru = { inherit compositor supportedRevision launchHelper; };
             meta = {
               description = "Live workspace overview and Alt+Tab switcher for Hyprland";
               homepage = "https://github.com/simonwinther/hyprspace";
-              license = pkgs.lib.licenses.mit;
+              license = with pkgs.lib.licenses; [ mit isc ];
               platforms = [ system ];
             };
           };

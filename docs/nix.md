@@ -63,7 +63,7 @@ configuration; restart the session to unload the old library.
 The output contains:
 
 - `lib/libhyprspace.so`
-- `lib/hyprspace-launch`, with its Nix Python interpreter
+- `lib/hyprspace-launch`, a native Rust executable
 - `lib/launch-bin/{uwsm-app,uwsm,app2unit}` shims
 - `bin/hyprspace-launch`, pointing to the helper
 - `share/hyprspace/bindings.conf`

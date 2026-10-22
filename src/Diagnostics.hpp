@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Spaces.hpp"
+
 #include <chrono>
 #include <deque>
 #include <optional>
@@ -10,9 +12,11 @@ namespace hyprspace::diagnostics {
     using Clock                          = std::chrono::steady_clock;
     inline constexpr size_t SAMPLE_LIMIT = 64;
     struct SFrame {
-        int64_t monitor;
-        double  timeMs, intervalMs, prepareMs, renderMs, captureMs, inputMs;
-        size_t  captures, pixels;
+        int64_t     monitor;
+        double      timeMs, intervalMs, prepareMs, renderMs, captureMs, inputMs;
+        size_t      captures, pixels;
+        std::string space;
+        uint64_t    generation;
     };
     inline bool                                           enabled = false;
     inline uint64_t                                       frames  = 0;
@@ -22,6 +26,8 @@ namespace hyprspace::diagnostics {
         Clock::time_point start;
         double            prepareMs, captureMs;
         size_t            captures, pixels;
+        std::string       space;
+        uint64_t          generation;
     };
     inline std::unordered_map<int64_t, SPrepared> prepared;
     inline int64_t                                renderMonitor = -1;
@@ -64,7 +70,9 @@ namespace hyprspace::diagnostics {
                                          {"capture_ms", frame.captureMs},
                                          {"input_ms", frame.inputMs},
                                          {"captures", frame.captures},
-                                         {"pixels", frame.pixels}});
+                                         {"pixels", frame.pixels},
+                                         {"space", frame.space},
+                                         {"generation", frame.generation}});
         return result;
     }
     inline double milliseconds(Clock::duration duration) {
@@ -83,7 +91,9 @@ namespace hyprspace::diagnostics {
         const auto  input = inputs.find(renderMonitor);
         const auto& data  = frame->second;
         samples.push_back({renderMonitor, milliseconds(end.time_since_epoch()), prior == lastFrames.end() ? 0 : milliseconds(end - prior->second), data.prepareMs,
-                           milliseconds(end - data.start), data.captureMs, input == inputs.end() ? -1 : milliseconds(end - input->second), data.captures, data.pixels});
+                           milliseconds(end - data.start), data.captureMs, input == inputs.end() ? -1 : milliseconds(end - input->second), data.captures, data.pixels,
+                           data.space, data.generation});
+        spaces::rendered(renderMonitor, data.generation, milliseconds(end.time_since_epoch()));
         if (samples.size() > SAMPLE_LIMIT)
             samples.pop_front();
         if (lastFrames.size() >= SAMPLE_LIMIT && !lastFrames.contains(renderMonitor))
@@ -107,7 +117,8 @@ namespace hyprspace::diagnostics {
                 return;
             if (prepared.size() >= SAMPLE_LIMIT && !prepared.contains(m_monitor))
                 prepared.erase(prepared.begin());
-            prepared.insert_or_assign(m_monitor, SPrepared{*m_start, milliseconds(Clock::now() - *m_start), captureMs, captures, pixels});
+            prepared.insert_or_assign(m_monitor,
+                                      SPrepared{*m_start, milliseconds(Clock::now() - *m_start), captureMs, captures, pixels, spaces::activeId(), spaces::revision()});
         }
 
       private:

@@ -26,6 +26,10 @@
 #include <hyprland/src/layout/supplementary/WorkspaceAlgoMatcher.hpp>
 #include "PassElements.hpp"
 #include "Switcher.hpp"
+#include "Spaces.hpp"
+#include "SpaceHooks.hpp"
+#include "SpaceSelector.hpp"
+#include "InputController.hpp"
 #include "Texture.hpp"
 #include "Version.hpp"
 
@@ -73,6 +77,12 @@ namespace {
 
     std::unique_ptr<CSwitcher> g_switcher;
     bool                       g_sessionLocked = true;
+    UP<SEventLoopDoLaterLock>  g_spaceRebuild;
+    UP<SEventLoopDoLaterLock>  g_spaceTopology;
+    UP<SEventLoopDoLaterLock>  g_nativeWorkspaceSelection;
+    std::vector<PHLMONITORREF> g_spaceOverviewMonitors;
+    bool                       g_spaceReopen  = false;
+    bool                       g_spacePending = false;
 
     // Print Screen starts an external layer-shell UI (Omarchy uses a frozen
     // hyprpicker surface plus slurp). While that UI exists, it must sit above
@@ -151,6 +161,7 @@ namespace {
         CHyprSignalListener renderStage;
         CHyprSignalListener monitorRemoved;
         CHyprSignalListener monitorAdded;
+        CHyprSignalListener workspaceActive;
         CHyprSignalListener configReloaded;
         CHyprSignalListener layerOpened;
         CHyprSignalListener layerClosed;
@@ -488,6 +499,7 @@ namespace {
     }
 
     void destroyOverviews() {
+        spaceSelector().close();
         for (const auto& o : session().views) {
             if (const auto MON = o->monitor())
                 g_pHyprRenderer->damageMonitor(MON);
@@ -535,6 +547,7 @@ namespace {
     // Begin the closing animation everywhere. Nothing is torn down here; the
     // instances are reaped once their animations land.
     void closeOverviews() {
+        spaceSelector().close();
         session().stopInput();
         for (const auto& o : session().views) {
             if (!o->closing())
@@ -598,7 +611,6 @@ namespace {
                     g_switcher->close(true);
             } else if (MINE) {
                 if (auto* o = keyboardOverview()) {
-                    o->onKey(SYM, modsWith(SYM, false), false);
                     syncOverviewClose();
                 }
             }
@@ -656,7 +668,14 @@ namespace {
         }
 
         if (auto* o = keyboardOverview()) {
-            o->onKey(SYM, MODS, true);
+            std::string text;
+            char        buffer[64]{};
+            if (const auto keyboard = g_pSeatManager->m_keyboard.lock(); keyboard && keyboard->m_xkbState) {
+                const int length = xkb_state_key_get_utf8(keyboard->m_xkbState, event.keycode + 8, buffer, sizeof(buffer));
+                if (length > 0 && length < static_cast<int>(sizeof(buffer)))
+                    text.assign(buffer, length);
+            }
+            inputController().onKey(SYM, MODS, text);
             syncOverviewClose();
         }
     }
@@ -680,8 +699,14 @@ namespace {
             diagnostics::input(monitor->m_id);
         if (switcherLive())
             g_switcher->onMouseMove(pos);
-        else
+        else {
+            spaceSelector().pointer(pos);
+            if (spaceSelector().modal()) {
+                session().observePointer(pos);
+                return;
+            }
             session().pointer(pos, true);
+        }
     }
 
     // Scroll belongs to the overlay while one is up. Without this the wheel
@@ -709,6 +734,9 @@ namespace {
             .wheelTilt  = event.source == WL_POINTER_AXIS_SOURCE_WHEEL_TILT,
             .finger     = event.source == WL_POINTER_AXIS_SOURCE_FINGER,
         };
+
+        if (spaceSelector().modal())
+            return;
 
         if (session().helpActive()) {
             session().helpOverlay()->scroll(SCROLL);
@@ -779,6 +807,9 @@ namespace {
             g_switcher->onMouseButton(event.button, PRESSED);
             return;
         }
+
+        if (spaceSelector().button(event.button, PRESSED, currentMods(), g_pInputManager->getMouseCoordsInternal()))
+            return;
 
         if (session().button(event.button, PRESSED, currentMods())) {
             if (PRESSED && event.button == 0x110 && session().workspaceDrag) {
@@ -914,9 +945,14 @@ namespace {
         if (g_switcher && g_switcher->monitor() == MONITOR)
             g_pHyprRenderer->m_renderPass.add(makeUnique<CSwitcherPassElement>(g_switcher.get()));
 
+        for (auto& element : spaceSelector().buildPass(MONITOR))
+            g_pHyprRenderer->m_renderPass.add(std::move(element));
+
         if (session().helpActive())
             for (auto& element : session().helpOverlay()->buildPass(MONITOR))
                 g_pHyprRenderer->m_renderPass.add(std::move(element));
+        for (auto& element : inputController().buildPass(MONITOR))
+            g_pHyprRenderer->m_renderPass.add(std::move(element));
 
         // Some Waybar configurations use the bottom layer. Requeue those
         // panels through the native renderer above the overview's backdrop.
@@ -935,6 +971,8 @@ namespace {
         destroyOverviewOn(monitor);
         if (g_switcher && g_switcher->monitor() == monitor)
             destroySwitcher();
+        spaceSelector().refresh();
+        g_spaceTopology = g_pEventLoopManager->doLaterLock([] { spaces::topologyChanged(); });
     }
 
     // -------------------------------------------------------- dispatchers ----
@@ -1006,6 +1044,25 @@ namespace {
 
         session().begin();
 
+        return {.success = true};
+    }
+
+    SDispatchResult dispatchSidebar(std::string args) {
+        if (!args.empty() && args != "toggle" && args != "on" && args != "off")
+            return {.success = false, .error = "hyprspace: sidebar accepts on, off or toggle"};
+        if (!overlaysAllowed())
+            return {.success = false, .error = "hyprspace: session is locked"};
+        if (!spaces::enabled())
+            return {.success = false, .error = "hyprspace: spaces are disabled"};
+        if (args == "off") {
+            if (spaceSelector().sidebarVisible())
+                spaceSelector().toggleSidebar();
+            return {.success = true};
+        }
+        if (!overviewLive())
+            return {.success = false, .error = "hyprspace: sidebar requires an open overview"};
+        if (args != "on" || !spaceSelector().sidebarVisible())
+            spaceSelector().toggleSidebar(targetMonitor());
         return {.success = true};
     }
 
@@ -1137,8 +1194,50 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_sessionLocked   = g_pSessionLockManager->isSessionLocked();
     g_overviewSession = std::make_unique<COverviewSession>();
     config::registerAll();
+    spaces::initialize();
+    spaces::setTransitionCallbacks(
+        [] {
+            if (!g_spacePending) {
+                g_spacePending = true;
+                g_spaceReopen  = overviewLive();
+                g_spaceOverviewMonitors.clear();
+                for (const auto& view : session().views)
+                    if (!view->closing())
+                        g_spaceOverviewMonitors.emplace_back(view->monitor());
+            }
+            spaceSelector().close();
+            hooks::suspendOverviewKeys();
+            session().stopInput();
+            session().selection.clear();
+            session().restoreVisibility();
+            if (g_switcher)
+                g_switcher->close(false);
+        },
+        [] {
+            g_spaceRebuild = g_pEventLoopManager->doLaterLock([] {
+                g_spacePending      = false;
+                const bool reopen   = g_spaceReopen && overviewLive() && overlaysAllowed();
+                const auto monitors = g_spaceOverviewMonitors;
+
+                g_spaceReopen = false;
+                g_spaceOverviewMonitors.clear();
+                destroyOverviews();
+                destroySwitcher();
+                if (!reopen)
+                    return;
+                for (const auto& reference : monitors)
+                    if (const auto monitor = reference.lock(); monitor && monitor->m_enabled && !monitor->isMirror())
+                        session().views.push_back(std::make_unique<COverview>(monitor));
+                if (session().views.empty())
+                    return;
+                session().begin();
+
+                spaceSelector().refresh();
+            });
+        });
 
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:overview", dispatchOverview);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:sidebar", dispatchSidebar);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:switch", dispatchSwitch);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:close", dispatchClose);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:layoutcycle", dispatchLayoutCycle);
@@ -1146,15 +1245,22 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:closeworkspace", dispatchCloseWorkspace);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:windowview", dispatchWindowView);
     HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:help", dispatchHelp);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:space", [](std::string args) { return spaces::dispatch(args); });
+    HyprlandAPI::addDispatcherV2(PHANDLE, "hyprspace:movetospace", [](std::string args) { return spaces::move(args); });
 
     if (Config::mgr()->type() == Config::CONFIG_LUA) {
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "overview", [](lua_State* state) { return dispatchFromLua(state, dispatchOverview); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "sidebar", [](lua_State* state) { return dispatchFromLua(state, dispatchSidebar); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "switch", [](lua_State* state) { return dispatchFromLua(state, dispatchSwitch); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "layoutcycle", [](lua_State* state) { return dispatchFromLua(state, dispatchLayoutCycle); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "emptyworkspace", [](lua_State* state) { return dispatchFromLua(state, dispatchEmptyWorkspace); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "closeworkspace", [](lua_State* state) { return dispatchFromLua(state, dispatchCloseWorkspace); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "windowview", [](lua_State* state) { return dispatchFromLua(state, dispatchWindowView); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "help", [](lua_State* state) { return dispatchFromLua(state, dispatchHelp); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "space",
+                                    [](lua_State* state) { return dispatchFromLua(state, [](std::string args) { return spaces::dispatch(args); }); });
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "movetospace",
+                                    [](lua_State* state) { return dispatchFromLua(state, [](std::string args) { return spaces::move(args); }); });
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprspace", "close", [](lua_State* state) { return dispatchFromLua(state, dispatchClose); });
     }
 
@@ -1171,9 +1277,24 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_listeners.monitorAdded    = bus.monitor.added.listen([](PHLMONITOR mon) {
         if (overviewLive() && config::overviewAllMonitors() && !mon->isMirror() && !overviewOn(mon))
             session().views.push_back(std::make_unique<COverview>(mon));
+        g_spaceTopology = g_pEventLoopManager->doLaterLock([] { spaces::topologyChanged(); });
+    });
+    g_listeners.workspaceActive = bus.workspace.active.listen([](PHLWORKSPACE workspace) {
+        // Direct Lua actions used by panels do not pass through the legacy
+        // dispatcher wrapper. Follow their completed native focus update so
+        // overview dismissal cannot commit its previous workspace again.
+        if (!workspace || !overviewLive() || spaces::internal() || g_spacePending || hooks::mappingPointer() || session().gestureActive() || session().pendingResize)
+            return;
+        g_nativeWorkspaceSelection = g_pEventLoopManager->doLaterLock([] {
+            if (overlaysAllowed() && overviewLive() && !g_spacePending && !session().gestureActive() && !session().pendingResize)
+                session().followKeyboardFocus();
+        });
     });
     g_listeners.configReloaded  = bus.config.reloaded.listen([] {
         hooks::reconcileDispatchers();
+        spaces::reconcile();
+        spaceSelector().refresh();
+        g_spaceTopology = g_pEventLoopManager->doLaterLock([] { spaces::topologyChanged(); });
         session().cancelZoom();
         if (session().helpActive())
             session().helpOverlay()->refresh(true);
@@ -1198,15 +1319,20 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         launch::clear();
     });
     g_listeners.sessionUnlock = g_pSessionLockManager->m_events.unlock.listen([] { g_sessionLocked = false; });
-    hooks::install([] { return overlaysAllowed() && overviewLive() && !switcherLive() && !yieldingInput() && !foregroundKeyboard(); },
-                   [] { return overlaysAllowed() && overviewLive() && !switcherLive() && !yieldingInput(); },
-                   [](PHLMONITOR monitor) { return overlaysAllowed() && isOverlayMonitor(monitor) && !yieldingInput(); });
     try {
+        hooks::install([] { return overlaysAllowed() && overviewLive() && !switcherLive() && !yieldingInput() && !foregroundKeyboard(); },
+                       [] { return overlaysAllowed() && overviewLive() && !switcherLive() && !yieldingInput(); },
+                       [](PHLMONITOR monitor) { return overlaysAllowed() && isOverlayMonitor(monitor) && !yieldingInput(); });
+        spacehooks::install();
         installCaptureHooks();
         launch::install();
+        spaces::topologyChanged();
     } catch (...) {
         uninstallCaptureHooks();
         hooks::uninstall();
+        spacehooks::uninstall();
+        spaces::setTransitionCallbacks({}, {});
+        spaces::shutdown();
         throw;
     }
 
@@ -1237,6 +1363,15 @@ APICALL EXPORT void PLUGIN_EXIT() {
     launch::uninstall();
     uninstallCaptureHooks();
     diagnostics::enable(false);
+    g_spaceRebuild.reset();
+    g_spaceTopology.reset();
+    g_nativeWorkspaceSelection.reset();
+    g_spaceOverviewMonitors.clear();
+    g_spaceReopen  = false;
+    g_spacePending = false;
+    spaces::setTransitionCallbacks({}, {});
+    spacehooks::uninstall();
+    spaces::shutdown();
     hooks::uninstall();
     g_listeners = {};
     g_overviewSession.reset();

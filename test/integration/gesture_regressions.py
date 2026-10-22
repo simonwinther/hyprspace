@@ -22,12 +22,26 @@ def floating(s):
 
 def thresholds(s, wait_for):
     address, work = floating(s)
-    # One workspace, no labels and this padding produce an exact 3/4 scale.
+    # Calibrate outer padding against the actual toolbar reservations for an
+    # exact 3/4 scale; this fixture needs integral native threshold boundaries.
     # Integral preview steps can therefore exercise the exact native boundary.
     s.ctl("keyword", "plugin:hyprspace:overview:workspace_labels", "false")
-    s.ctl("keyword", "plugin:hyprspace:overview:padding", "75")
     s.ctl("keyword", "general:snap:enabled", "false")
     try:
+        low, high = 0, 75
+        while low <= high:
+            padding = (low + high) // 2
+            s.ctl("keyword", "plugin:hyprspace:overview:padding", str(padding))
+            reset_float(s, address, work)
+            scale = s.preview("hs-A")["w"] / s.windows()["hs-A"]["size"][0]
+            if math.isclose(scale, .75, abs_tol=1e-9):
+                break
+            if scale > .75:
+                low = padding + 1
+            else:
+                high = padding - 1
+        else:
+            raise AssertionError("cannot calibrate an exact 3/4-scale drag fixture")
         for button in (272, 273):
             corners = ((False, False),) if button == 272 else (
                 (False, False), (True, False), (False, True), (True, True)

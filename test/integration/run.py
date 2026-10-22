@@ -226,7 +226,7 @@ class Suite:
             connection.settimeout(2)
             connection.connect(str(path))
             connection.sendall(message.encode())
-            return connection.recv(65536).decode()
+            return connection.recv(1024 * 1024).decode()
 
     def status(self):
         return json.loads(self.request("status"))
@@ -1683,6 +1683,9 @@ def main():
             "gestures",
             "workspace_drag",
             "capture",
+            "preview-brightness",
+            "border-geometry",
+            "control-surfaces",
             "performance",
             "install",
             "interactions",
@@ -1704,6 +1707,12 @@ def main():
             "lifecycle",
             "overview",
             "window_views",
+            "spaces",
+            "space-selector",
+            "space-transfers",
+            "space-ipc",
+            "space-lua",
+            "unified-input",
             "help",
             "zoom",
             "cursor_confinement",
@@ -1748,9 +1757,9 @@ def main():
         flush=True,
     )
     suite_factory = Suite
-    if args.only == "lua":
+    if args.only in ("lua", "space-lua"):
         if args.runtime or args.visible or args.plugin:
-            parser.error("--only lua requires a fresh private source-build session")
+            parser.error(f"--only {args.only} requires a fresh private source-build session")
         import lua
 
         suite_factory = lua.suite_type(Suite, wait_for)
@@ -1763,6 +1772,29 @@ def main():
                 raise
             print("Retrying unavailable nested output backend:", error, flush=True)
     try:
+        if args.only in ("all", "unified-input"):
+            import unified_input
+
+            if args.only == "all":
+                isolated = Suite(snapshot=suite.snapshot, group="unified-input")
+                try:
+                    unified_input.run(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                unified_input.run(suite, wait_for)
+        if args.only in ("all", "space-lua"):
+            import lua
+            import spaces
+
+            if args.only == "all":
+                isolated = lua.suite_type(Suite, wait_for)(snapshot=suite.snapshot, group="space-lua")
+                try:
+                    spaces.lua_workspace_actions(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                spaces.lua_workspace_actions(suite, wait_for)
         if args.only in ("all", "lua"):
             import lua
 
@@ -1800,6 +1832,32 @@ def main():
         if args.only in ("all", "robustness", "capture"):
             import capture_regressions
             capture_regressions.coverage(suite, wait_for)
+        if args.only in ("all", "preview-brightness"):
+            import preview_brightness
+
+            if args.only == "all" or args.runtime:
+                isolated = Suite(snapshot=suite.snapshot, group="preview-brightness")
+                try:
+                    preview_brightness.run(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                preview_brightness.run(suite, wait_for)
+        if args.only in ("all", "border-geometry"):
+            import border_geometry
+
+            border_geometry.run(suite, wait_for)
+        if args.only in ("all", "control-surfaces"):
+            import control_surfaces
+
+            if args.only == "all" or args.runtime:
+                isolated = Suite(snapshot=suite.snapshot, group="control-surfaces")
+                try:
+                    control_surfaces.run(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                control_surfaces.run(suite, wait_for)
         if args.only == "performance":
             import performance
             performance.run(suite, wait_for)
@@ -1902,6 +1960,50 @@ def main():
         if args.only == "discord" or args.only == "all" and args.discord:
             assert args.discord, "--discord is required for the Discord suite"
             suite.discord(args.discord)
+        if args.only in ("all", "spaces"):
+            import spaces
+
+            if args.only == "all" or args.runtime:
+                isolated = Suite(snapshot=suite.snapshot, group="spaces")
+                try:
+                    spaces.run(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                spaces.run(suite, wait_for)
+        if args.only in ("all", "space-selector"):
+            import space_selector
+
+            if args.only == "all" or args.runtime:
+                isolated = Suite(snapshot=suite.snapshot, group="space-selector")
+                try:
+                    space_selector.run(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                space_selector.run(suite, wait_for)
+        if args.only in ("all", "space-transfers"):
+            import space_transfers
+
+            if args.only == "all" or args.runtime:
+                isolated = Suite(snapshot=suite.snapshot, group="space-transfers")
+                try:
+                    space_transfers.run(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                space_transfers.run(suite, wait_for)
+        if args.only in ("all", "space-ipc"):
+            import space_ipc
+
+            if args.only == "all" or args.runtime:
+                isolated = Suite(snapshot=suite.snapshot, group="space-ipc")
+                try:
+                    space_ipc.run(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                space_ipc.run(suite, wait_for)
         if args.only in ("all", "activation"):
             suite.activation()
     except Exception:

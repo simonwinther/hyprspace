@@ -79,6 +79,9 @@ update.
 | `hyprspace:switch` | *(none)* / `next` | Open the switcher, or step forward |
 | `hyprspace:switch` | `prev` / `backward` | Open the switcher, or step backward |
 | `hyprspace:close` | *(none)* | Dismiss whichever overlay is up, without selecting |
+| `hyprspace:space` | JSON request, or `next` / `prev` | Create, switch, rename or remove a space |
+| `hyprspace:sidebar` | `on`, `off`, `toggle` or empty | Toggle the space drawer within an already-open overview |
+| `hyprspace:movetospace` | JSON request | Move the selected window or whole workspace into another space |
 
 `hyprspace:close` works over the hyprctl socket even while an overlay holds the
 keyboard grab, which makes it a reliable escape hatch.
@@ -90,17 +93,166 @@ selection or moving the cursor returns to the desktop with focus, workspaces
 and cursor position preserved.
 A session limited to one output starts on that output's active workspace.
 
+### Spaces
+
+Spaces contain independent workspaces. Workspace numbers are local to a space
+and shared across its monitors: workspace 1 can exist in both a hobby space and
+a work space, with different windows, layouts and monitor placement. The
+overview, window board, search and Alt+Tab show the selected space's windows.
+Even with `switcher:current_workspace_only = false`, Alt+Tab stays inside that
+space. Pinned windows follow workspaces within their owning space; scratchpad
+names are local to that space too.
+
+The first launch places existing native workspaces in **Default** without
+renumbering them. No other spaces are supplied. Open HyperSpace with the existing
+**Super+A** binding, then click the current space name and chevron or press
+**Ctrl+Space** or **Space, then s** to open its space drawer. The drawer starts closed, opens below
+the current context, and overlays the canvas without moving
+workspace previews. Use **j/k**, **Up / Down** and **Enter**, or click a row, to switch
+every connected output. Choosing a space closes the drawer and keeps the
+workspace overview open. **Escape** or **Ctrl+Space** closes the drawer without
+switching. Drawer clicks work while Super is still held.
+
+In Normal mode, **Space, then a** creates a space, **Space, then e** or **F2**
+edits the highlighted space, and **Space, then d** or **Delete** opens its
+removal preview. **Space p** opens the complete manager. **/** filters
+the chooser; Enter or Escape finishes Insert while preserving that filter.
+Use **i** to resume typing and **j/k** to choose a filtered space. **Ctrl+Page Up / Ctrl+Page Down** switches spaces directly while the
+overview is in Normal mode, including during held zoom. These global commands
+are suspended while a form contains a draft. Each space remembers the selected
+workspace on each output. A disconnected display's
+workspaces use a connected fallback and retain their preferred display for
+reconnection. Switching spaces does not change monitor modes or power settings.
+
+The overview heading shows occupied workspace and window counts, excluding
+automatically prepared empty workspaces. The drawer shows each space's window
+count, or **Empty**. A new space shows **This space is empty** and an
+**Enter space** action to close the overview onto its first workspace. Other
+spaces stay available through the current space name even when it has no windows.
+
+Open **···** beside the space title for **Edit space**, **Move selection to…**
+and **Remove space…**. Removing requires a destination and previews
+the workspace transfers before confirmation. Every workspace moves intact;
+existing destination workspaces remain separate. Conflicting numbers receive
+the lowest free numbers and conflicting names receive a numeric suffix. Default
+is a regular space: it can be renamed or removed after another exists. The final
+space cannot be removed.
+
+**Space m** opens **Move selected window to space**; **Space Shift+M** opens
+**Move workspace to space**. Both commands work from the workspace grid and window
+board, and the destination picker starts with the requested transfer type. It
+captures the selected window or workspace when opened; if that selection closes,
+confirmation is blocked instead of moving something else. The dialog retains its
+explicit type switch and leaves the current space selected. The **Move to…** menu
+keeps its context-dependent default. **Space p** opens the complete space manager.
+In the drawer or Your spaces manager, **Shift+J / Shift+K** moves the selected
+space down or up; its position is saved. With a search filter, it moves past the
+adjacent matching space. Selection and the current space stay unchanged.
+Menus and dialogs support hjkl/arrows, Tab and Enter. Escape in Normal returns
+to the parent chooser with its selection and filter retained. A menu keeps
+the window or workspace you selected before opening it. Names support Unicode, cursor editing,
+Ctrl+A to select all and Ctrl+U to clear. System keys and other native shortcuts
+remain available.
+
+Create and Edit offer 48 searchable Lucide icons and eight color swatches. Color changes
+the space icon, while the name keeps the normal text color. **Tab** moves between
+Name, Icon, Color, Cancel and Save controls. **hjkl** or arrows choose an icon
+or color. With Icon focused, **/** or **i** edits the icon search; search by
+name or a related word such as “school”, “gaming” or “photography”. Enter or
+Escape finishes the search and keeps the filter for navigation. **Page Up /
+Page Down** moves through the bounded icon grid; the arrow buttons page it with
+the mouse. A search with no results retains the chosen icon. Edit opens in Normal mode; **i** edits Name in Insert. Create starts
+in Name Insert. Enter or Escape finishes text editing without losing the draft;
+**Ctrl+Enter** saves the entire editor. A second Escape in Normal cancels back
+to its parent. Opening help and returning preserves unsaved appearance choices.
+Existing spaces receive the grid icon and blue (`#89b4fa`) by default.
+Names and appearance can be changed independently without moving workspaces.
+Space controls follow the overview's light or dark colors automatically. Set
+`plugin:hyprspace:spaces:theme` to `dark` or `light` to override this; `auto` is the
+default. Icon colors retain their chosen hue with contrast adjusted for the surface.
+
+Existing numeric workspace and move bindings use local numbers in the active
+space; they do not need to be rewritten. Numeric and range workspace rules use
+those local numbers, so a rule for workspace 2 applies to workspace 2 in each
+space. Native window activation targeting another space switches the complete
+desktop to that space. Delayed applications launched through a captured
+overview context retain their originating space.
+
+The native Hyprland API still has a global workspace namespace. New backing
+workspace IDs and names appear in `hyprctl`. The space drawer and the integrated
+Rust workspace slider use local identities and active-space occupancy. The
+slider's numbered slots select or create workspaces within the current space;
+an empty slot is not occupied merely because that number is used elsewhere.
+Other bars and third-party plugins can use the [space-aware bar interface](bars.md)
+instead of reading global native IDs directly.
+
+Metadata is stored in `$XDG_STATE_HOME/hyprspace/spaces.json`, falling back to
+`~/.local/state/hyprspace/spaces.json`, with atomic replacement and a backup.
+Space names, icons, colors, workspace identities and placement survive compositor restarts.
+This does not restart applications or restore their application data.
+
+The dispatchers accept JSON; `id` and `space_id` can be a stable ID from status
+or the current space name. For example:
+
+```bash
+hyprctl dispatch hyprspace:space '{"action":"create","name":"Hobby","icon":"palette","color":"#cba6f7"}'
+hyprctl dispatch hyprspace:space '{"action":"create","name":"Work"}'
+hyprctl dispatch hyprspace:space '{"action":"switch","id":"Hobby"}'
+hyprctl dispatch hyprspace:space '{"action":"rename","id":"Hobby","name":"Personal"}'
+hyprctl dispatch hyprspace:movetospace '{"space_id":"Work","target":"window"}'
+hyprctl dispatch hyprspace:movetospace '{"space_id":"Work","target":"workspace"}'
+hyprctl dispatch hyprspace:space '{"action":"delete","id":"Personal","target":"Work"}'
+hyprctl dispatch hyprspace:space next
+```
+
+Moves use the overview selection while it is open and native focus otherwise.
+Optional `workspace` (native ID) or `window` (native address string) fields select
+an explicit source. Use the installed `hyprspace-launch --status` helper to
+inspect space-aware status. Lua exposes the same requests as
+`hl.plugin.hyprspace.space()` and `hl.plugin.hyprspace.movetospace()`.
+The internal drawer dispatcher has the Lua equivalent
+`hl.plugin.hyprspace.sidebar("toggle")`, requiring an open overview.
+
+For a Lua configuration, use `hyprctl eval` with the plugin's Lua function:
+
+```bash
+hyprctl eval 'local r = hl.plugin.hyprspace.space([[{"action":"create","name":"School","icon":"graduation-cap","color":"#ed8796"}]]); assert(r.ok, r.error)'
+```
+
+To opt out, set `plugin:hyprspace:spaces:enabled = false`. The space drawer and
+space routing are disabled; native backing workspaces remain accessible.
+
 ### Controls
 
-**Overview**
+HyperSpace opens in **Normal** mode. `hjkl` and arrows navigate; Space starts a
+visible command prefix and `g` starts `gg`. An unknown suffix or Escape cancels
+the prefix. Text only changes in **Insert** mode. `/` starts search, `i` resumes
+a query or edits the focused Name field, and Enter or Escape finishes editing
+without clearing text. A second Enter in Normal accepts a result. Escape in
+Normal returns one UI level; at the root it dismisses HyperSpace. An active
+gesture is cancelled before navigating back. System shortcuts and foreground
+launchers retain native input.
 
-| Key | Action |
+Modes stay implicit. The corner command guide appears while a prefix is pending
+and disappears when it completes or is cancelled.
+
+| Normal control | Action |
 |---|---|
-| `Esc` | Close, keep the current workspace |
-| `Enter` / `S` / `Space` | Switch to the selected workspace and close |
-| `Tab` / `Shift+Tab` | Next / previous workspace |
-| `N` | Select an empty workspace on the monitor under the pointer and keep the overview open |
-| `Q` | Close the selected empty workspace and select its nearest remaining neighbor |
+| `Enter` | Accept the selected workspace, window or chooser item |
+| `Space s` / `Ctrl+Space` | Open the spaces chooser |
+| `Space p` | Open the complete space manager |
+| `Space e` / `Space a` | Edit the highlighted/current space / create a space |
+| `Space m` | Move selected window to space |
+| `Space Shift+M` | Move workspace to space |
+| `Space d` | Remove a space with a transfer preview |
+| `Space v` / `Space w` | Show windows / workspaces |
+| `Space g` / `Space r` in Windows | Cycle grouping / toggle recent-first order |
+| `Space n` / `Space x` | Prepare a workspace / close the selected empty workspace |
+| `Space ?` / `?` | Open help |
+| `gg` / `G`, Home / End | First / last item |
+| `n` / `N` | Next / previous search result |
+| `Tab` / `Shift+Tab` | Next / previous item or form field |
+| `Ctrl+Page Up` / `Ctrl+Page Down` | Previous / next space across every output |
 | Middle-click | Select an empty workspace on this monitor and keep the overview open |
 | Hold `Z` | Enlarge the selected workspace; release to smoothly restore the grid |
 | `Z` + wheel / vertical two-finger scroll | Magnify around the pointer |
@@ -122,11 +274,11 @@ A session limited to one output starts on that output's active workspace.
 | `Super` + `Alt` + drag left | Move a regular workspace to another monitor |
 | Wheel / two-finger scroll | Pan the scrolling workspace under the pointer; other layouts step the workspace selection |
 | Edge arrows inside a scrolling tile | Reveal the next hidden column and keep the overview open |
-| + Empty workspace | Prepare an empty workspace on this output, or accept a Super-dragged window |
+| + New workspace | Prepare an empty workspace on this output, or accept a Super-dragged window |
 
 Press **?** in the workspace overview or window board to open an on-the-fly
-guide. It shows the configured zoom, follow, window-board, empty-workspace and
-help keys, the workspace-drag modifiers, and the current follow preference.
+guide. It shows the shared Normal-mode commands and configured inspection keys, the
+workspace-drag modifiers, and the current follow preference.
 Native overview bindings are shown when available; Lua callback bindings remain
 under your Hyprland configuration.
 
@@ -146,8 +298,9 @@ The guide preserves the workspace or window selection. Zoom follow and manual
 inspection controls pause while it is open; releasing a held zoom key still
 returns to the previous view. Printable `?` stays ordinary text in a focused
 search field. `overview:help_key` accepts an XKB key name (`question` for `?`)
-or an empty value to disable the shortcut. Existing zoom, empty-workspace,
-window-board and follow keys take precedence if they share the help key.
+as an optional alias, or an empty value to disable that alias. The standard
+`?` and `Space ?` commands remain available. Inspection keys retain precedence
+on a conflicting alias.
 The dispatcher also has a Lua entry point, `hl.plugin.hyprspace.help()`.
 
 Hold **Super + Alt** and left-drag anywhere inside a regular workspace tile,
@@ -180,20 +333,21 @@ Shift. Unknown names are rejected. An empty value disables the gesture.
 
 ### Experimental window board
 
-Press **G** while the overview is open to replace its workspace tiles with a
+Press **Space, then v** while the overview is open to replace its workspace tiles with a
 window board on the currently selected output. It gathers windows from every
 output covered by the overview. Other outputs remain dimmed. The usual overview
-still opens first, and G returns to it.
+still opens first; **Space, then w** returns to it.
 
 Press **/** directly from the workspace overview to open All windows with the
 search field focused. Type an app name, a window title, or both: `chrome project`
-finds Chrome windows whose titles contain “project”. Enter or a click focuses
-the selected window on its original workspace and monitor.
+finds Chrome windows whose titles contain “project”. Enter or Escape finishes
+Insert; Enter in Normal, or a click, focuses the selected window on its original
+workspace and monitor.
 
 | Control | Action |
 |---|---|
-| Toolbar / Shift+G | Choose All windows, Apps, Workspaces or Monitors |
-| R / Recent | Switch between location order and recent-first order within each group |
+| Toolbar / Space g | Choose All windows, Apps, Workspaces or Monitors |
+| Space r / Recent | Switch between location order and recent-first order within each group |
 | / / search field | Search titles, app names/classes, workspace names/numbers and monitor names |
 | Backspace / Delete / Ctrl+U | Delete before / after the text cursor, or clear the query |
 | Left / Right, Home / End while searching | Move the text cursor; hold Shift to select text |
@@ -201,18 +355,19 @@ the selected window on its original workspace and monitor.
 | Arrows, h/j/k/l, Tab / Shift+Tab | Select a window; navigation scrolls it into view |
 | Home / End | Select the first / last result |
 | Wheel, two-finger scroll, Page Up / Page Down | Scroll the window board |
-| Enter, S, Space or click | Focus the selected source window and close the overview |
+| Enter in Normal, or click | Focus the selected source window and close the overview |
 | Hold Z | Fit the selected window; the existing 1–4× zoom and pan controls apply |
 | Z + F | Enable or disable persistent cursor-follow |
-| Escape | Clear and leave search, return to workspaces, then dismiss |
-| N / middle-click | Return to workspaces and prepare an empty destination |
+| Escape | Leave Insert with the query retained; in Normal, restore the prior view |
+| Space n / middle-click | Return to workspaces and prepare an empty destination |
 | 1–9 / 0 | Return to workspaces and open that workspace |
 
 The / shortcut follows your keyboard layout, including **Shift+7** on a Danish
 keyboard. Holding the opening key does not add text to the query.
 
-The search field has a blinking caret. Click to position it; long queries scroll
-inside the field. Up/Down and Tab still browse results while editing.
+The search field has a blinking caret in Insert. Click to position it; long
+queries scroll inside the field. Enter or Escape returns to Normal without
+clearing the query; hjkl and Tab then browse results. **i** resumes editing.
 
 While search has focus, all printable keys become literal text, including G,
 R, S, Z, N, spaces and digits. Search ignores case, supports Danish characters,
@@ -240,14 +395,13 @@ navigation reveals the selected card. Scrolling during a grouping animation move
 the cards without interrupting their rearrangement.
 
 Recent order is captured when entering the board. Hovering and navigation do
-not reorder it. Group and order preferences survive G toggles during one open
+not reorder it. Group and order preferences survive view changes during one open
 overview; a new overview starts with All windows and location order. Search is
-cleared when leaving the board. Manual project collections are outside this
-experiment.
+retained in the UI return stack when opening a child view or another search.
+Closing the overview starts a new browsing session.
 
-Set `overview:window_view_key` to an XKB key name or an empty value to disable
-the shortcut. The existing zoom and empty-workspace keys take precedence if
-they share its key. The toolbar hints follow your key mapping.
+`overview:window_view_key` is retained as a deprecated compatibility option.
+Use `Space v` / `Space w`; this option does not remap the shared commands.
 `hyprspace:windowview` accepts `toggle` (the default), `off`, `flat`, `app`,
 `workspace` or `monitor`, and requires an open overview. In Lua use
 `hl.plugin.hyprspace.windowview("app")` with the same arguments. For example:
@@ -258,19 +412,19 @@ bind = SUPER, G, hyprspace:windowview, app
 
 ### Workspace destinations
 
-Press **Q** on a selected empty workspace to close it while keeping the overview
+Press **Space, then x** on a selected empty workspace to close it while keeping the overview
 open. If it is active, the nearest remaining normal workspace on the same monitor
 becomes active. Closing an inactive workspace keeps the current desktop active.
 Workspaces containing windows, special workspaces, and the last normal workspace
-on each monitor are protected. Holding Q acts once. Configured persistent
+on each monitor are protected. The command acts once. Configured persistent
 workspaces can return after reloading your configuration.
 
-Set `overview:close_workspace_key` to another XKB key name, or an empty value to
-disable it. Existing overview shortcuts take precedence on a shared key.
+`overview:close_workspace_key` is retained as a deprecated compatibility option;
+it does not remap the `Space x` command.
 The same action is available as `hyprspace:closeworkspace` or
 `hl.plugin.hyprspace.closeworkspace()` in Lua.
 
-Middle-click without modifiers, press **N**, or click **+ Empty workspace** on a
+Middle-click without modifiers, press **Space, then n**, or click **+ New workspace** on a
 monitor to prepare an empty destination there. This uses the pointer's monitor
 even when keyboard navigation selected a tile on another output or `follow_mouse = false`.
 It reuses a prepared or active empty normal workspace first, then another empty
@@ -286,17 +440,16 @@ The destination is selected and highlighted while the overview stays open.
 Workspace tiles stay in numeric order, and preparation does not move the cursor.
 Preparing it leaves the active desktop and focus unchanged. Press Enter to open
 it, launch an application there, or Super-drag a window into its tile. You can
-drop directly onto **+ Empty workspace** to prepare and move in one gesture;
+drop directly onto **+ New workspace** to prepare and move in one gesture;
 allocation happens only on a valid release. Escape cancels a provisional drag,
 and dismissing an unused prepared workspace releases it without changing your
 desktop. Existing persistent workspace settings are retained.
 
 The button hides during held zoom and panning, and reappears for window move
 drags, including ones started from zoom. It is unavailable during resizing.
-Pressing N or middle-clicking returns to the grid; while a window drag, pan or
-released resize is in progress, these shortcuts do nothing. Holding N acts once
-until its release.
-Foreground launcher typing, modified N bindings and typing outside the overview
+`Space n` or middle-clicking returns to the grid; while a window drag, pan or
+released resize is in progress, these shortcuts do nothing. The keyboard command acts once.
+Foreground launcher typing, modified native bindings and typing outside the overview
 keep their normal behavior.
 
 Middle-clicks on panels or foreground UI and while the overview is closed keep
@@ -304,11 +457,9 @@ their normal routing. Middle-clicking an output without an overview, or a monito
 does not prepare a workspace. One middle-button press acts once until release;
 its release remains consumed if the overview closes while the button is held.
 
-Set `overview:empty_workspace_key` to another XKB key name, or an empty value to
-disable this shortcut. Navigation, modifier, lock and system keys are rejected.
-If it names the same key as `overview:zoom_key`, zoom takes precedence and the
-empty-workspace shortcut is disabled. The button and `hyprspace:emptyworkspace`
-dispatcher remain available. For a custom native binding, call that dispatcher
+`overview:empty_workspace_key` is a deprecated compatibility option; `Space n`
+is the shared command. The button and `hyprspace:emptyworkspace` dispatcher
+remain available. For a custom native binding, call that dispatcher
 without arguments; in Lua use `hl.plugin.hyprspace.emptyworkspace()`. Both require
 an open overview.
 
@@ -353,12 +504,12 @@ pans the viewport toward that direction by 40 logical pixels per step, repeating
 while held. Unmodified arrows and Tab continue to browse workspaces.
 
 Press **F while Z is held** to toggle cursor-follow in either workspace zoom or
-G-view window inspection. Moving right reveals more content on the right;
+window-board window inspection. Moving right reveals more content on the right;
 moving down reveals more below. Movement under four logical pixels is ignored,
 and larger movement gently steers the camera within the existing bounds. When
 you stop moving, the camera finishes settling. The **F · Follow enabled/disabled** hint
 shows the current mode. In workspace zoom it stays in the upper-left corner;
-G-view includes it in the inspection hints. Turning follow on waits for fresh mouse movement;
+window-board includes it in the inspection hints. Turning follow on waits for fresh mouse movement;
 turning it off stops follow at the displayed framing.
 
 While Follow is enabled and Z is held with extra magnification above the fitted
@@ -372,7 +523,7 @@ interfaces and window or workspace dragging retain their usual input.
 
 Set `overview:follow_key` to another XKB key name, or an empty value to disable
 the shortcut. Set `overview:show_follow_hint = false` to hide the hint in both
-workspace and G-view inspection without changing your saved follow preference.
+workspace and window-board inspection without changing your saved follow preference.
 
 Follow starts disabled until you enable it with F. Your choice lasts through
 Z releases, view changes, closing and reopening, plugin reloads and Hyprland
@@ -420,8 +571,9 @@ including during zoom-out, so pressing Z again enlarges the workspace currently
 under the pointer. Releasing Z without moving retains the selected workspace.
 
 Zoom affects previews and keeps the overview open. Clicking a window or pressing
-Enter, S or Super+A again opens the selection directly, and Escape still dismisses
-the overview. Space alone also commits when Z is released. Explicit `off` and
+Enter in Normal or Super+A again opens the selection directly. Escape cancels
+an active gesture before returning through UI levels. Space starts the command
+prefix when Z is released. Explicit `off` and
 `hyprspace:close` dismiss without selecting. An
 output already showing a single workspace keeps its existing Z-fit geometry but
 still accepts extra magnification. New zoom
@@ -560,6 +712,8 @@ plugin {
 | `follow_mouse` | bool | `true` | Hovering a tile selects it |
 | `diagnostics` | bool | `false` | Keep up to 64 recent compositor timing samples in the local status socket |
 | `warp_cursor` | bool | `true` | Warp the pointer onto the chosen window when committing |
+| `spaces:enabled` | bool | `true` | Enable independent spaces, local workspace numbers and the space drawer |
+| `spaces:theme` | string | `auto` | Space controls palette: `auto`, `dark` or `light` |
 
 `warp_cursor` matters more than it looks. With Hyprland's `input:follow_mouse`
 enabled (the default, and Omarchy's), focusing a window while the pointer sits
@@ -578,13 +732,14 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:tile_border_color` | color | `rgba(ffffff1a)` | Hairline around every tile |
 | `overview:padding` | int | `56` | Outer padding |
 | `overview:gap` | int | `28` | Gap between workspace tiles |
+| `overview:preview_filter` | string | `sharp` | Thumbnail sampling: `linear` for the original renderer, `area` for footprint averaging, `sharp` for averaging with restrained sharpening, or `linear-sharp` for sharpening the original scaling. Full-size previews and size-changing animations use the original capture |
 | `overview:zoom_key` | string | `z` | Unmodified hold-to-zoom key; empty disables it. Use an XKB key name that does not conflict with overview navigation or system keys |
-| `overview:empty_workspace_key` | string | `n` | Unmodified key that selects an empty workspace on the pointer's monitor; empty disables it. Zoom takes precedence if both keys match |
-| `overview:window_view_key` | string | `g` | Toggle the global window board inside the overview; Shift cycles groups. Empty disables it. Zoom and empty-workspace keys take precedence |
-| `overview:follow_key` | string | `f` | Toggle persistent cursor-follow while the zoom key is held. Empty disables the shortcut; zoom, empty-workspace and window-view keys take precedence. Navigation, system, zoom and pan keys cannot be assigned |
-| `overview:close_workspace_key` | string | `q` | Close the selected empty normal workspace while keeping the overview open. The last normal workspace on each monitor is protected; an active workspace switches to its nearest remaining tile. Empty disables; existing overview shortcuts take precedence |
+| `overview:empty_workspace_key` | string | `n` | Deprecated compatibility option; use `Space n`. Does not remap leader commands |
+| `overview:window_view_key` | string | `g` | Deprecated compatibility option; use `Space v` / `Space w`. Does not remap leader commands |
+| `overview:follow_key` | string | `f` | Toggle persistent cursor-follow while the zoom key is held. Empty disables the shortcut; zoom takes precedence. Navigation, system, zoom and pan keys cannot be assigned |
+| `overview:close_workspace_key` | string | `q` | Deprecated compatibility option; use `Space x`. Does not remap leader commands |
 | `overview:show_follow_hint` | bool | `true` | Show the follow shortcut and enabled/disabled state while inspecting. Hiding it does not change the saved preference |
-| `overview:help_key` | string | `question` | Open searchable help (`?` by default). Empty disables it; existing overview shortcuts take precedence. Navigation, modifiers, system and inspection zoom keys cannot be assigned |
+| `overview:help_key` | string | `question` | Optional help alias. Empty disables the alias; `?` and `Space ?` remain available. Navigation, modifier, system and inspection keys cannot be assigned |
 | `overview:workspace_drag_modifiers` | string | `SUPER ALT` | Exact modifiers for left-dragging a regular workspace to another monitor; requires Super plus Alt, Ctrl or Shift. Empty disables it |
 | `overview:wheel_zoom` | bool | `true` | Extra wheel, vertical touchpad and keyboard magnification/panning while the zoom key is held; bounds are 1–4 times the normal held fit. Disable to retain previous scrolling behavior |
 | `overview:band_gap` | int | `28` | Deprecated compatibility key; ignored. `overview:gap` controls both axes |
@@ -597,6 +752,7 @@ your selection silently does nothing. Warping is how Hyprland's own
 | `overview:label_color` | color | `rgba(cdd6f4ff)` | Label colour |
 | `overview:title_bg_color` | color | `rgba(1e1e2ee6)` | Backdrop behind that label |
 | `overview:include_special` | bool | `true` | Include special/scratchpad workspaces |
+| `overview:exclude_workspaces` | string | empty | Comma-separated exact workspace names to omit from the overview and window board, e.g. `special:pdf-picker,special:file-picker`. Surrounding whitespace and empty entries are ignored. Other special workspaces remain visible when `include_special=true`. |
 | `overview:all_monitors` | bool | `true` | Open on every monitor at once rather than only the one under the pointer |
 | `overview:font` | string | `Sans 12` | Pango font description |
 
@@ -655,7 +811,7 @@ output to move the session. Other outputs keep their normal windows visible.
 | `switcher:highlight_color` | color | `rgba(89b4fa40)` | Selection highlight |
 | `switcher:text_color` | color | `rgba(cdd6f4ff)` | Title colour |
 | `switcher:show_title` | bool | `true` | Show the selected window's title |
-| `switcher:current_workspace_only` | bool | `true` | Use the active normal workspace on the target monitor. `false` includes windows across all workspaces and outputs, including special workspaces |
+| `switcher:current_workspace_only` | bool | `true` | Use the active normal workspace on the target monitor. `false` includes windows across the current space's workspaces and outputs, including special workspaces |
 | `switcher:font` | string | `Sans 13` | Pango font description |
 
 The target monitor is the one under the pointer, falling back to the focused
@@ -869,6 +1025,16 @@ and closing during transitions. Run them alone with
 Cross-monitor numeric selection, empty destinations, preview stacking and the
 desktop handoff have separate rendered-frame checks. Run them with
 `make integration-test INTEGRATION_ARGS='--only transitions'`.
+
+Independent-space behavior has an isolated `--only spaces` suite.
+`--only unified-input` drives the shared key grammar through native input: gg/G,
+Space commands, literal text in Insert, retained queries, parent restoration,
+keyboard appearance editing, held-key focus changes and draft protection.
+The `--only space-selector` suite exercises
+drawer and menu clicks, keyboard selection, icon/color choices, Unicode naming,
+space switching, transfer previews, window/workspace moves and compact dialog
+geometry, saving screenshots beside its JSON and compositor logs. These suites run in
+private compositor sessions, including when invoked through the full suite.
 
 [Verification instructions and release gates](interactive.md#verification)
 describe the automated and physical suites. The

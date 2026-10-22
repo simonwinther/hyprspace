@@ -1,9 +1,13 @@
 #include "Launch.hpp"
+#include "Spaces.hpp"
+#include "SpaceSelector.hpp"
+#include "InputController.hpp"
 #include "Config.hpp"
 #include "Diagnostics.hpp"
 #include "LaunchGeometry.hpp"
 #include "OverlayPolicy.hpp"
 #include "Texture.hpp"
+#include "PreviewFilter.hpp"
 
 #include "CompositorHooks.hpp"
 #include "Overview.hpp"
@@ -13,7 +17,9 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/config/supplementary/executor/Executor.hpp>
+#include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
@@ -21,10 +27,13 @@
 #include <hyprland/src/layout/algorithm/Algorithm.hpp>
 #include <hyprland/src/layout/space/Space.hpp>
 #include <hyprland/src/managers/TokenManager.hpp>
+#include <hyprland/src/managers/EventManager.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/protocols/XDGActivation.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
 #include <hyprutils/utils/ScopeGuard.hpp>
 
 #include <nlohmann/json.hpp>
@@ -55,14 +64,19 @@ namespace hyprspace::launch {
         struct STokens {
             friend auto member(STokens);
         };
+        struct SSuspended {
+            friend auto member(SSuspended);
+        };
         template struct CAccess<SManagers, &CXDGActivationProtocol::m_managers>;
         template struct CAccess<SRequests, &CXdgActivationV1::requests>;
         template struct CAccess<STokens, &CXDGActivationProtocol::m_sentTokens>;
+        template struct CAccess<SSuspended, &Desktop::View::CWindow::m_suspended>;
 
         using Clock      = std::chrono::steady_clock;
         using Env        = std::vector<std::pair<std::string, std::string>>;
         using Activation = std::function<void(CXdgActivationV1*, const char*, wl_resource*)>;
         struct SContext {
+            std::string     space;
             SOverviewTarget target;
             PHLWORKSPACEREF workspace;
             // Only prepared overview destinations need ownership beyond the
@@ -114,16 +128,17 @@ namespace hyprspace::launch {
             std::erase_if(pending, [](const auto& entry) { return !entry.surface || !launches.contains(entry.token); });
         }
 
-        std::string capture(const std::optional<SOverviewTarget>& target) {
-            if (!session().live() || !overlaysAllowed() || !target)
+        std::string capture(const std::optional<SOverviewTarget>& target, bool desktop = false) {
+            if ((!session().live() && !desktop) || !overlaysAllowed() || !target)
                 return {};
-            SContext context{.target = *target};
+            SContext context{.space = spaces::activeId(), .target = *target};
             if (const auto ws = State::workspaceState()->query().id(target->workspace.id).run()) {
                 if (!valid(ws) || ws->m_name != target->workspace.name)
                     return {};
                 context.workspace        = ws;
                 context.hasWorkspace     = true;
-                context.preparedLifetime = session().preparedLifetime(ws);
+                context.preparedLifetime = desktop ? ws : session().preparedLifetime(ws);
+                context.space            = spaces::owner(ws);
             }
             for (const auto& w : Desktop::windowState()->windows())
                 if (w->m_isMapped)
@@ -163,7 +178,9 @@ namespace hyprspace::launch {
             const auto it = launches.find(token);
             if (it == launches.end() || !w || !w->m_isMapped || !w->m_workspace || it->second.completed || it->second.expires <= Clock::now())
                 return;
-            auto& context        = it->second.context;
+            auto&               context         = it->second.context;
+            const auto          originWorkspace = context.workspace.lock();
+            spaces::CSpaceScope originScope(originWorkspace ? spaces::owner(originWorkspace) : context.space);
             it->second.completed = true;
             const Hyprutils::Utils::CScopeGuard releasePrepared([&context] { context.preparedLifetime.reset(); });
             if (std::ranges::any_of(context.existing, [&](const auto& old) { return old == w; }))
@@ -198,7 +215,7 @@ namespace hyprspace::launch {
                 }
                 target->warpPositionSize();
             });
-            if (session().live() && session().covers(w->m_monitor.lock()))
+            if (session().live() && spaces::inActive(w->m_workspace) && session().covers(w->m_monitor.lock()))
                 session().hideWindow(w);
             session().damage();
         }
@@ -214,10 +231,16 @@ namespace hyprspace::launch {
                 auto& request = (raw->*member(SRequests{})).activate;
                 callbacks.emplace(raw, request);
                 request = [native = request](CXdgActivationV1* self, const char* token, wl_resource* resource) {
-                    const std::string id      = token;
-                    const auto&       tokens  = PROTO::activation.get()->*member(STokens{});
-                    const bool        valid   = std::ranges::any_of(tokens, [&](const auto& sent) { return sent.token == id; });
-                    const auto        surface = CWLSurfaceResource::fromResource(resource);
+                    const std::string   id              = token;
+                    const auto&         tokens          = PROTO::activation.get()->*member(STokens{});
+                    const bool          valid           = std::ranges::any_of(tokens, [&](const auto& sent) { return sent.token == id; });
+                    const auto          surface         = CWLSurfaceResource::fromResource(resource);
+                    const auto          launch          = launches.find(id);
+                    const auto          originWorkspace = launch != launches.end() ? launch->second.context.workspace.lock() : nullptr;
+                    const auto          window = surface ? Desktop::viewState()->query().type(Desktop::View::VIEW_TYPE_WINDOW).surface(surface).runWindow() : nullptr;
+                    spaces::CSpaceScope spaceScope(window && window->m_isMapped ? spaces::owner(window->m_workspace)
+                                                   : originWorkspace            ? spaces::owner(originWorkspace)
+                                                                                : "");
                     // Run native validation and activation unchanged, even for
                     // unsupported or already-existing application windows.
                     native(self, token, resource);
@@ -250,7 +273,15 @@ namespace hyprspace::launch {
             using Fn = void (*)(Desktop::View::CWindow*);
             // Reading this exact process's environment does not consume the
             // next arbitrary window and does not affect existing processes.
-            const auto env = self->getEnv();
+            const auto env      = self->getEnv();
+            const auto origin   = env.find("HYPRSPACE_SPACE_ID");
+            auto       originId = origin == env.end() ? "" : origin->second;
+            if (const auto token = env.find("HYPRSPACE_LAUNCH_TOKEN"); token != env.end())
+                if (const auto launch = launches.find(token->second); launch != launches.end()) {
+                    const auto capturedWorkspace = launch->second.context.workspace.lock();
+                    originId                     = capturedWorkspace ? spaces::owner(capturedWorkspace) : launch->second.context.space;
+                }
+            spaces::CSpaceScope spaceScope(originId);
             reinterpret_cast<Fn>(mapHook->m_original)(self);
             const auto w = self->m_self.lock();
             if (const auto it = env.find("HYPRSPACE_LAUNCH_TOKEN"); it != env.end())
@@ -267,7 +298,20 @@ namespace hyprspace::launch {
         Env launchEnv(Config::Supplementary::CExecutor* self, PHLWORKSPACE ws) {
             using Fn = Env (*)(Config::Supplementary::CExecutor*, PHLWORKSPACE);
             auto env = reinterpret_cast<Fn>(envHook->m_original)(self, ws);
-            if (const auto token = consume(capture(commandTarget)); !token.empty()) {
+            if (spaces::enabled())
+                env.emplace_back("HYPRSPACE_SPACE_ID", ws ? spaces::owner(ws) : spaces::activeId());
+            auto       target  = commandTarget;
+            const bool desktop = spaces::enabled() && !spaces::nativeDefault() && !session().live();
+            if (!target && desktop) {
+                const auto monitor     = ws ? ws->m_monitor.lock() : Desktop::focusState()->monitor();
+                const auto destination = ws ? ws : monitor ? monitor->m_activeWorkspace : nullptr;
+                if (destination && monitor) {
+                    const auto box = monitor->logicalBoxMinusReserved();
+                    target =
+                        SOverviewTarget{.workspace = {destination->m_id, destination->m_name}, .monitor = monitor, .desktop = {box.x + box.w / 2, box.y + box.h / 2}};
+                }
+            }
+            if (const auto token = consume(capture(target, desktop)); !token.empty()) {
                 // Do not let a stale initial-workspace token compete with
                 // explicit window rules. Placement follows native rule parsing.
                 for (const auto& [name, value] : env)
@@ -292,7 +336,121 @@ namespace hyprspace::launch {
             return env;
         }
 
+        nlohmann::json spaceStatus() {
+            const auto     state = spaces::snapshot();
+            nlohmann::json result{{"type", "spaces"},
+                                  {"schema", 1},
+                                  {"enabled", state.value("enabled", false)},
+                                  {"active", state.value("active", std::string{})},
+                                  {"generation", state.value("generation", uint64_t{0})},
+                                  {"spaces", nlohmann::json::array()},
+                                  {"workspaces", nlohmann::json::array()},
+                                  {"monitors", nlohmann::json::array()}};
+            const auto     focused = Desktop::focusState()->monitor();
+            for (const auto& space : state.at("spaces")) {
+                size_t windows = 0, occupied = 0;
+                for (const auto& workspace : space.at("workspaces")) {
+                    const auto count = workspace.value("windows", size_t{0});
+                    windows += count;
+                    occupied += count > 0 && !workspace.value("special", false);
+                    if (!space.value("active", false))
+                        continue;
+                    auto       value   = workspace;
+                    const auto native  = State::workspaceState()->query().id(workspace.at("native_id").get<int64_t>()).run();
+                    const auto monitor = valid(native) ? native->m_monitor.lock() : nullptr;
+                    const bool visible = monitor && (monitor->m_activeWorkspace == native || monitor->m_activeSpecialWorkspace == native);
+                    value["active"]    = visible;
+                    value["visible"]   = visible;
+                    value["focused"]   = visible && monitor == focused;
+                    value["occupied"]  = count > 0;
+                    result["workspaces"].push_back(std::move(value));
+                }
+                result["spaces"].push_back({{"id", space.at("id")},
+                                            {"name", space.at("name")},
+                                            {"icon", space.value("icon", "grid")},
+                                            {"color", space.value("color", "#89b4fa")},
+                                            {"active", space.at("active")},
+                                            {"windows", windows},
+                                            {"occupied_workspaces", occupied}});
+            }
+            for (const auto& monitor : State::monitorState()->monitors()) {
+                if (!monitor || !monitor->m_enabled || monitor->isMirror())
+                    continue;
+                const auto  workspace = monitor->m_activeWorkspace;
+                std::string identity;
+                if (workspace)
+                    for (const auto& value : result["workspaces"])
+                        if (value["native_id"] == workspace->m_id) {
+                            identity = value["id"].get<std::string>();
+                            break;
+                        }
+                result["monitors"].push_back({{"name", monitor->m_name},
+                                              {"workspace_uuid", identity},
+                                              {"number", workspace && spaces::inActive(workspace) ? spaces::localNumber(workspace) : 0},
+                                              {"focused", monitor == focused}});
+            }
+            return result;
+        }
+
+        std::string workspaceRequest(const std::string& text) {
+            const auto reply = [](bool success, const std::string& error = "") { return nlohmann::json{{"success", success}, {"error", error}}.dump(); };
+            try {
+                const auto value = nlohmann::json::parse(text);
+                if (!value.is_object() || !value.contains("space") || !value["space"].is_string() || !value.contains("monitor") || !value["monitor"].is_string() ||
+                    !value.contains("workspace") || !value["workspace"].is_string())
+                    return reply(false, "Expected space, monitor and workspace strings");
+                if (!overlaysAllowed())
+                    return reply(false, "Session is locked");
+                if (!spaces::enabled())
+                    return reply(false, "Spaces are disabled");
+                if (value["space"].get<std::string>() != spaces::activeId())
+                    return reply(false, "The active space changed; refresh the workspace strip");
+                const auto monitor = State::monitorState()->query().name(value["monitor"].get<std::string>()).run();
+                if (!monitor || !monitor->m_enabled || monitor->isMirror())
+                    return reply(false, "Monitor is not connected");
+                const auto selector = value["workspace"].get<std::string>();
+                if (selector.empty() || selector.size() > 256 || selector.find_first_of("\n\r\0", 0, 3) != std::string::npos || selector.starts_with("name:hyprspace:") ||
+                    selector.starts_with("special:hyprspace:"))
+                    return reply(false, "Invalid local workspace selector");
+                const auto previous = Desktop::focusState()->monitor();
+                (void)Config::Actions::focusMonitor(monitor);
+                const auto destination = getWorkspaceIDNameFromString(selector);
+                if (destination.id == WORKSPACE_INVALID) {
+                    if (previous)
+                        (void)Config::Actions::focusMonitor(previous);
+                    return reply(false, "Workspace does not resolve inside the active space");
+                }
+                const auto native = State::workspaceState()->query().id(destination.id).run();
+                if (valid(native) && !spaces::inActive(native)) {
+                    if (previous)
+                        (void)Config::Actions::focusMonitor(previous);
+                    return reply(false, "Workspace belongs to another space");
+                }
+                // Clicking the selected slot is idempotent, even when native
+                // workspace back-and-forth is enabled.
+                if (valid(native) && native->m_monitor && native->m_monitor->m_activeWorkspace == native) {
+                    (void)Config::Actions::focusMonitor(native->m_monitor.lock());
+                    // No native workspace event fires for an active slot.
+                    // Its click must still replace a hovered overview target.
+                    if (session().live() && !session().gestureActive() && !session().pendingResize)
+                        session().followKeyboardFocus();
+                    return reply(true);
+                }
+                const auto dispatcher = g_pKeybindManager->m_dispatchers.find("workspace");
+                if (dispatcher == g_pKeybindManager->m_dispatchers.end())
+                    return reply(false, "Workspace dispatcher is unavailable");
+                const auto result = dispatcher->second(selector);
+                return reply(result.success, result.error);
+            } catch (const std::exception& error) {
+                return reply(false, error.what());
+            }
+        }
+
         std::string request(const std::string& line) {
+            if (line == "spaces")
+                return spaceStatus().dump();
+            if (line.starts_with("workspace "))
+                return workspaceRequest(line.substr(10));
             if (line == "active")
                 return session().live() && overlaysAllowed() ? "1" : "";
             if (line == "capture")
@@ -301,6 +459,9 @@ namespace hyprspace::launch {
                 return consume(line.substr(8));
             if (line == "status") {
                 nlohmann::json result{{"live", session().live()}, {"dragging", session().gestureActive()}, {"views", nlohmann::json::array()}};
+                result["spaces"]             = spaces::snapshot();
+                result["space_selector"]     = spaceSelector().inspect();
+                result["input"]              = inputController().inspect();
                 result["modifiers"]          = g_pInputManager->getModsFromAllKBs();
                 result["keyboard_owned"]     = hooks::keyboardOwned();
                 result["cursor_owned"]       = session().cursorOwned();
@@ -532,6 +693,7 @@ namespace hyprspace::launch {
                 }
                 const auto& captures = captureResources();
                 const auto& tex      = CTextureCache::resources();
+                const auto& filters  = previewFilterResources();
                 diagnostics::enable(config::diagnosticsEnabled());
                 result["diagnostics"] = diagnostics::snapshot();
                 result["resources"]   = {{"captures",
@@ -546,6 +708,16 @@ namespace hyprspace::launch {
                                            {"fallbacks", captures.fallbacks},
                                            {"previous", captures.previous},
                                            {"omitted", captures.omitted}}},
+                                         {"preview_filter",
+                                          {{"mode", config::overviewPreviewFilter()},
+                                           {"entries", filters.entries},
+                                           {"bytes", filters.bytes},
+                                           {"peak_bytes", filters.peakBytes},
+                                           {"passes", filters.passes},
+                                           {"hits", filters.hits},
+                                           {"allocations", filters.allocations},
+                                           {"animated_bypasses", filters.animatedBypasses},
+                                           {"failures", filters.failures}}},
                                          {"textures",
                                           {{"entries", textures().size()},
                                            {"peak_entries", tex.peakEntries},
@@ -560,8 +732,10 @@ namespace hyprspace::launch {
                 result["windows"]     = nlohmann::json::array();
                 for (const auto& w : Desktop::windowState()->windows())
                     if (w->m_isMapped)
-                        result["windows"].push_back(
-                            {{"address", std::format("0x{:x}", reinterpret_cast<uintptr_t>(w.get()))}, {"alpha", w->alpha(Desktop::View::WINDOW_ALPHA_FADE)->goal()}});
+                        result["windows"].push_back({{"address", std::format("0x{:x}", reinterpret_cast<uintptr_t>(w.get()))},
+                                                     {"alpha", w->alpha(Desktop::View::WINDOW_ALPHA_FADE)->goal()},
+                                                     {"suspended", w.get()->*member(SSuspended{})},
+                                                     {"space", spaces::owner(w->m_workspace)}});
                 return result.dump();
             }
             return {};
@@ -569,7 +743,7 @@ namespace hyprspace::launch {
 
         int onClient(int fd, uint32_t mask, void* data) {
             auto*      client = static_cast<SClient*>(data);
-            char       buffer[256];
+            char       buffer[8192];
             const auto count = recv(fd, buffer, sizeof(buffer), MSG_DONTWAIT);
             if (count < 0 && errno == EAGAIN && !(mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)))
                 return 0;
@@ -599,6 +773,10 @@ namespace hyprspace::launch {
                     close(peer);
                     continue;
                 }
+                // Live preview diagnostics can exceed the kernel's default
+                // single-packet send budget.
+                const int replyBudget = 1024 * 1024;
+                setsockopt(peer, SOL_SOCKET, SO_SNDBUF, &replyBudget, sizeof(replyBudget));
                 auto client    = std::make_unique<SClient>(SClient{peer, nullptr, Clock::now() + std::chrono::seconds(2)});
                 client->source = wl_event_loop_add_fd(g_pCompositor->m_wlEventLoop, peer, WL_EVENT_READABLE, onClient, client.get());
                 if (!client->source) {
@@ -675,6 +853,8 @@ namespace hyprspace::launch {
                 },
                 nullptr);
             g_pEventLoopManager->addTimer(timer);
+            if (g_pEventManager)
+                g_pEventManager->postEvent({.event = "custom", .data = "hyprspace:ready"});
         } catch (...) {
             uninstall();
             throw;
@@ -708,5 +888,7 @@ namespace hyprspace::launch {
             unlink(socketPath.c_str());
         socketBound = false;
         socketFd    = -1;
+        if (g_pEventManager)
+            g_pEventManager->postEvent({.event = "custom", .data = "hyprspace:unavailable"});
     }
 } // namespace hyprspace::launch

@@ -4,6 +4,7 @@
 #include "Raster.hpp"
 #include "SearchInput.hpp"
 #include "WindowViewModel.hpp"
+#include "InputModel.hpp"
 
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
@@ -15,6 +16,14 @@ namespace hyprspace {
 
     class CWindowBoard {
       public:
+        struct SInputSnapshot {
+            CSearchInput    search;
+            EWindowGrouping grouping = EWindowGrouping::FLAT;
+            bool            recent   = false;
+            PHLWINDOWREF    selected;
+            double          scroll = 0;
+            EInputMode      mode   = EInputMode::Normal;
+        };
         explicit CWindowBoard(COverviewSession& owner);
         ~CWindowBoard();
         bool active() const {
@@ -79,14 +88,19 @@ namespace hyprspace {
             return m_mousePan || m_keyboardPan;
         }
 
+        SInputContext  inputContext() const;
+        bool           perform(EInputAction action);
+        void           setInputMode(EInputMode mode);
+        void           editInput(ETextAction action, bool extend = false);
+        void           insertText(const std::string& text);
+        SInputSnapshot snapshotInput() const;
+        void           restoreInput(const SInputSnapshot& snapshot);
+
         void                           enter(PHLMONITOR monitor, std::optional<EWindowGrouping> grouping = std::nullopt);
         void                           leave();
         void                           refresh();
         void                           cycleGrouping();
         void                           setGrouping(EWindowGrouping grouping);
-        static bool                    searchShortcut(xkb_keysym_t sym, uint32_t mods, const std::string& text);
-        bool                           reservesKey(xkb_keysym_t sym, uint32_t mods, const std::string& text) const;
-        void                           onKey(xkb_keysym_t sym, uint32_t mods, const std::string& text);
         void                           pointer(const Vector2D& pos, bool userMotion);
         void                           button(uint32_t button, bool pressed, uint32_t mods, const Vector2D& pos);
         void                           scroll(const SScrollInput& event, const Vector2D& pos);
@@ -125,6 +139,7 @@ namespace hyprspace {
         void                           focusSearch();
         void                           blurSearch();
         void                           clearSearch();
+        void                           searchChanged(const std::string& previous);
         void                           resetCaret();
         void                           stopCaret();
         const STextCursor&             searchMetrics() const;

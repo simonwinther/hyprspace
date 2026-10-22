@@ -1,8 +1,6 @@
 name: Release Please
 
 on:
-  push:
-    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -26,6 +24,7 @@ jobs:
         id: release
         with:
           token: ${{ github.token }}
+          target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
       - name: Start checks on release PR heads

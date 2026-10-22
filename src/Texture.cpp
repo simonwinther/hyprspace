@@ -2,6 +2,8 @@
 
 #include "DesktopDb.hpp"
 #include "Config.hpp"
+#include "SpaceAppearance.hpp"
+#include "SpaceIcons.hpp"
 
 #include <hyprland/src/render/Renderer.hpp>
 
@@ -150,6 +152,22 @@ namespace hyprspace {
         }
         ++resourceCounts.misses;
         return store(key, renderInputText(text, font, toRgba(color), width, offset, scale, selectionStart, selectionEnd, toRgba(selectionColor)));
+    }
+
+    SP<Render::ITexture> CTextureCache::spaceIcon(const std::string& icon, const CHyprColor& color, int size) {
+        if (size <= 0 || size > MAX_SPACE_ICON_SIZE)
+            return nullptr;
+        const auto symbol = spaces::validSpaceIcon(icon) ? std::string_view(icon) : spaces::DEFAULT_SPACE_ICON;
+        const auto key    = std::format("s|{}|{:08x}|{}", symbol, color.getAsHex(), size);
+        if (auto found = m_cache.find(key); found != m_cache.end()) {
+            found->second.used = ++m_sequence;
+            ++resourceCounts.hits;
+            return found->second.texture;
+        }
+        ++resourceCounts.misses;
+        if (std::chrono::steady_clock::now() < m_retryAfter)
+            return nullptr;
+        return store(key, renderSpaceIcon(symbol, toRgba(color), size));
     }
 
     namespace {

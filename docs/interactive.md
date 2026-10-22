@@ -6,42 +6,64 @@ mapped from the visible preview. Empty active and configured persistent
 workspaces are included. Monitor offsets, scale, rotation, reserved areas and
 separated fullscreen previews are part of that mapping.
 
-Unmodified **middle-click**, **N**, or the per-output **+ Empty workspace** control
-selects an empty normal workspace on the pointer's output, reusing a prepared or active
-empty workspace before another local empty workspace or a free positive ID.
-Selection keeps the overview open without changing native workspace or focus. The session holds
-prepared workspaces until dismissal and includes them in collection. Enter,
-launching and committed drops establish the native destination normally.
-Empty named normal workspaces can be reused; new workspaces receive numeric IDs.
-Special, remote and incompatible monitor-bound workspaces are excluded;
-unsupported conditional monitor assignments prevent fresh allocation.
+HyperSpace opens through the existing overview binding in Normal mode. The
+shared input model resolves keys into semantic actions before a view handles
+selection or text. `hjkl`/arrows navigate, `gg/G` select first/last, and Space
+opens a visible command prefix. `Space s` opens the spaces chooser,
+`Space v/w` selects windows/workspaces, and `Space ?` opens
+help. `Space e/a/d` edits, creates or removes a space. `Space m` moves the selected
+window to a space; `Space Shift+M` moves its entire workspace. Both work from the
+workspace grid and window board. The destination picker starts with the requested
+transfer type and retains an explicit type switch. `Space n/x` prepares or closes
+an empty workspace. `Space g/r` changes window grouping/recency.
+The prefix is cancelled by Escape, an unknown suffix or a context change.
 
-The experimental **G** view shows a global window board on one covered output.
-Its presentation host is independent of the selected window's native monitor
-and workspace. All windows, Apps, Workspaces and Monitors are different layouts
-of the same weak window identities, with search and optional frozen recency
-order. Rendering reuses each source output's existing capture; it does not
-create a second capture cache. Native dispatchers, launches and commits retain
-the original window/workspace and mapped desktop point.
+`/` starts Insert search; from the workspace grid it opens flat window search.
+Printable text, including hjkl, spaces and digits, is literal in Insert.
+Enter or Escape returns to Normal without clearing the query. `i` resumes
+editing. Normal Enter accepts a result; Normal Escape returns through UI parents
+before closing the root overview. Opening another search snapshots the prior
+board's query, selection, grouping, order and scroll. The return stack is bounded
+and deduplicates identical frames.
 
-The board owns printable input only while its search field has focus. Reserved
-presses keep per-device leases through repeats, remapping, dismissal and
-foreground handoff. Navigation and Backspace repeat at the keyboard's configured
-rate; G, grouping changes, recent order, Enter and Escape act once per press.
-Search activation uses the layout's resolved / character, including Danish
-Shift+7, before interpreting an unshifted digit as a workspace shortcut.
-The field keeps UTF-8 cursor and selection offsets, and uses Pango's shaped
-positions for its caret and pointer hit testing. Input text is clipped and
-scrolled instead of ellipsised. A timer owned by the board blinks the caret without
-recreating text textures, stops on blur/dismissal/unload, and paints only while
-the board owns keyboard input. Left/Right and Home/End edit the focused query;
-Up/Down and Tab continue browsing results.
-Generations prevent an old held key from editing a reopened board. Inspection
-uses the existing bounded zoom/pan model fitted to the selected window. Window
-and workspace drags remain in the workspace view. N and middle-click return to
-that view before preparing an empty destination.
+The space editor starts in Normal for Edit and Name Insert for Create. Tab
+reaches Name, Icon, Color, Cancel and Save. In Normal, hjkl/arrows choose icons
+and colors; `i` edits Name. Enter/Escape finishes Insert, and Ctrl+Enter saves the
+whole editor. A child dialog returns to its chooser with filter and selection
+preserved. Help can overlay an unsaved editor; it retains the draft and global
+view commands stay suspended until that form is left. Actual space
+switches intentionally return to the workspace canvas in Normal mode.
 
-The local `status` reply includes `window_board` with the display output,
+The spaces chooser supports Unicode filtering and Normal/Insert editing.
+Escape traverses UI parents while preserving their search and selection state.
+
+Middle-click, `Space n`, or **+ New workspace** selects an empty normal
+workspace on the pointer's output, reusing an empty workspace before allocating
+a free local number. It leaves the overview open and native desktop unchanged
+until a commit, launch or drop establishes that destination. Prepared workspaces
+stay alive until dismissal. Special workspaces and incompatible monitor rules
+are excluded.
+
+The window board displays the active space's windows from all covered outputs
+on one presentation output. Its display host is independent of source monitors
+and workspaces. Flat, App, Workspace and Monitor grouping share weak window
+identities, bounded captures, search and optional frozen recency. Native actions
+and commits continue to target the original source window/workspace.
+
+Captured keys retain their per-device release route through mode/focus changes,
+configuration reload, dismissal and foreground handoff. The shared context epoch
+invalidates repeats when the context, input mode or focused field changes; a held
+arrow cannot begin changing a newly focused color field. Navigation and text
+editing repeat at the emitting keyboard's delay/rate, while accepts, prefixes
+and destructive commands act once per press. Search uses the keyboard layout's
+resolved character, including Danish Shift+7, before numeric shortcuts.
+Text fields retain bounded UTF-8 cursor/selection offsets and shaped Pango caret
+positions, clipping and scrolling instead of ellipsising user input.
+
+The local `status` reply includes `input` (context, mode, field, epoch, prefix,
+parents and available commands) and `space_selector` (focus, query, parent depth
+and editor draft). It also includes
+`window_board` with the display output,
 grouping, order, search, selected native window, viewport, scroll position and
 preview geometry. See the [controls](guide.md#experimental-window-board) and
 [experiment verification](verification/2026-10-10-window-views.md).
@@ -79,7 +101,7 @@ modal after the workspace/window view, inside usable output space; other covered
 outputs remain dimmed. Offset, rotated and fractional-scale outputs use logical
 bounds and native-resolution text. Smaller outputs use a compact layout.
 
-`overview:help_key` controls the shortcut. `hyprspace:help` and
+`overview:help_key` supplies an optional alias; `?` and `Space ?` remain standard commands. `hyprspace:help` and
 `hl.plugin.hyprspace.help()` accept `on`, `off`, `toggle` or no argument and require
 an open overview. Status exposes the help host, input generation, query/cursor,
 topic, selected entry, filtered controls and global panel/search/result bounds.
@@ -95,7 +117,7 @@ the native layer renderer above the overview. A scoped native hit-test adapter
 promotes those panels during pointer routing, then restores the compositor's layer
 lists and fullscreen policy. Popup and grab handling stays native.
 
-Unmodified navigation, N and Shift+Tab stay with the overview. Other keys pass once
+Shared Normal/Insert commands stay with the overview. Unreserved native keys pass once
 through the real keybinding matcher. Device maps, modifiers, repeats, releases and
 submaps stay under native control. The chosen workspace/window is established
 before running an action; native focus warps are suppressed during that action.
@@ -106,14 +128,11 @@ modifier notifications and focus-enter delivery. IME modifier forwarding is also
 suppressed during ownership; native focus and modifiers resume on dismissal,
 handoff or unload, respecting lock and grab restrictions.
 
-`overview:empty_workspace_key` accepts an XKB key name or an empty value to
-disable the shortcut. Zoom retains precedence when both configured keys match.
-The empty-workspace action has a separate first-press route, targeting the
-pointer's monitor independently of keyboard selection. Its captured repeats and
-release stay consumed across remapping, reload, dismissal and foreground handoff.
-Modified keys and first presses outside overview keyboard ownership retain native
-routing. `hyprspace:emptyworkspace` and `hl.plugin.hyprspace.emptyworkspace()`
-expose the same action, require an open overview and accept no arguments.
+`overview:empty_workspace_key`, `overview:window_view_key` and
+`overview:close_workspace_key` are deprecated compatibility options; the shared
+`Space n/v/x` commands replace them. They do not remap the leader table.
+`hyprspace:emptyworkspace` and `hl.plugin.hyprspace.emptyworkspace()` remain
+available, require an open overview and accept no arguments.
 
 Unmodified middle-click prepares the same destination while the overview owns
 pointer input on a covered output. It does not move the cursor or change the
@@ -133,8 +152,7 @@ disables all extra magnification and panning controls and restores native scroll
 `overview:follow_key` selects the cursor-follow toggle key (default F; empty
 disables the shortcut), and `overview:show_follow_hint = false` hides its status
 without changing the saved preference. Navigation, modifier, system and
-inspection zoom/pan keys cannot replace the follow shortcut. Existing zoom,
-empty-workspace and window-view shortcuts take precedence when keys match.
+inspection zoom/pan keys cannot replace the follow shortcut. The zoom shortcut takes precedence on a conflicting follow key.
 Magnified follow accepts motion across the full inspection output, including
 corners and reserved panel areas. It retains pointer ownership over ordinary
 Waybar surfaces while enabled, with native ownership restored when follow or
@@ -159,7 +177,7 @@ resize remains available outside the grab.
 F while Z is held enables or disables cursor-follow, initially disabled. The
 preference survives overview openings and is saved in the user's XDG state
 directory so plugin reloads and compositor restarts restore the same choice.
-Both workspace and G-view inspection map real pointer position to the bounded
+Both workspace and window-board inspection map real pointer position to the bounded
 pan range during zoom and opening animations. Follow steers the lens destination
 without replacing the animation's starting camera or requested scale. Wheel and
 touchpad bursts retain pending motion, and held zoom keys allow simultaneous
@@ -269,6 +287,15 @@ bindings capture through the synchronous dispatcher scope. The destination is
 frozen before asynchronous execution. The helper installs per-child
 `HYPRSPACE_LAUNCH_TOKEN` and `XDG_ACTIVATION_TOKEN`; it never changes compositor,
 launcher-service or global environments.
+
+The helper is built from `contrib/launch-helper` with Rust/Cargo. `make assets`
+builds it, and `make install-assets` updates the installed helper and service
+shims independently of the C++ plugin. Each request retains one
+[`SOCK_SEQPACKET`](https://man7.org/linux/man-pages/man7/unix.7.html) message
+boundary and a 300 ms socket deadline; disconnected, invalid, or oversized
+replies fall back to normal launching. Application arguments and environment
+values retain their original bytes, and the helper replaces itself with the
+requested application using `exec`.
 
 A new process can correlate its mapped window through its launch environment.
 For an existing process, the plugin wraps native XDG activation callbacks and

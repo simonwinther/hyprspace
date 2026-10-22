@@ -1,4 +1,6 @@
 #include "Overview.hpp"
+#include "InputModel.hpp"
+#include "SpaceStyle.hpp"
 
 #include "Access.hpp"
 #include "Config.hpp"
@@ -10,6 +12,8 @@
 #include "OverviewLayout.hpp"
 #include "PassElements.hpp"
 #include "PreviewStyle.hpp"
+#include "Spaces.hpp"
+#include "SpaceSelector.hpp"
 #include "Texture.hpp"
 
 #include <hyprland/src/Compositor.hpp>
@@ -27,8 +31,6 @@
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/render/pass/BorderPassElement.hpp>
-#include <hyprland/src/render/pass/RectPassElement.hpp>
 #include <hyprland/src/render/pass/TexPassElement.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
 
@@ -118,8 +120,9 @@ namespace hyprspace {
         const bool SPECIAL = config::overviewIncludeSpecial();
 
         // Empty active and persistent workspaces are valid destinations too.
-        for (const auto& ws : State::workspaceState()->workspacesCopy()) {
-            if (!ws || ws->m_monitor != MONITOR || (ws->m_isSpecialWorkspace && !SPECIAL))
+        for (const auto& reference : spaces::workspaceRefs()) {
+            const auto ws = reference.lock();
+            if (!ws || !spaces::inActive(ws) || ws->m_monitor != MONITOR || (ws->m_isSpecialWorkspace && !SPECIAL) || config::overviewExcludesWorkspace(ws->m_name))
                 continue;
             if (session().dismissedWorkspace(ws))
                 continue;
@@ -129,22 +132,24 @@ namespace hyprspace {
                 continue;
             SEntry entry;
             entry.workspaceId   = ws->m_id;
+            entry.localNumber   = spaces::localNumber(ws);
             entry.workspaceName = ws->m_name;
-            entry.name          = workspaceLabel(ws->m_id, ws->m_name);
+            entry.name          = spaces::label(ws);
             entry.isActive      = ws == MONITOR->m_activeWorkspace || ws == MONITOR->m_activeSpecialWorkspace;
             m_entries.push_back(std::move(entry));
         }
 
-        for (const auto& w : Desktop::windowState()->windows()) {
+        for (const auto& reference : spaces::windowRefs()) {
+            const auto w = reference.lock();
             if (!w || !w->m_isMapped || w->isHidden())
                 continue;
             if (w->m_monitor.lock() != MONITOR)
                 continue;
 
             const auto WS = w->m_workspace;
-            if (!WS)
+            if (!WS || !spaces::inActive(WS))
                 continue;
-            if (WS->m_isSpecialWorkspace && !SPECIAL)
+            if ((WS->m_isSpecialWorkspace && !SPECIAL) || config::overviewExcludesWorkspace(WS->m_name))
                 continue;
 
             const auto SIZE = w->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
@@ -155,8 +160,9 @@ namespace hyprspace {
             if (it == m_entries.end()) {
                 SEntry e;
                 e.workspaceId   = WS->m_id;
+                e.localNumber   = spaces::localNumber(WS);
                 e.workspaceName = WS->m_name;
-                e.name          = workspaceLabel(WS->m_id, WS->m_name);
+                e.name          = spaces::label(WS);
                 e.isActive      = WS == MONITOR->m_activeWorkspace || WS == MONITOR->m_activeSpecialWorkspace;
                 m_entries.push_back(e);
                 it = std::prev(m_entries.end());
@@ -173,7 +179,10 @@ namespace hyprspace {
             w->setSuspended(false);
         }
 
-        std::ranges::sort(m_entries, [](const SEntry& a, const SEntry& b) { return a.workspaceId < b.workspaceId; });
+        std::ranges::sort(m_entries, [](const SEntry& a, const SEntry& b) {
+            return std::tuple{a.localNumber > 0 ? 0 : 1, a.localNumber, a.name, a.workspaceId} <
+                   std::tuple{b.localNumber > 0 ? 0 : 1, b.localNumber, b.name, b.workspaceId};
+        });
     }
 
     void COverview::refreshWindows() {
@@ -269,7 +278,8 @@ namespace hyprspace {
             return;
         }
 
-        const STileLayoutKey key{m_usable, m_entries.size(), config::overviewPadding(), config::overviewGap(), config::overviewShowLabels()};
+        const STileLayoutKey key{spaceSelector().contentBounds(MONITOR), m_entries.size(), config::overviewPadding(), config::overviewGap(),
+                                 config::overviewShowLabels()};
         if (!m_tileLayoutKey || *m_tileLayoutKey != key) {
             std::vector<STileInput> input;
             input.reserve(m_entries.size());
@@ -277,13 +287,10 @@ namespace hyprspace {
                 input.push_back(STileInput{.key = i, .workspaceId = m_entries[i].workspaceId});
 
             SLayoutParams params;
-            params.screenW = m_usable.w;
-            // The toolbar fits inside the usual outer padding. Reserve only
-            // the missing space for tighter grids, retaining their aspect and
-            // the established single-workspace zoom fit at default settings.
+            params.screenW       = key.usable.w;
             const double toolbar = std::max(0.0, workspaceToolbarHeight() - static_cast<double>(key.padding));
-            params.screenH       = m_usable.h - toolbar;
-            params.padding       = key.padding;
+            params.screenH       = key.usable.h - toolbar;
+            params.padding       = spaces::enabled() ? std::min<double>(key.padding, std::min(key.usable.w, key.usable.h) * .055) : key.padding;
             params.gap           = key.gap;
             params.aspect        = m_usable.h > 0 ? m_usable.w / m_usable.h : 16.0 / 9.0;
             params.labelSpace    = key.labels ? 34.0 : 0.0;
@@ -292,8 +299,8 @@ namespace hyprspace {
             auto result = layout(input, params);
             m_tiles     = std::move(result.tiles);
             for (auto& tile : m_tiles) {
-                tile.box.x += m_usable.x;
-                tile.box.y += m_usable.y + toolbar;
+                tile.box.x += key.usable.x;
+                tile.box.y += key.usable.y + toolbar;
             }
             m_tileLayoutKey = key;
         }
@@ -350,7 +357,7 @@ namespace hyprspace {
     // The entry the commit is about to land on, or -1 if it lands nowhere with
     // a tile of its own.
     int COverview::committedEntry() const {
-        if (m_gotoWorkspace > 0) {
+        if (m_gotoWorkspace != 0) {
             for (size_t i = 0; i < m_entries.size(); ++i) {
                 if (m_entries[i].workspaceId == m_gotoWorkspace)
                     return static_cast<int>(i);
@@ -399,19 +406,22 @@ namespace hyprspace {
         const auto entry = std::ranges::find_if(m_entries, [&](const auto& e) { return workspace == SWorkspaceIdentity{e.workspaceId, e.workspaceName}; });
         if (entry == m_entries.end() || entry->target.w <= 0 || entry->target.h <= 0)
             return false;
-        auto fitted = overviewZoomCamera(entry->target, m_usable, config::overviewPadding(), config::overviewShowLabels() ? 34.0 : 0.0);
+        const auto   bounds  = spaceSelector().contentBounds(monitor());
+        const double toolbar = std::max(0.0, workspaceToolbarHeight() - static_cast<double>(config::overviewPadding()));
+        const SBoxF  content{bounds.x, bounds.y + toolbar, bounds.w, bounds.h - toolbar};
+        auto         fitted = overviewZoomCamera(entry->target, content, config::overviewPadding(), config::overviewShowLabels() ? 34.0 : 0.0);
         // The baseline's scalar animation stores a float; use its exact goal
         // for inspection bounds and identity restoration as well.
         fitted.scale = static_cast<float>(fitted.scale);
         const bool changed =
-            !m_zoomFit || m_zoomFit->workspace != workspace || m_zoomFit->camera != fitted || m_zoomFit->cell != entry->target || m_zoomFit->usable != m_usable;
+            !m_zoomFit || m_zoomFit->workspace != workspace || m_zoomFit->camera != fitted || m_zoomFit->cell != entry->target || m_zoomFit->usable != content;
         if (changed || !config::overviewWheelZoom() || !m_inspection.goalFits(fitted.apply(entry->target))) {
             session().pauseCursorFollow();
             session().cancelPan();
             foldInspection();
         }
         if (changed)
-            m_zoomFit = SZoomFit{workspace, fitted, entry->target, m_usable};
+            m_zoomFit = SZoomFit{workspace, fitted, entry->target, content};
         const auto scale  = static_cast<float>(fitted.scale);
         const auto offset = Vector2D{fitted.x, fitted.y};
         // Called during live geometry refresh as well as keyboard navigation.
@@ -669,11 +679,11 @@ namespace hyprspace {
         return {view.apply(raw.box), view.apply(raw.clip)};
     }
 
-    SWorkspacePreviewStyle COverview::styleFor(const SEntry& entry, bool selected) const {
+    SWorkspacePreviewStyle COverview::styleFor(const SEntry& entry) const {
         const bool anchor = m_animationAnchor >= 0 && &entry == &m_entries[m_animationAnchor];
         if (m_closing)
             return closingWorkspacePreviewStyle(entry.closeStyle, anchor, m_progress->value());
-        return workspacePreviewStyle(anchor, selected, overviewProgress());
+        return workspacePreviewStyle(anchor, overviewProgress());
     }
 
     float COverview::visibilityFor(const SEntry& entry, const SWindowSlot& slot) const {
@@ -684,8 +694,7 @@ namespace hyprspace {
         const auto desktop = window->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN);
         if (m_closing)
             return closingWindowPreviewVisibility(slot.closeVisibility, desktop, anchor, m_progress->value());
-        const bool selected = m_selected >= 0 && m_selected < static_cast<int>(m_tiles.size()) && &entry == &m_entries[m_tiles[m_selected].key];
-        return styleFor(entry, selected).windowVisibility * overviewWindowVisibility(desktop, anchor, overviewProgress());
+        return styleFor(entry).windowVisibility * overviewWindowVisibility(desktop, anchor, overviewProgress());
     }
 
     void COverview::selectIndex(int idx) {
@@ -707,9 +716,8 @@ namespace hyprspace {
         // start from exactly the displayed frame, including old anchor opacity.
         m_closeStartProgress = overviewProgress();
         for (auto& entry : m_entries) {
-            const bool selected = m_selected >= 0 && m_selected < static_cast<int>(m_tiles.size()) && &entry == &m_entries[m_tiles[m_selected].key];
-            entry.closeCell     = displayedCell(entry);
-            entry.closeStyle    = styleFor(entry, selected);
+            entry.closeCell  = displayedCell(entry);
+            entry.closeStyle = styleFor(entry);
             for (auto& slot : entry.windows) {
                 slot.closeGeometry   = geometryFor(entry, slot);
                 slot.closeVisibility = visibilityFor(entry, slot);
@@ -724,11 +732,11 @@ namespace hyprspace {
             // A missing local tile fades into an empty destination. A request
             // on an uncovered output leaves this output's original anchor intact.
             const int  ANCHOR            = committedEntry();
-            const auto REQUESTED         = m_gotoWorkspace > 0 ? State::workspaceState()->query().id(m_gotoWorkspace).run() : nullptr;
+            const auto REQUESTED         = m_gotoWorkspace != 0 ? State::workspaceState()->query().id(m_gotoWorkspace).run() : nullptr;
             const auto REQUESTED_MONITOR = REQUESTED
                                                ? REQUESTED->m_monitor.lock()
-                                               : (m_gotoWorkspace > 0 ? Config::workspaceRuleMgr()->getBoundMonitorForWS(std::to_string(m_gotoWorkspace)) : nullptr);
-            const bool SWITCHING         = m_gotoWorkspace > 0 && (!REQUESTED_MONITOR || REQUESTED_MONITOR == m_monitor);
+                                               : (m_gotoWorkspace != 0 ? Config::workspaceRuleMgr()->getBoundMonitorForWS(std::to_string(m_gotoWorkspace)) : nullptr);
+            const bool SWITCHING         = m_gotoWorkspace != 0 && (!REQUESTED_MONITOR || REQUESTED_MONITOR == m_monitor);
 
             if (ANCHOR >= 0 || SWITCHING)
                 anchorAnimation(ANCHOR);
@@ -792,7 +800,7 @@ namespace hyprspace {
 
         // A number key naming a workspace with no tile of its own still goes
         // there — it is just empty, and Hyprland creates it as needed.
-        if (m_gotoWorkspace > 0) {
+        if (m_gotoWorkspace != 0) {
             // Resolve the workspace itself so native focus cannot reinterpret
             // this exact choice through workspace_back_and_forth. Existing
             // workspaces keep their owning output; a fresh empty workspace
@@ -865,23 +873,12 @@ namespace hyprspace {
 
     // ---------------------------------------------------------------- input --
 
-    bool COverview::onKey(xkb_keysym_t sym, uint32_t mods, bool pressed) {
-        if (!pressed)
-            return true; // swallow releases too while we hold the grab
-
-        // The carried workspace remains the command target until release.
-        // Native shortcuts are routed before this overview key handler.
-        if (session().workspaceDrag && sym != XKB_KEY_Escape)
-            return true;
-
+    bool COverview::perform(EInputAction action) {
         m_scroll.reset();
-        const bool SHIFT = mods & HL_MODIFIER_SHIFT;
-
         auto move = [&](EDirection dir) {
             m_clickedWindow.reset();
             selectIndex(navigate(m_tiles, m_selected, dir));
         };
-
         auto cycle = [&](int delta) {
             if (m_tiles.empty())
                 return;
@@ -889,77 +886,50 @@ namespace hyprspace {
             const int n = static_cast<int>(m_tiles.size());
             selectIndex(((m_selected + delta) % n + n) % n);
         };
-
-        switch (sym) {
-        case XKB_KEY_Escape:
-            if (session().gestureActive())
-                session().cancelDrag();
-            else
-                close(false);
-            return true;
-
-        case XKB_KEY_Return:
-        case XKB_KEY_KP_Enter:
-        case XKB_KEY_s:
-        case XKB_KEY_space:
+        switch (action) {
+        case EInputAction::Accept:
             close(true);
             return true;
-
-        case XKB_KEY_Tab:
-            cycle(SHIFT ? -1 : 1);
+        case EInputAction::NextField:
+            cycle(1);
             return true;
-        case XKB_KEY_ISO_Left_Tab:
+        case EInputAction::PrevField:
             cycle(-1);
             return true;
-
-        case XKB_KEY_Left:
-        case XKB_KEY_h:
-        case XKB_KEY_H:
+        case EInputAction::MoveLeft:
             move(EDirection::LEFT);
             return true;
-
-        case XKB_KEY_Right:
-        case XKB_KEY_l:
-        case XKB_KEY_L:
+        case EInputAction::MoveRight:
             move(EDirection::RIGHT);
             return true;
-
-        case XKB_KEY_Up:
-        case XKB_KEY_k:
-        case XKB_KEY_K:
+        case EInputAction::MoveUp:
             move(EDirection::UP);
             return true;
-
-        case XKB_KEY_Down:
-        case XKB_KEY_j:
-        case XKB_KEY_J:
+        case EInputAction::MoveDown:
             move(EDirection::DOWN);
             return true;
-
-        case XKB_KEY_Home:
+        case EInputAction::First:
             selectIndex(0);
             return true;
-        case XKB_KEY_End:
+        case EInputAction::Last:
             selectIndex(static_cast<int>(m_tiles.size()) - 1);
             return true;
-
-        case XKB_KEY_Page_Up:
-        case XKB_KEY_Page_Down:
+        case EInputAction::PagePrevious:
+        case EInputAction::PageNext:
             if (m_selected >= 0 && m_selected < static_cast<int>(m_tiles.size()) && scrollingFor(m_entries[m_tiles[m_selected].key]))
                 if (auto target = selectedTarget())
-                    hooks::stepWorkspace(*target, sym == XKB_KEY_Page_Up ? -1 : 1, true);
+                    hooks::stepWorkspace(*target, action == EInputAction::PagePrevious ? -1 : 1, true);
             return true;
-
         default:
-            break;
+            return false;
         }
-
-        // Number keys go straight to that workspace — the same thing Super+N
-        // does on the desktop, so requiring an extra Enter would only be in the
-        // way. The tile is selected first, so the closing animation still zooms
-        // out of the workspace you picked.
-        if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) {
-            const long WANT = workspaceForDigit(static_cast<int>(sym - XKB_KEY_0));
+    }
+    void COverview::workspaceDigit(int digit) {
+        if (digit >= 0 && digit <= 9) {
+            const auto requested = spaces::workspace(workspaceForDigit(digit), monitor());
+            if (!requested)
+                return;
+            const long WANT = requested->m_id;
 
             COverview* destination = this;
             bool       foundTile   = false;
@@ -999,12 +969,8 @@ namespace hyprspace {
             // that source too so it releases the grab and dismisses other views.
             if (destination != this)
                 close(false);
-            return true;
+            return;
         }
-
-        // Everything else is swallowed: the overview owns the keyboard, and there
-        // is deliberately no text entry anywhere in hyprspace.
-        return true;
     }
 
     int COverview::tileAtLocal(const Vector2D& local) const {
@@ -1258,22 +1224,15 @@ namespace hyprspace {
     }
 
     double COverview::workspaceToolbarHeight() const {
-        return std::min(52.0, m_usable.h / 4.0);
+        return spaces::enabled() ? 0 : std::min(52.0, m_usable.h / 4.0);
     }
 
     const COverview::SEmptyWorkspaceButtonText& COverview::emptyWorkspaceButtonText(double scale) const {
-        const auto  font  = config::overviewFont();
-        const auto  label = m_emptyWorkspaceError.empty() ? "Empty workspace" : "Workspace unavailable";
+        const auto font  = config::overviewFont();
+        const auto label = m_emptyWorkspaceError.empty() ? "New workspace" : "Workspace unavailable";
+        // The shared Space command guide owns shortcut labels; avoid a stale
+        // single-key badge on this pointer control.
         std::string keyLabel;
-        const auto  key = config::overviewEmptyWorkspaceKey();
-        if (key != XKB_KEY_NoSymbol && m_emptyWorkspaceError.empty()) {
-            char name[128]{};
-            if (xkb_keysym_get_name(key, name, sizeof(name)) > 0) {
-                keyLabel = name;
-                if (keyLabel.size() == 1)
-                    keyLabel[0] = std::toupper(static_cast<unsigned char>(keyLabel[0]));
-            }
-        }
         if (!m_emptyWorkspaceButtonText || m_emptyWorkspaceButtonText->font != font || m_emptyWorkspaceButtonText->label != label ||
             m_emptyWorkspaceButtonText->key != keyLabel || m_emptyWorkspaceButtonText->scale != scale) {
             // Input and rendering share measured bounds; only remeasure when
@@ -1297,6 +1256,12 @@ namespace hyprspace {
         if (!mon || m_closing || session().workspaceDrag || session().pendingResize || drag.mode == SOverviewDrag::RESIZE ||
             (session().zoomLocked() && drag.mode != SOverviewDrag::MOVE))
             return std::nullopt;
+        if (spaces::enabled()) {
+            auto box = spaceSelector().workspaceButtonBounds(mon);
+            box.x += mon->m_position.x;
+            box.y += mon->m_position.y;
+            return box;
+        }
         const double height       = workspaceToolbarHeight();
         const double inset        = std::min(8.0, height / 4.0);
         const double margin       = std::min(16.0, m_usable.w / 8.0);
@@ -1455,7 +1420,7 @@ namespace hyprspace {
                 updateWindowLayout(e);
             for (auto& slot : e.windows) {
                 const auto W = slot.window.lock();
-                if (!W || !W->m_isMapped || W->isHidden() || !W->m_workspace)
+                if (!W || !W->m_isMapped || W->isHidden() || !W->m_workspace || !spaces::inActive(W->m_workspace))
                     continue;
 
                 // Fullscreen can suspend other clients even on the active workspace.
@@ -1522,10 +1487,8 @@ namespace hyprspace {
         // logical — the render pass scales those itself.)
         auto px = [&](const SBoxF& b) { return CBox{b.x * SCALE, b.y * SCALE, b.w * SCALE, b.h * SCALE}; };
 
-        auto rect = [&](const SBoxF& b, const CHyprColor& col, double round = 0) {
-            out.emplace_back(makeUnique<CRectPassElement>(CRectPassElement::SRectData{.box = px(b), .color = col, .round = static_cast<int>(round * SCALE)}));
-        };
-        auto tex = [&](SP<Render::ITexture> t, const SBoxF& b, float a, double round = 0, std::optional<SBoxF> clip = std::nullopt) {
+        auto rect = [&](const SBoxF& b, const CHyprColor& col, double round = 0) { renderPass::appendSolidFill(out, b, col, SCALE, round); };
+        auto tex  = [&](SP<Render::ITexture> t, const SBoxF& b, float a, double round = 0, std::optional<SBoxF> clip = std::nullopt) {
             CTexPassElement::SRenderData d{.tex = t, .box = px(b), .a = a, .round = static_cast<int>(round * SCALE)};
             if (clip)
                 d.clipBox = px(*clip);
@@ -1533,17 +1496,7 @@ namespace hyprspace {
         };
         auto logicalSize = [&](const SP<Render::ITexture>& t) { return Vector2D{t->m_size.x / SCALE, t->m_size.y / SCALE}; };
 
-        auto border = [&](const SBoxF& b, const CHyprColor& col, double width, double round) {
-            if (width <= 0)
-                return;
-            out.emplace_back(makeUnique<CBorderPassElement>(CBorderPassElement::SBorderData{
-                .box        = px(b),
-                .grad1      = Config::CGradientValueData(col),
-                .round      = static_cast<int>(round * SCALE),
-                .borderSize = std::max(1, static_cast<int>(width * SCALE)),
-                .outerRound = static_cast<int>((round + width) * SCALE),
-            }));
-        };
+        auto border        = [&](const SBoxF& b, const CHyprColor& col, double width, double round) { renderPass::appendOutline(out, b, col, SCALE, width, round); };
         auto windowTexture = [&](const PHLWINDOW& w, SP<Render::ITexture> t, const SBoxF& b, float visibility, double round, bool blur,
                                  std::optional<SBoxF> clip = std::nullopt) {
             const float OPACITY = windowPreviewOpacity(w->alphaValue(Desktop::View::WINDOW_ALPHA_ACTIVE), w->m_ruleApplicator->opaque().valueOrDefault(), visibility);
@@ -1553,7 +1506,9 @@ namespace hyprspace {
                 .tex = t, .box = px(b), .a = OPACITY, .blurA = previewUnit(visibility), .round = static_cast<int>(round * SCALE), .blur = blur};
             if (clip)
                 data.clipBox = px(*clip);
-            out.emplace_back(makeUnique<CWindowPreviewPassElement>(std::move(data), w));
+            // Retain the original sampler during changing-size motion instead
+            // of allocating differently sized filter targets every frame.
+            out.emplace_back(makeUnique<CWindowPreviewPassElement>(std::move(data), w, zoomNavigationReady() && !session().gestureActive()));
         };
 
         const SBoxF MONBOX{0, 0, MONITOR->m_size.x, MONITOR->m_size.y};
@@ -1591,7 +1546,8 @@ namespace hyprspace {
         // independent of its numeric position in the grid's draw order.
         const auto   anchor     = std::ranges::find_if(m_tiles, [&](const auto& tile) { return static_cast<int>(tile.key) == m_animationAnchor; });
         const size_t anchorTile = m_closing && anchor != m_tiles.end() ? static_cast<size_t>(anchor - m_tiles.begin()) : m_tiles.size();
-        for (size_t order = 0; order < m_tiles.size(); ++order) {
+        const bool   emptySpace = spaceSelector().emptySpace() && !m_closing && !session().zoomHeld() && !session().gestureActive();
+        for (size_t order = 0; order < (emptySpace ? 0 : m_tiles.size()); ++order) {
             size_t i = order;
             if (anchorTile < m_tiles.size()) {
                 if (order == m_tiles.size() - 1)
@@ -1619,7 +1575,7 @@ namespace hyprspace {
 
             // The zoom's anchor stays visible all the way to the desktop, also
             // when closing into a different workspace from the original one.
-            const auto STYLE = styleFor(entry, SELECTED);
+            const auto STYLE = styleFor(entry);
             const bool SOURCE =
                 WORKSPACE_CARRIED && workspaceDrag->sourceMonitor == MONITOR && workspaceDrag->identity == SWorkspaceIdentity{entry.workspaceId, entry.workspaceName};
             const float  SOURCE_ALPHA = SOURCE ? 0.28F : 1.F;
@@ -1847,11 +1803,25 @@ namespace hyprspace {
         if (auto button = emptyWorkspaceButton()) {
             button->x -= MONITOR->m_position.x;
             button->y -= MONITOR->m_position.y;
-            const bool   hover    = emptyWorkspaceButtonHit(g_pInputManager->getMouseCoordsInternal());
-            const auto   ink      = hover ? config::overviewActiveBorder() : config::overviewLabelColor();
-            const auto   bg       = config::overviewTitleBgColor();
+            const bool hover      = emptyWorkspaceButtonHit(g_pInputManager->getMouseCoordsInternal());
+            const auto rgba       = [](const CHyprColor& c) { return SRgba{c.r, c.g, c.b, c.a}; };
+            const auto color      = [](const SRgba& c) { return CHyprColor{c.r, c.g, c.b, c.a}; };
+            const auto background = rgba(config::overviewBgColor()), label = rgba(config::overviewLabelColor()), accent = rgba(config::overviewActiveBorder());
+            const std::array<double, 12> colors{background.r, background.g, background.b, background.a, label.r,  label.g,
+                                                label.b,      label.a,      accent.r,     accent.g,     accent.b, accent.a};
+            const auto                   theme = config::spacesTheme();
+            struct SStyle {
+                std::array<double, 12> colors;
+                std::string            theme;
+                spaceStyle::SPalette   palette;
+            };
+            static std::optional<SStyle> cached;
+            if (!cached || cached->colors != colors || cached->theme != theme)
+                cached = SStyle{colors, theme, spaceStyle::palette(background, {}, label, accent, theme)};
+            const auto&  palette = cached->palette;
+            const auto   ink = color(palette.text), bg = color(hover ? palette.hover : palette.surface);
             const double rounding = std::min(10.0, button->h / 2.0);
-            rect(*button, bg.modifyA(bg.a * PROGRESS * (hover ? 1.F : 0.65F)), rounding);
+            rect(*button, bg.modifyA(PROGRESS), rounding);
 
             const auto& text       = emptyWorkspaceButtonText(SCALE);
             double      keyWidth   = 0;
@@ -1865,12 +1835,13 @@ namespace hyprspace {
                 tex(keyTexture, textBox, PROGRESS * 0.65F);
                 keyWidth += 12;
             }
-            const bool   showPlus   = m_emptyWorkspaceError.empty() && button->w >= 80;
+            const bool   showPlus   = m_emptyWorkspaceError.empty() && button->w >= 24;
             const double titleInset = showPlus ? 30 : 12;
             if (showPlus) {
-                const auto color = ink.modifyA(ink.a * PROGRESS * (hover ? 1.F : 0.7F));
-                rect({button->x + 12, button->cy() - 0.75, 10, 1.5}, color, 0.75);
-                rect({button->x + 16.25, button->cy() - 5, 1.5, 10}, color, 0.75);
+                const auto   color = ink.modifyA(ink.a * PROGRESS * (hover ? 1.F : 0.7F));
+                const double left  = button->w < 80 ? button->cx() - 5 : button->x + 12;
+                rect({left, button->cy() - 0.75, 10, 1.5}, color, 0.75);
+                rect({left + 4.25, button->cy() - 5, 1.5, 10}, color, 0.75);
             }
             const int titleWidth = static_cast<int>(button->w - keyWidth - titleInset - 12);
             if (titleWidth > 0) {

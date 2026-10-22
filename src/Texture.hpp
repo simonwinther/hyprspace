@@ -42,6 +42,9 @@ namespace hyprspace {
         // `size` is in physical px.
         SIconTexture icon(const std::string& windowClass, int size);
 
+        // Bundled space symbol, tinted and rasterised at physical pixel size.
+        SP<Render::ITexture> spaceIcon(const std::string& key, const CHyprColor& color, int size);
+
         void   clear();
         void   invalidate(); // also discard decoded icons after config/theme changes
         size_t size() const {

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,16 +31,16 @@ def main():
     library = plugin / 'lib/libhyprspace.so'
     assert library.is_file()
     helper = plugin / 'lib/hyprspace-launch'
-    interpreter = helper.read_text().splitlines()[0].removeprefix('#!')
-    assert interpreter.startswith('/nix/store/') and Path(interpreter).is_file()
+    assert helper.read_bytes().startswith(b'\x7fELF'), 'launch helper must be a native executable'
     assert (plugin / 'bin/hyprspace-launch').resolve() == helper
     for name in ('uwsm-app', 'uwsm', 'app2unit'):
         assert (plugin / 'lib/launch-bin' / name).resolve() == helper
     assert (plugin / 'share/hyprspace/bindings.conf').read_bytes() == (ROOT / 'contrib/bindings.conf').read_bytes()
+    assert (plugin / 'share/licenses/hyprspace/lucide-LICENSE').read_bytes() == (ROOT / 'third_party/lucide/LICENSE').read_bytes()
     helper_env = os.environ.copy()
     for key in ("XDG_RUNTIME_DIR", "HYPRLAND_INSTANCE_SIGNATURE"):
         helper_env.pop(key, None)
-    assert run(str(helper), '--', interpreter, '-c', 'print("helper works")', env=helper_env) == 'helper works'
+    assert run(str(helper), '--', sys.executable, '-c', 'print("helper works")', env=helper_env) == 'helper works'
     metadata = run('readelf', '--string-dump=.hyprspace.abi', str(library))
     match = re.search(r'([0-9a-f]{40})_aq_([\d.]+)_hu_([\d.]+)_hg_([\d.]+)_hc_([\d.]+)_hlg_([\d.]+)', metadata)
     assert match, metadata

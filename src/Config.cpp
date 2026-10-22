@@ -31,6 +31,7 @@ namespace hyprspace::config {
             SP<Config::Values::CColorValue>  overviewHoverBorder;
             SP<Config::Values::CBoolValue>   overviewShowLabels;
             SP<Config::Values::CBoolValue>   overviewIncludeSpecial;
+            SP<Config::Values::CStringValue> overviewExcludeWorkspaces;
             SP<Config::Values::CBoolValue>   overviewAllWorkspaces;
             SP<Config::Values::CBoolValue>   overviewAllMonitors;
             SP<Config::Values::CColorValue>  overviewLabelColor;
@@ -38,6 +39,7 @@ namespace hyprspace::config {
             SP<Config::Values::CColorValue>  overviewTileBorderColor;
             SP<Config::Values::CColorValue>  overviewTitleBgColor;
             SP<Config::Values::CStringValue> overviewFont;
+            SP<Config::Values::CStringValue> overviewPreviewFilter;
             SP<Config::Values::CStringValue> overviewZoomKey;
             SP<Config::Values::CStringValue> overviewEmptyWorkspaceKey;
             SP<Config::Values::CStringValue> overviewCloseWorkspaceKey;
@@ -60,9 +62,11 @@ namespace hyprspace::config {
             SP<Config::Values::CBoolValue>   switcherCurrentWorkspaceOnly;
             SP<Config::Values::CStringValue> switcherFont;
 
-            SP<Config::Values::CBoolValue> followMouse;
-            SP<Config::Values::CBoolValue> warpCursor;
-            SP<Config::Values::CBoolValue> diagnostics;
+            SP<Config::Values::CBoolValue>   followMouse;
+            SP<Config::Values::CBoolValue>   warpCursor;
+            SP<Config::Values::CBoolValue>   diagnostics;
+            SP<Config::Values::CBoolValue>   spaces;
+            SP<Config::Values::CStringValue> spacesTheme;
         };
 
         SValues g_values;
@@ -116,6 +120,12 @@ namespace hyprspace::config {
                 return std::unexpected(modifiers.error());
             return {};
         }
+
+        std::expected<void, std::string> validatePreviewFilter(const std::string& name) {
+            if (name != "linear" && name != "area" && name != "sharp" && name != "linear-sharp")
+                return std::unexpected("preview_filter must be linear, area, sharp or linear-sharp");
+            return {};
+        }
     } // namespace
 
     void registerAll() {
@@ -138,6 +148,8 @@ namespace hyprspace::config {
         g_values.overviewHoverBorder    = reg<CColorValue>("plugin:hyprspace:overview:hover_border", "border colour of the hovered tile", 0x8089b4fa);
         g_values.overviewShowLabels     = reg<CBoolValue>("plugin:hyprspace:overview:workspace_labels", "show the workspace name under each tile", true);
         g_values.overviewIncludeSpecial = reg<CBoolValue>("plugin:hyprspace:overview:include_special", "include special (scratchpad) workspaces", true);
+        g_values.overviewExcludeWorkspaces =
+            reg<CStringValue>("plugin:hyprspace:overview:exclude_workspaces", "comma-separated exact workspace names to omit from the overview and window board", "");
         g_values.overviewAllWorkspaces =
             reg<CBoolValue>("plugin:hyprspace:overview:all_workspaces",
                             "deprecated compatibility option; ignored, views always include populated, active and persistent workspaces", true);
@@ -148,24 +160,27 @@ namespace hyprspace::config {
         g_values.overviewTileBorderColor = reg<CColorValue>("plugin:hyprspace:overview:tile_border_color", "hairline drawn around every workspace tile", 0x1affffff);
         g_values.overviewTitleBgColor    = reg<CColorValue>("plugin:hyprspace:overview:title_bg_color", "window title backdrop colour", 0xe61e1e2e);
         g_values.overviewFont            = reg<CStringValue>("plugin:hyprspace:overview:font", "pango font description used in the overview", "Sans 12");
+        g_values.overviewPreviewFilter = reg<CStringValue>("plugin:hyprspace:overview:preview_filter", "window preview minification: linear, area, sharp or linear-sharp",
+                                                           "sharp", SStringValueOptions{.validator = validatePreviewFilter});
         g_values.overviewZoomKey = reg<CStringValue>("plugin:hyprspace:overview:zoom_key", "unmodified XKB key held to enlarge the selected workspace; empty disables",
                                                      "z", SStringValueOptions{.validator = hooks::validateZoomKey});
         g_values.overviewEmptyWorkspaceKey =
-            reg<CStringValue>("plugin:hyprspace:overview:empty_workspace_key", "unmodified XKB key to select an empty workspace on the pointer's monitor; empty disables",
-                              "n", SStringValueOptions{.validator = hooks::validateEmptyWorkspaceKey});
+            reg<CStringValue>("plugin:hyprspace:overview:empty_workspace_key", "legacy setting retained for compatibility; Normal mode now uses Space then n", "n",
+                              SStringValueOptions{.validator = hooks::validateEmptyWorkspaceKey});
         g_values.overviewCloseWorkspaceKey =
-            reg<CStringValue>("plugin:hyprspace:overview:close_workspace_key", "unmodified XKB key to close the selected empty workspace; empty disables", "q",
+            reg<CStringValue>("plugin:hyprspace:overview:close_workspace_key", "legacy setting retained for compatibility; Normal mode now uses Space then x", "q",
                               SStringValueOptions{.validator = hooks::validateCloseWorkspaceKey});
         g_values.overviewWindowViewKey =
-            reg<CStringValue>("plugin:hyprspace:overview:window_view_key", "unmodified XKB key to toggle the global window board; empty disables", "g",
+            reg<CStringValue>("plugin:hyprspace:overview:window_view_key", "legacy setting retained for compatibility; Normal mode now uses Space then v", "g",
                               SStringValueOptions{.validator = hooks::validateWindowViewKey});
         g_values.overviewFollowKey =
             reg<CStringValue>("plugin:hyprspace:overview:follow_key", "unmodified XKB key to toggle persistent cursor-follow while inspecting; empty disables", "f",
                               SStringValueOptions{.validator = hooks::validateFollowKey});
         g_values.overviewShowFollowHint =
             reg<CBoolValue>("plugin:hyprspace:overview:show_follow_hint", "show the cursor-follow shortcut and mode while inspecting", true);
-        g_values.overviewHelpKey = reg<CStringValue>("plugin:hyprspace:overview:help_key", "XKB key that opens searchable help; empty disables", "question",
-                                                     SStringValueOptions{.validator = hooks::validateHelpKey});
+        g_values.overviewHelpKey =
+            reg<CStringValue>("plugin:hyprspace:overview:help_key", "optional XKB alias for searchable help; ? and Space then ? are always available", "question",
+                              SStringValueOptions{.validator = hooks::validateHelpKey});
         g_values.overviewWorkspaceDragModifiers =
             reg<CStringValue>("plugin:hyprspace:overview:workspace_drag_modifiers", "exact modifiers for left-dragging a workspace to another monitor; empty disables",
                               "SUPER ALT", SStringValueOptions{.validator = validateWorkspaceDragModifiers});
@@ -194,10 +209,18 @@ namespace hyprspace::config {
         // ---- shared ----
         g_values.followMouse = reg<CBoolValue>("plugin:hyprspace:follow_mouse", "move the selection to whatever the pointer hovers", true);
         g_values.diagnostics = reg<CBoolValue>("plugin:hyprspace:diagnostics", "record bounded frame preparation and input timing samples", false);
-        g_values.warpCursor  = reg<CBoolValue>("plugin:hyprspace:warp_cursor",
-                                               "warp the pointer onto the chosen window when committing; needed for the selection to stick when "
-                                               "input:follow_mouse is enabled",
-                                               true);
+        g_values.spaces      = reg<CBoolValue>("plugin:hyprspace:spaces:enabled", "independent spaces with local workspace numbers", true);
+        g_values.spacesTheme =
+            reg<CStringValue>("plugin:hyprspace:spaces:theme", "space controls theme: auto follows overview colors; dark or light overrides the controls", "auto",
+                              SStringValueOptions{.validator = [](const std::string& value) -> std::expected<void, std::string> {
+                                  if (value == "auto" || value == "dark" || value == "light")
+                                      return {};
+                                  return std::unexpected("spaces theme must be auto, dark or light");
+                              }});
+        g_values.warpCursor = reg<CBoolValue>("plugin:hyprspace:warp_cursor",
+                                              "warp the pointer onto the chosen window when committing; needed for the selection to stick when "
+                                              "input:follow_mouse is enabled",
+                                              true);
     }
 
     float overviewBgDim() {
@@ -205,6 +228,13 @@ namespace hyprspace::config {
     }
     bool diagnosticsEnabled() {
         return g_values.diagnostics && g_values.diagnostics->value();
+    }
+
+    bool spacesEnabled() {
+        return !g_values.spaces || g_values.spaces->value();
+    }
+    std::string spacesTheme() {
+        return g_values.spacesTheme ? g_values.spacesTheme->value() : "auto";
     }
     CHyprColor overviewBgColor() {
         return colorOf(g_values.overviewBgColor, 0xff11111b);
@@ -236,6 +266,23 @@ namespace hyprspace::config {
     bool overviewIncludeSpecial() {
         return g_values.overviewIncludeSpecial ? g_values.overviewIncludeSpecial->value() : true;
     }
+    bool overviewExcludesWorkspace(std::string_view name) {
+        if (!g_values.overviewExcludeWorkspaces || name.empty())
+            return false;
+        const auto       value = g_values.overviewExcludeWorkspaces->value();
+        std::string_view names(value);
+        while (!names.empty()) {
+            const auto comma = names.find(',');
+            const auto item  = names.substr(0, comma);
+            const auto first = item.find_first_not_of(" \t\r\n");
+            if (first != std::string_view::npos && item.substr(first, item.find_last_not_of(" \t\r\n") - first + 1) == name)
+                return true;
+            if (comma == std::string_view::npos)
+                break;
+            names.remove_prefix(comma + 1);
+        }
+        return false;
+    }
     bool overviewAllWorkspaces() {
         return g_values.overviewAllWorkspaces ? g_values.overviewAllWorkspaces->value() : true;
     }
@@ -256,6 +303,10 @@ namespace hyprspace::config {
     }
     std::string overviewFont() {
         return g_values.overviewFont ? g_values.overviewFont->value() : "Sans 12";
+    }
+    std::string overviewPreviewFilter() {
+        const auto value = g_values.overviewPreviewFilter ? g_values.overviewPreviewFilter->value() : "sharp";
+        return validatePreviewFilter(value) ? value : "sharp";
     }
     xkb_keysym_t overviewZoomKey() {
         const auto name = g_values.overviewZoomKey ? g_values.overviewZoomKey->value() : "z";
@@ -288,7 +339,7 @@ namespace hyprspace::config {
         if (name.empty() || !hooks::validateFollowKey(name))
             return XKB_KEY_NoSymbol;
         const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
-        return sym == overviewZoomKey() || sym == overviewEmptyWorkspaceKey() || sym == overviewWindowViewKey() ? XKB_KEY_NoSymbol : sym;
+        return sym == overviewZoomKey() ? XKB_KEY_NoSymbol : sym;
     }
     bool overviewShowFollowHint() {
         return g_values.overviewShowFollowHint ? g_values.overviewShowFollowHint->value() : true;
@@ -298,7 +349,7 @@ namespace hyprspace::config {
         if (name.empty() || !hooks::validateHelpKey(name))
             return XKB_KEY_NoSymbol;
         const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
-        return sym == overviewZoomKey() || sym == overviewEmptyWorkspaceKey() || sym == overviewWindowViewKey() || sym == overviewFollowKey() ? XKB_KEY_NoSymbol : sym;
+        return sym == overviewZoomKey() || sym == overviewFollowKey() ? XKB_KEY_NoSymbol : sym;
     }
     bool overviewWheelZoom() {
         return g_values.overviewWheelZoom ? g_values.overviewWheelZoom->value() : true;
@@ -309,8 +360,9 @@ namespace hyprspace::config {
         if (name.empty() || !hooks::validateCloseWorkspaceKey(name))
             return XKB_KEY_NoSymbol;
         const auto sym = xkb_keysym_to_lower(xkb_keysym_from_name(name.c_str(), XKB_KEYSYM_CASE_INSENSITIVE));
-        return sym == overviewZoomKey() || sym == overviewEmptyWorkspaceKey() || sym == overviewWindowViewKey() || sym == overviewFollowKey() ||
-                       sym == overviewHelpKey() ? XKB_KEY_NoSymbol : sym;
+        return sym == overviewZoomKey() || sym == overviewEmptyWorkspaceKey() || sym == overviewWindowViewKey() || sym == overviewFollowKey() || sym == overviewHelpKey()
+                   ? XKB_KEY_NoSymbol
+                   : sym;
     }
     CHyprColor overviewFullscreenBorder() {
         return colorOf(g_values.overviewFullscreenBorder, 0xff89b4fa);

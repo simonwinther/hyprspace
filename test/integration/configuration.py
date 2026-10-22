@@ -11,6 +11,23 @@ def contracts(s, wait_for):
         assert value["int"] == expected, (name, value)
     s.check("configuration registers the documented overview and switcher defaults")
 
+    for theme in ("light", "dark", "auto"):
+        s.ctl("keyword", "plugin:hyprspace:spaces:theme", theme)
+        assert json.loads(s.ctl("-j", "getoption", "plugin:hyprspace:spaces:theme"))["str"] == theme
+    s.check("space controls accept and retain light, dark and auto themes, ending with the automatic palette restored")
+
+    filter_option = "plugin:hyprspace:overview:preview_filter"
+    assert json.loads(s.ctl("-j", "getoption", filter_option))["str"] == "sharp"
+    for preview_filter in ("linear", "area", "linear-sharp", "sharp"):
+        s.ctl("keyword", filter_option, preview_filter)
+        assert json.loads(s.ctl("-j", "getoption", filter_option))["str"] == preview_filter
+        assert s.status()["resources"]["preview_filter"]["mode"] == preview_filter
+    # Some compositor ABIs bypass CStringValue's validator for runtime writes.
+    s.ctl("keyword", filter_option, "unknown")
+    assert s.status()["resources"]["preview_filter"]["mode"] == "sharp"
+    s.ctl("keyword", filter_option, "sharp")
+    s.check("preview filtering exposes the comparison modes and defaults to sharp")
+
     def option(name, value):
         s.ctl("keyword", "plugin:hyprspace:" + name, str(value).lower())
 
@@ -56,6 +73,30 @@ def contracts(s, wait_for):
             assert geometry() == baseline, (name, views())
         assert s.ctl("configerrors") == ""
         s.check("deprecated band_gap and all_workspaces remain accepted without changing preview geometry or membership")
+
+        placement = {title: w["workspace"] for title, w in s.windows().items()}
+        option("overview:exclude_workspaces", " , 21, special:config-contract, ,")
+        wait_for(lambda: views() == {s.names[0]: {11}, s.names[1]: {12}, s.names[2]: {13}})
+        s.ctl("dispatch", "hyprspace:windowview", "flat")
+        wait_for(lambda: s.status()["window_board"]["count"] == 2)
+        assert {p["window"] for p in s.status()["window_board"]["previews"]} == {
+            s.windows()[title]["address"] for title in ("hs-A", "hs-B")
+        }
+        assert {title: w["workspace"] for title, w in s.windows().items()} == placement
+        s.check("workspace exclusions remove both tiles and board previews without moving or closing their windows")
+        s.close()
+
+        for exclusions in ("2,special:config-contrac", ""):
+            option("overview:exclude_workspaces", exclusions)
+            s.ctl("dispatch", "hyprspace:overview", "on")
+            wait_for(lambda: views() == expected)
+            s.ctl("dispatch", "hyprspace:windowview", "flat")
+            wait_for(lambda: s.status()["window_board"]["count"] == 4)
+            s.close()
+        s.check("workspace exclusions match exact names and clearing the list restores special and normal workspaces")
+
+        s.ctl("dispatch", "hyprspace:overview", "on")
+        wait_for(lambda: views() == expected)
         s.close()
 
         option("overview:all_monitors", False)
@@ -100,4 +141,5 @@ def contracts(s, wait_for):
         for name, value in defaults.items():
             option(name, value)
         option("follow_mouse", True)
+        option("overview:exclude_workspaces", "")
         s.ctl("keyword", "workspace", "21,persistent:false")

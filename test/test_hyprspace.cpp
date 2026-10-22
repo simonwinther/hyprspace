@@ -61,6 +61,11 @@ static void section(const char* name) {
 #include "test_empty_workspace.hpp"
 #include "test_window_views.hpp"
 #include "test_help.hpp"
+#include "test_spaces.hpp"
+#include "test_space_icons.hpp"
+#include "test_space_style.hpp"
+#include "test_render_geometry.hpp"
+#include "test_input_model.hpp"
 
 // ---------------------------------------------------------------- layout ----
 
@@ -1096,34 +1101,32 @@ static void testPreviewStyle() {
     CHECK_NEAR(windowPreviewOpacity(1.F, false, 0.F), 0.F, 1e-6F);
 
     for (bool anchor : {false, true}) {
-        for (bool selected : {false, true}) {
-            const auto desktop = workspacePreviewStyle(anchor, selected, 0.F);
-            CHECK_NEAR(desktop.visibility, anchor ? 1.F : 0.F, 1e-6F);
-            CHECK_NEAR(desktop.windowVisibility, anchor ? 1.F : 0.F, 1e-6F);
-            CHECK_NEAR(desktop.plateVisibility, 0.F, 1e-6F);
-            CHECK_NEAR(windowPreviewOpacity(0.85F, false, desktop.windowVisibility), anchor ? 0.85F : 0.F, 1e-6F);
+        const auto desktop = workspacePreviewStyle(anchor, 0.F);
+        CHECK_NEAR(desktop.visibility, anchor ? 1.F : 0.F, 1e-6F);
+        CHECK_NEAR(desktop.windowVisibility, anchor ? 1.F : 0.F, 1e-6F);
+        CHECK_NEAR(desktop.plateVisibility, 0.F, 1e-6F);
+        CHECK_NEAR(windowPreviewOpacity(0.85F, false, desktop.windowVisibility), anchor ? 0.85F : 0.F, 1e-6F);
 
-            const auto overview = workspacePreviewStyle(anchor, selected, 1.F);
-            CHECK_NEAR(overview.visibility, 1.F, 1e-6F);
-            CHECK_NEAR(overview.windowVisibility, selected ? 1.F : 0.9F, 1e-6F);
-            CHECK_NEAR(overview.plateVisibility, 1.F, 1e-6F);
+        const auto overview = workspacePreviewStyle(anchor, 1.F);
+        CHECK_NEAR(overview.visibility, 1.F, 1e-6F);
+        CHECK_NEAR(overview.windowVisibility, 1.F, 1e-6F);
+        CHECK_NEAR(overview.plateVisibility, 1.F, 1e-6F);
 
-            auto previous = desktop;
-            for (int step = 1; step <= 1000; ++step) {
-                const auto style = workspacePreviewStyle(anchor, selected, step / 1000.F);
-                CHECK(style.windowVisibility >= 0.F && style.windowVisibility <= 1.F);
-                CHECK(style.plateVisibility >= 0.F && style.plateVisibility <= 1.F);
-                CHECK(std::abs(style.windowVisibility - previous.windowVisibility) < 0.002F);
-                CHECK(std::abs(style.plateVisibility - previous.plateVisibility) < 0.003F);
-                previous = style;
-            }
+        auto previous = desktop;
+        for (int step = 1; step <= 1000; ++step) {
+            const auto style = workspacePreviewStyle(anchor, step / 1000.F);
+            CHECK(style.windowVisibility >= 0.F && style.windowVisibility <= 1.F);
+            CHECK(style.plateVisibility >= 0.F && style.plateVisibility <= 1.F);
+            CHECK(std::abs(style.windowVisibility - previous.windowVisibility) < 0.002F);
+            CHECK(std::abs(style.plateVisibility - previous.plateVisibility) < 0.003F);
+            previous = style;
         }
     }
 
     for (float value : {-1.F, 2.F, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
         const float opacity = windowPreviewOpacity(value, false, value);
         CHECK(std::isfinite(opacity) && opacity >= 0.F && opacity <= 1.F);
-        const auto style = workspacePreviewStyle(true, false, value);
+        const auto style = workspacePreviewStyle(true, value);
         CHECK(std::isfinite(style.windowVisibility) && style.windowVisibility >= 0.F && style.windowVisibility <= 1.F);
         CHECK(std::isfinite(style.plateVisibility) && style.plateVisibility >= 0.F && style.plateVisibility <= 1.F);
     }
@@ -1460,6 +1463,16 @@ int main(int argc, char** argv) {
             testWindowViews();
         else if (group == "help")
             testHelp();
+        else if (group == "spaces")
+            testSpaces();
+        else if (group == "space_icons")
+            testSpaceIcons();
+        else if (group == "space_style")
+            testSpaceStyle();
+        else if (group == "input")
+            testInputModel();
+        else if (group == "render_geometry")
+            testRenderGeometry();
         else if (group == "resources") {
             testImageCache();
             testRasterBounds();
@@ -1514,6 +1527,11 @@ int main(int argc, char** argv) {
     testWindowViews();
 
     testHelp();
+    testSpaces();
+    testSpaceIcons();
+    testSpaceStyle();
+    testRenderGeometry();
+    testInputModel();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

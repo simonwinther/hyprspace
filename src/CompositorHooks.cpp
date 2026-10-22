@@ -7,6 +7,9 @@
 #include "Launch.hpp"
 #include "OverlayPolicy.hpp"
 #include "Diagnostics.hpp"
+#include "SpaceHooks.hpp"
+#include "SpaceSelector.hpp"
+#include "InputController.hpp"
 
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
@@ -104,16 +107,12 @@ namespace hyprspace::hooks {
             EInspectionKey          inspection           = EInspectionKey::NONE;
             uint64_t                inspectionGeneration = 0;
             std::optional<uint64_t> panToken;
-            bool                    windowView      = false;
-            bool                    board           = false;
-            bool                    boardSearch     = false;
-            bool                    oneShot         = false;
-            uint64_t                boardGeneration = 0;
+            bool                    oneShot = false;
             std::string             text;
-            xkb_keysym_t            boardKey       = XKB_KEY_NoSymbol;
-            uint32_t                boardMods      = 0;
-            bool                    help           = false;
-            uint64_t                helpGeneration = 0;
+            xkb_keysym_t            boardKey  = XKB_KEY_NoSymbol;
+            uint32_t                boardMods = 0;
+            bool                    ui        = false;
+            uint64_t                uiEpoch   = 0;
         };
         std::vector<SKey>   keys;
         std::vector<SKey>   ignoredKeys;
@@ -205,27 +204,12 @@ namespace hyprspace::hooks {
                             stopReservedRepeat();
                             return;
                         }
-                        if (key->help) {
-                            auto* help = session().helpOverlay();
-                            if (!session().helpActive() || help->generation() != key->helpGeneration) {
+                        if (key->ui) {
+                            if (inputController().epoch() != key->uiEpoch) {
                                 stopReservedRepeat();
                                 return;
                             }
-                            help->onKey(key->boardKey, key->boardMods, key->text);
-                        } else if (session().helpActive()) {
-                            stopReservedRepeat();
-                            return;
-                        } else if (key->board) {
-                            auto* board = session().windowBoard();
-                            if (key->oneShot || !session().windowViewActive() || board->generation() != key->boardGeneration ||
-                                board->searchFocused() != key->boardSearch) {
-                                stopReservedRepeat();
-                                return;
-                            }
-                            if (diagnostics::enabled)
-                                if (const auto monitor = board->monitor())
-                                    diagnostics::input(monitor->m_id);
-                            board->onKey(key->boardKey, key->boardMods, key->text);
+                            inputController().onKey(key->boardKey, key->boardMods, key->text);
                         } else {
                             if (!session().cursorOwned() || !config::overviewWheelZoom() || key->inspectionGeneration != session().zoomGeneration()) {
                                 stopReservedRepeat();
@@ -528,38 +512,6 @@ namespace hyprspace::hooks {
             reinterpret_cast<Fn>(focusHook->m_original)(self, surface);
         }
 
-        bool reserved(xkb_keysym_t sym, uint32_t mods) {
-            if (mods == HL_MODIFIER_SHIFT)
-                return sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab;
-            if (mods != 0)
-                return false;
-            if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9)
-                return true;
-            switch (sym) {
-            case XKB_KEY_Escape:
-            case XKB_KEY_Return:
-            case XKB_KEY_KP_Enter:
-            case XKB_KEY_s:
-            case XKB_KEY_space:
-            case XKB_KEY_Tab:
-            case XKB_KEY_Left:
-            case XKB_KEY_Right:
-            case XKB_KEY_Up:
-            case XKB_KEY_Down:
-            case XKB_KEY_h:
-            case XKB_KEY_j:
-            case XKB_KEY_k:
-            case XKB_KEY_l:
-            case XKB_KEY_Home:
-            case XKB_KEY_End:
-            case XKB_KEY_Page_Up:
-            case XKB_KEY_Page_Down:
-                return true;
-            default:
-                return false;
-            }
-        }
-
         void keyboardInput(CInputManager* self, const IKeyboard::SKeyEvent& event, SP<IKeyboard> keyboard) {
             using Fn = void (*)(CInputManager*, const IKeyboard::SKeyEvent&, SP<IKeyboard>);
             syncKeyboardFocus();
@@ -612,34 +564,15 @@ namespace hyprspace::hooks {
             }
             const auto sym  = keyboard->m_xkbSymState ? xkb_state_key_get_one_sym(keyboard->m_xkbSymState, e.keycode + 8) : XKB_KEY_NoSymbol;
             const auto mods = g_pInputManager->getModsFromAllKBs();
-            if (pressed && it != keys.end() && it->help) {
-                if (!it->oneShot && owned && session().helpActive() && session().helpOverlay()->generation() == it->helpGeneration)
-                    session().helpOverlay()->onKey(sym, mods, it->text);
-                return false;
-            }
-            if (pressed && it != keys.end() && (it->oneShot || (session().helpActive() && it->reserved)))
-                return false;
-            // Captured one-shot and zoom presses keep their route across repeats, config
-            // reloads and close/reopen. An ignored first press stays ignored.
-            if (pressed && it != keys.end() && (it->zoom || it->emptyWorkspace))
-                return false;
-            if (pressed && it != keys.end() && it->windowView)
-                return false;
-            if (pressed && it != keys.end() && it->board) {
-                if (!it->oneShot && owned && session().windowViewActive() && session().windowBoard()->generation() == it->boardGeneration &&
-                    session().windowBoard()->searchFocused() == it->boardSearch)
-                    session().windowBoard()->onKey(sym, mods, it->text);
-                return false;
-            }
-            if (pressed && it != keys.end() && it->inspection != EInspectionKey::NONE) {
-                if (!it->oneShot && owned && session().cursorOwned() && it->inspectionGeneration == session().zoomGeneration())
+            if (pressed && it != keys.end()) {
+                if (it->ui && !it->oneShot && owned && inputController().epoch() == it->uiEpoch)
+                    inputController().onKey(it->boardKey, it->boardMods, it->text);
+                else if (!it->ui && it->inspection != EInspectionKey::NONE && !it->oneShot && owned && session().cursorOwned() &&
+                         it->inspectionGeneration == session().zoomGeneration())
                     inspectKey(it->inspection);
-                return false;
+                return it->reserved ? false : original(self, event, keyboard) && !owned && !it->suppressed;
             }
-            const bool navigation = it != keys.end() ? it->reserved : owned && (reserved(sym, mods) || (sym == XKB_KEY_Escape && session().gestureActive()));
-            if (pressed && it == keys.end()) {
-                auto*       board     = session().windowViewActive() ? session().windowBoard() : nullptr;
-                const bool  searching = board && board->searchFocused();
+            if (pressed) {
                 std::string text;
                 if (keyboard->m_xkbState) {
                     char      buffer[64]{};
@@ -647,127 +580,46 @@ namespace hyprspace::hooks {
                     if (length > 0 && length < static_cast<int>(sizeof(buffer)) && !g_unichar_iscntrl(g_utf8_get_char(buffer)))
                         text.assign(buffer, length);
                 }
-                auto*      help       = session().helpActive() ? session().helpOverlay() : nullptr;
-                const auto helpKey    = config::overviewHelpKey();
-                const bool helpOpener = owned && (!searching || text.empty()) && !help && helpKey != XKB_KEY_NoSymbol &&
-                                        (xkb_keysym_to_lower(sym) == helpKey || (helpKey == XKB_KEY_question && text == "?")) &&
-                                        (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META)) == 0;
-                const bool helpRoute  = owned && help && help->reservesKey(sym, mods);
-                if (helpOpener || helpRoute) {
-                    stopReservedRepeat();
-                    // Existing captured holds retain their releases, but must
-                    // not resume an action in the view behind this dialog.
-                    if (helpOpener)
-                        for (auto& key : keys)
-                            if (key.reserved)
-                                key.oneShot = true;
-                    keys.push_back({keyboard, e.keycode, true, true});
-                    auto& captured     = keys.back();
-                    captured.help      = true;
-                    captured.oneShot   = helpOpener || help->oneShot(sym, text);
-                    captured.text      = text;
-                    captured.boardKey  = sym;
-                    captured.boardMods = mods;
-                    if (helpOpener)
-                        (void)session().help();
-                    else
-                        help->onKey(sym, mods, text);
-                    captured.helpGeneration = session().helpOverlay()->generation();
-                    if (!captured.oneShot)
-                        startReservedRepeat(keyboard, e.keycode);
-                    return false;
-                }
-                // Modified native shortcuts may still use the real matcher;
-                // overlay-only routes stay suspended while help owns input.
-                if (help) {
-                    keys.push_back({keyboard, e.keycode, false, owned});
-                    return original(self, event, keyboard) && !owned;
-                }
-                const bool boardRoute = owned && board && (board->reservesKey(sym, mods, text) || reserved(sym, mods));
-                const bool searchView = owned && !board && CWindowBoard::searchShortcut(sym, mods, text);
-                const auto viewKey    = config::overviewWindowViewKey();
-                const bool windowView =
-                    owned && !searching && viewKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == viewKey && (mods == 0 || (board && mods == HL_MODIFIER_SHIFT));
-                const auto zoomKey    = config::overviewZoomKey();
-                const bool zoom       = owned && !searching && mods == 0 && zoomKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == zoomKey;
-                const auto emptyKey   = config::overviewEmptyWorkspaceKey();
-                const bool empty      = owned && !searching && mods == 0 && emptyKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == emptyKey;
-                const auto closeKey   = config::overviewCloseWorkspaceKey();
-                const bool close      = owned && !board && mods == 0 && closeKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == closeKey;
-                const auto inspection = owned && session().zoomHeld() && !zoom && !empty && !close && !searching ? inspectionKey(sym, mods) : EInspectionKey::NONE;
+                const auto context = inputController().context();
+                const bool canvas  = context.context == EInputContext::Workspaces || context.context == EInputContext::Windows;
+                const bool normal  = context.mode == EInputMode::Normal;
+                const auto command = owned ? inputController().preview(sym, mods, text) : SInputCommand{};
+                const auto zoomKey = config::overviewZoomKey();
+                const bool zoom    = owned && canvas && normal && !command.handled() && mods == 0 && zoomKey != XKB_KEY_NoSymbol && xkb_keysym_to_lower(sym) == zoomKey;
+                const auto inspection = owned && canvas && normal && session().zoomHeld() && !zoom ? inspectionKey(sym, mods) : EInspectionKey::NONE;
                 stopReservedRepeat();
-                keys.push_back({keyboard, e.keycode, navigation || zoom || empty || close || searchView || inspection != EInspectionKey::NONE, owned, zoom,
-                                zoom ? session().zoomPress() : std::nullopt, empty, inspection, session().zoomGeneration()});
-                it = std::prev(keys.end());
-                if (windowView) {
-                    it->reserved = it->windowView = true;
-                    if (mods == HL_MODIFIER_SHIFT)
-                        board->cycleGrouping();
-                    else
-                        (void)session().windowView("toggle");
-                    return false;
-                }
-                if (zoom)
-                    return false;
-                if (empty) {
-                    // This action selects the pointer's output, independent of
-                    // keyboardView(). Ordinary navigation would select that
-                    // previous view again after the action returned.
-                    (void)session().emptyWorkspace();
-                    return false;
-                }
-                if (close) {
-                    it->oneShot = true;
-                    (void)session().closeWorkspace();
-                    return false;
-                }
-                if (inspection != EInspectionKey::NONE) {
+                if (zoom || inspection != EInspectionKey::NONE) {
+                    keys.push_back({keyboard, e.keycode, true, true, zoom, zoom ? session().zoomPress() : std::nullopt, false, inspection, session().zoomGeneration()});
+                    auto& captured = keys.back();
                     if (inspection == EInspectionKey::GRAB)
-                        it->panToken = session().panPress();
-                    else {
-                        it->oneShot = inspection == EInspectionKey::FOLLOW;
+                        captured.panToken = session().panPress();
+                    else if (inspection != EInspectionKey::NONE) {
+                        captured.oneShot = inspection == EInspectionKey::FOLLOW;
                         inspectKey(inspection);
-                        if (!it->oneShot)
+                        if (!captured.oneShot)
                             startReservedRepeat(keyboard, e.keycode);
                     }
                     return false;
                 }
-                if (searchView) {
-                    it->oneShot = true;
-                    if (session().windowView("flat").success)
-                        session().windowBoard()->onKey(sym, mods, text);
-                    return false;
-                }
-                if (boardRoute) {
-                    it->reserved = it->board = true;
-                    it->boardSearch          = searching;
-                    it->boardGeneration      = board->generation();
-                    it->text                 = text;
-                    it->boardKey             = sym;
-                    it->boardMods            = mods;
-                    it->oneShot              = sym == XKB_KEY_Escape || sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter ||
-                                               (!searching && (text == "/" || sym == XKB_KEY_r || sym == XKB_KEY_slash || sym == XKB_KEY_s || sym == XKB_KEY_space ||
-                                                               (sym >= XKB_KEY_0 && sym <= XKB_KEY_9)));
-                    board->onKey(sym, mods, text);
-                    if (!it->oneShot)
+                if (command.handled()) {
+                    keys.push_back({keyboard, e.keycode, true, true});
+                    auto& captured     = keys.back();
+                    captured.ui        = true;
+                    captured.uiEpoch   = inputController().epoch();
+                    captured.oneShot   = !command.repeatable;
+                    captured.boardKey  = sym;
+                    captured.boardMods = mods;
+                    captured.text      = text;
+                    const bool repeat  = command.repeatable;
+                    inputController().onKey(sym, mods, text);
+                    if (repeat)
                         startReservedRepeat(keyboard, e.keycode);
                     return false;
                 }
-            }
-            if (navigation) {
-                if (pressed && owned) {
-                    if (auto view = session().keyboardView()) {
-                        view->onKey(sym, mods, true);
-                        if (sym != XKB_KEY_Escape)
-                            session().keyboard(*view);
-                        if (view->closing()) {
-                            for (const auto& other : session().views)
-                                other->close(false);
-                            session().stopInput();
-                        }
-                    }
-                }
-                return false;
+                if (owned)
+                    inputController().onKey(sym, mods, text); // clear a pending prefix before native modified shortcuts
+                keys.push_back({keyboard, e.keycode, false, owned});
+                it = std::prev(keys.end());
             }
             // Exactly one call to the real matcher. Its device, submap,
             // repeat, long-press and release bookkeeping stays authoritative.
@@ -951,7 +803,14 @@ namespace hyprspace::hooks {
             if ((sym >= XKB_KEY_Shift_L && sym <= XKB_KEY_Hyper_R) || (sym >= XKB_KEY_ISO_Lock && sym <= XKB_KEY_ISO_Level5_Lock) || sym == XKB_KEY_Mode_switch ||
                 sym == XKB_KEY_Num_Lock || sym == XKB_KEY_Scroll_Lock)
                 return std::unexpected(setting + " cannot be a modifier or lock key");
-            if (reserved(sym, 0) || reserved(sym, HL_MODIFIER_SHIFT))
+            CInputModel grammar;
+            grammar.sync({});
+            const auto command = grammar.peek(sym, 0, "");
+            // Keep legacy configurable action names parseable during migration;
+            // their old single-letter routes have moved into the leader map.
+            const bool legacy = setting == "empty_workspace_key" || setting == "close_workspace_key" || setting == "window_view_key" || setting == "help_key";
+            if (command.handled() &&
+                !(legacy && (command.action == EInputAction::Prefix || command.action == EInputAction::NextMatch || command.action == EInputAction::Help)))
                 return std::unexpected(setting + " cannot replace an overview navigation key");
             if (sym == XKB_KEY_Print || sym == XKB_KEY_Sys_Req || (sym >= 0x10080000 && sym <= 0x1008FFFF))
                 return std::unexpected(setting + " cannot replace a system key");
@@ -1003,7 +862,14 @@ namespace hyprspace::hooks {
 
     void syncKeyboardFocus() {
         pruneKeys();
-        if (!keyboardOwned() && g_overviewSession) {
+        const bool  owned           = keyboardOwned();
+        static bool previouslyOwned = false;
+        if (!owned && previouslyOwned) {
+            suspendOverviewKeys();
+            inputController().invalidateKeys();
+        }
+        previouslyOwned = owned;
+        if (!owned && g_overviewSession) {
             session().cancelZoom();
             session().cancelWorkspaceDrag();
         }
@@ -1011,7 +877,7 @@ namespace hyprspace::hooks {
             return;
         using Fn            = void (*)(CSeatManager*, SP<CWLSurfaceResource>);
         const auto original = reinterpret_cast<Fn>(focusHook->m_original);
-        if (keyboardOwned()) {
+        if (owned) {
             if (windowSurface(g_pSeatManager->m_state.keyboardFocus.lock())) {
                 keyboardSuspended = true;
                 original(g_pSeatManager.get(), nullptr);
@@ -1324,50 +1190,52 @@ namespace hyprspace::hooks {
                 continue;
             const auto registration = ++nextRegistration;
             auto       callback     = [name, original = dispatcher](std::string args) {
-                if (dispatchDepth)
-                    return original(std::move(args));
-                session().cancelWorkspaceDrag();
-                session().cancelWorkspaceSettle();
-                const bool owned = keyboardOwned();
-                if (!owned) {
-                    if (!launchEnabled || !launchEnabled())
+                return spacehooks::dispatch(name, std::move(args), [name, original](std::string args) {
+                    if (dispatchDepth)
                         return original(std::move(args));
-                    if (name == "exec" || name == "execr") {
-                        SDispatchResult result;
-                        launch::duringCommand(session().selection.command(), [&] { result = original(std::move(args)); });
-                        return result;
+                    session().cancelWorkspaceDrag();
+                    session().cancelWorkspaceSettle();
+                    const bool owned = keyboardOwned();
+                    if (!owned) {
+                        if (!launchEnabled || !launchEnabled())
+                            return original(std::move(args));
+                        if (name == "exec" || name == "execr") {
+                            SDispatchResult result;
+                            launch::duringCommand(session().selection.command(), [&] { result = original(std::move(args)); });
+                            return result;
+                        }
                     }
-                }
-                const auto      point = session().selection.command();
-                PHLWINDOW       before;
-                PHLWORKSPACE    beforeWorkspace;
-                SDispatchResult result;
-                ++dispatchDepth;
-                try {
-                    CKeepLayerKeyboard keepLayer(!owned);
-                    launch::duringCommand(point, [&] {
-                        const auto execute = [&] {
-                            session().establishTarget();
-                            before          = Desktop::focusState()->window();
-                            const auto mon  = Desktop::focusState()->monitor();
-                            beforeWorkspace = mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr;
-                            result          = original(std::move(args));
-                        };
-                        if (point)
-                            atDesktopPoint(session().desktopPoint(*point), execute);
-                        else
-                            execute();
-                    });
-                } catch (...) {
+                    const auto      point = session().selection.command();
+                    PHLWINDOW       before;
+                    PHLWORKSPACE    beforeWorkspace;
+                    SDispatchResult result;
+                    ++dispatchDepth;
+                    try {
+                        CKeepLayerKeyboard keepLayer(!owned);
+                        launch::duringCommand(point, [&] {
+                            const auto execute = [&] {
+                                session().establishTarget();
+                                before          = Desktop::focusState()->window();
+                                const auto mon  = Desktop::focusState()->monitor();
+                                beforeWorkspace = mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr;
+                                result          = original(std::move(args));
+                            };
+                            if (point)
+                                atDesktopPoint(session().desktopPoint(*point), execute);
+                            else
+                                execute();
+                        });
+                    } catch (...) {
+                        --dispatchDepth;
+                        throw;
+                    }
                     --dispatchDepth;
-                    throw;
-                }
-                --dispatchDepth;
-                const auto mon            = Desktop::focusState()->monitor();
-                const auto afterWorkspace = mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr;
-                if (Desktop::focusState()->window() != before || beforeWorkspace != afterWorkspace)
-                    session().followKeyboardFocus();
-                return result;
+                    const auto mon            = Desktop::focusState()->monitor();
+                    const auto afterWorkspace = mon ? (mon->m_activeSpecialWorkspace ? mon->m_activeSpecialWorkspace : mon->m_activeWorkspace) : nullptr;
+                    if (Desktop::focusState()->window() != before || beforeWorkspace != afterWorkspace)
+                        session().followKeyboardFocus();
+                    return result;
+                });
             };
             Dispatcher replacement = SDispatcherWrapper{std::move(callback), registration};
             dispatchers.emplace(name, SDispatcherRegistration{dispatcher, registration});

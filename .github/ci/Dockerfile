@@ -5,7 +5,7 @@ FROM ghcr.io/archlinux/archlinux:base-devel-20260901.0.583369@sha256:c6728f9c62e
 RUN printf 'Server = https://archive.archlinux.org/repos/2026/09/01/$repo/os/$arch\n' > /etc/pacman.d/mirrorlist \
     && pacman-key --init \
     && pacman-key --populate archlinux \
-    && pacman -Syyuu --noconfirm --needed hyprland cairo pango gdk-pixbuf2 librsvg ttf-liberation nlohmann-json git jq python ripgrep \
+    && pacman -Syyuu --noconfirm --needed hyprland cairo pango gdk-pixbuf2 librsvg ttf-liberation nlohmann-json git jq python ripgrep rust \
     && test "$(pkg-config --modversion hyprland)" = 0.56.2 \
     && pacman -Scc --noconfirm
 

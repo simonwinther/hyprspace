@@ -18,6 +18,12 @@ def tap(s, code):
     s.key(code, 0)
 
 
+def leader(s, code):
+    tap(s, 57)
+    assert s.status()["input"]["prefix"] == "space", s.status()["input"]
+    tap(s, code)
+
+
 def question(s):
     s.key(42, 1)
     tap(s, 53)
@@ -127,25 +133,36 @@ def run(s, wait_for):
             s.ctl("keyword", "plugin:hyprspace:overview:" + option, value)
         wait_for(lambda: next(e for e in help_state(s)["entries"] if e["id"] == "move-workspace")["keys"] == "Super + Shift + drag")
         entries = {e["id"]: e for e in help_state(s)["entries"]}
-        assert entries["zoom"]["keys"] == "Hold X" and entries["window-board"]["keys"] == "V"
-        assert entries["empty"]["keys"].startswith("B") and entries["move-workspace"]["keys"] == "Super + Shift + drag"
+        assert entries["zoom"]["keys"] == "Hold X" and entries["follow"]["keys"].endswith(" + C")
+        assert entries["window-board"]["keys"] == "Space → v"
+        assert entries["groups"]["keys"] == "Space → g" and entries["recent"]["keys"] == "Space → r"
+        assert entries["empty"]["keys"].startswith("Space → n")
+        assert entries["move-workspace"]["keys"] == "Super + Shift + drag"
         s.ctl("keyword", "plugin:hyprspace:overview:help_key", "F1")
-        wait_for(lambda: next(e for e in help_state(s)["entries"] if e["id"] == "help")["keys"] == "F1")
+        assert next(e for e in help_state(s)["entries"] if e["id"] == "help")["keys"] == "? / Space → ?"
         search(s, "follow")
+        tap(s, 59)  # An optional Normal-mode alias cannot discard Insert text.
+        assert help_state(s)["active"] and help_state(s)["query"] == "follow" and help_state(s)["search_focused"]
+        tap(s, 28)
         tap(s, 59)
         assert not help_state(s)["active"]
-        question(s)
+        question(s)  # The shared ? command remains available with another alias.
+        assert help_state(s)["active"]
+        tap(s, 59)
         assert not help_state(s)["active"]
         tap(s, 59)
         assert help_state(s)["active"]
         s.ctl("keyword", "plugin:hyprspace:overview:help_key", "")
+        tap(s, 59)
+        assert help_state(s)["active"]
         tap(s, 1)
         question(s)
-        assert not help_state(s)["active"]
+        assert help_state(s)["active"]
+        tap(s, 1)
         s.ctl("keyword", "plugin:hyprspace:overview:help_key", "question")
         for option, value in (("zoom_key", "z"), ("follow_key", "f"), ("window_view_key", "g"), ("empty_workspace_key", "n"), ("workspace_drag_modifiers", "SUPER ALT")):
             s.ctl("keyword", "plugin:hyprspace:overview:" + option, value)
-        s.check("help reflects live key remapping and modifiers; its own key can be remapped or disabled")
+        s.check("help reflects inspection and drag settings, retains fixed leader commands despite deprecated remaps, and supports an optional Normal-mode help alias")
 
         question(s)
         search(s, "follow")
@@ -164,7 +181,7 @@ def run(s, wait_for):
         tap(s, 1); tap(s, 1)
         s.check("foreground keyboard ownership preserves help and its query while invalidating held text across handoff")
 
-        tap(s, 34)
+        leader(s, 47)  # Space v
         wait_for(lambda: s.status()["window_board"]["active"])
         selected = s.status()["window_board"]["selected_window"]
         question(s)
@@ -175,13 +192,17 @@ def run(s, wait_for):
         assert s.status()["window_board"]["query"] == "?" and not help_state(s)["active"]
         s.ctl("keyword", "plugin:hyprspace:overview:help_key", "F1")
         tap(s, 59)
+        assert not help_state(s)["active"] and s.status()["window_board"]["search_focused"]
+        assert s.status()["window_board"]["query"] == "?"
+        tap(s, 28)
+        tap(s, 59)
         assert help_state(s)["active"] and s.status()["window_board"]["query"] == "?"
         tap(s, 59)
         assert not help_state(s)["active"] and s.status()["window_board"]["query"] == "?"
         s.ctl("keyword", "plugin:hyprspace:overview:help_key", "question")
-        tap(s, 1)
-        tap(s, 34)
-        s.check("help returns to the same window board selection, while ? remains literal input in an existing window search")
+        leader(s, 17)  # Space w returns to the workspace canvas.
+        assert not s.status()["window_board"]["active"]
+        s.check("help returns to the same board selection and retained Normal query; ? stays literal in Insert and optional aliases do not interrupt editing")
 
         opened(s, wait_for)
         s.key(44, 1); inspection(s, wait_for, 1)

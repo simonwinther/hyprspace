@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tarfile
@@ -16,6 +17,22 @@ PROJECT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location("release_check", PROJECT / "scripts/check-release.py")
 RELEASE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RELEASE)
+
+
+class WorkflowTests(unittest.TestCase):
+    @staticmethod
+    def events(name):
+        workflow = (PROJECT / ".github/workflows" / name).read_text()
+        triggers = workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        return set(re.findall(r"^  ([a-z_]+):", triggers, re.M))
+
+    def test_development_pushes_cannot_prepare_or_create_a_release(self):
+        self.assertEqual(self.events("release-please.yml"), {"workflow_dispatch"})
+        self.assertEqual(self.events("release.yml"), {"workflow_dispatch", "workflow_call"})
+        release_please = (PROJECT / ".github/workflows/release-please.yml").read_text()
+        self.assertIn("          target-branch: main\n", release_please)
+        checks = (PROJECT / ".github/workflows/checks.yml").read_text()
+        self.assertRegex(checks, r"(?m)^  push:\n    branches: \[main\]$")
 
 
 class ReleaseTests(unittest.TestCase):

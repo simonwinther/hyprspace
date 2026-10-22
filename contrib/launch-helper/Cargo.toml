@@ -1,0 +1,16 @@
+[package]
+name = "hyprspace-launch"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.74"
+license = "MIT"
+description = "Per-process Hyprspace launch context and service forwarding"
+
+[dependencies]
+libc = "=0.2.186"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

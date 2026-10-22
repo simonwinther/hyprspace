@@ -110,6 +110,7 @@ def run(s, wait_for):
             open_workspace(workspace)
             s.key(Z, 1)
             inspection(s, wait_for, 1)
+            s.move(center(tile(s, workspace)))
             if not s.status()["zoom"]["cursor_follow_enabled"]:
                 tap(s, F)
             s.ctl("keyword", "animations:enabled", "true")
@@ -212,6 +213,7 @@ def run(s, wait_for):
         open_workspace()
         s.key(Z, 1)
         inspection(s, wait_for, 1)
+        s.move(center(tile(s, 11)))
         wheel(s, -32)
         inspection(s, wait_for, 4)
         for namespace in ("waybar-cursor-boundary", "cursor-boundary-foreground"):
@@ -249,6 +251,8 @@ def run(s, wait_for):
         for workspace_drag in (False, True):
             open_workspace()
             s.key(Z, 1)
+            inspection(s, wait_for, 1)
+            s.move(center(tile(s, 11)))
             wheel(s, -32)
             inspection(s, wait_for, 4)
             point = start
@@ -316,6 +320,7 @@ def run(s, wait_for):
         open_workspace()
         s.key(Z, 1)
         inspection(s, wait_for, 1)
+        s.move(center(tile(s, 11)))
         wheel(s, -32)
         inspection(s, wait_for, 4)
         s.move(start)
@@ -334,6 +339,8 @@ def run(s, wait_for):
         primary_destinations(s)
         open_workspace()
         s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        s.move(center(tile(s, 11)))
         wheel(s, -32)
         inspection(s, wait_for, 4)
         locker = s.spawn([str(s.artifact("test-lock"))], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
@@ -358,6 +365,8 @@ def run(s, wait_for):
 
         open_workspace()
         s.key(Z, 1)
+        inspection(s, wait_for, 1)
+        s.move(center(tile(s, 11)))
         wheel(s, -32)
         inspection(s, wait_for, 4)
         s.ctl("plugin", "unload", str(fixture))

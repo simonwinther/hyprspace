@@ -19,7 +19,8 @@ focus and restores normal routing when the overview closes or the plugin unloads
 
 Install Rust/Cargo, Go (at least the version in Elephant's go.mod), pkg-config,
 GTK4 development files, gtk4-layer-shell, protobuf and patch using your system's
-package manager. The plugin also needs Python 3 for its launch helper.
+package manager. The launch helper is a Rust executable built by `make assets`;
+Python 3 is used for companion build/install tooling and tests.
 
 From the repository:
 

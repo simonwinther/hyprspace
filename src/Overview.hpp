@@ -4,6 +4,7 @@
 // each showing live windows. Fullscreen workspaces spread their previews apart.
 
 #pragma once
+#include "InputModel.hpp"
 
 #include "Capture.hpp"
 #include "Geometry.hpp"
@@ -65,7 +66,8 @@ namespace hyprspace {
         }
 
         // --- input ---
-        bool onKey(xkb_keysym_t sym, uint32_t mods, bool pressed);
+        bool perform(EInputAction action);
+        void workspaceDigit(int digit);
         void onMouseMove(const Vector2D& globalPos);
         bool onMouseButton(uint32_t button, bool pressed, uint32_t mods);
         void onScroll(const SScrollInput& event);
@@ -95,7 +97,6 @@ namespace hyprspace {
         bool                              zoomNavigationReady() const;
         bool                              inspectScroll(const SScrollInput& event, const Vector2D& globalPos);
         bool                              inspectZoom(double detents, double factor, std::optional<Vector2D> globalPos = std::nullopt);
-        void                              panInspectionKey(const Vector2D& delta);
         bool                              inspectionReady() const;
         bool                              inspectionActive() const;
         bool                              inspectionTransitioning() const;
@@ -103,6 +104,7 @@ namespace hyprspace {
         bool                              inspectionPanAvailable(const Vector2D& globalPos) const;
         bool                              inspectionFollowAvailable(const Vector2D& globalPos) const;
         bool                              beginInspectionPan(const Vector2D& globalPos);
+        void                              panInspectionKey(const Vector2D& delta);
         void                              panInspection(const Vector2D& delta);
         bool                              followInspection(CInspectionFollow& follow, CInspectionFollow::Clock::time_point now);
         double                            inspectionFactor() const;
@@ -146,6 +148,7 @@ namespace hyprspace {
         // One workspace tile.
         struct SEntry {
             long                              workspaceId = 0;
+            int64_t                           localNumber = 0;
             std::string                       name;
             std::string                       workspaceName;
             std::vector<SWindowSlot>          windows;
@@ -178,7 +181,7 @@ namespace hyprspace {
         // Actual desktop bounds, independent of its overview placement.
         SBoxF                  boxFor(const PHLWINDOW& w) const;
         SWindowPreviewGeometry geometryFor(const SEntry& entry, const SWindowSlot& slot) const;
-        SWorkspacePreviewStyle styleFor(const SEntry& entry, bool selected) const;
+        SWorkspacePreviewStyle styleFor(const SEntry& entry) const;
         float                  visibilityFor(const SEntry& entry, const SWindowSlot& slot) const;
 
         SBoxF           interpolate(const SEntry& e) const;

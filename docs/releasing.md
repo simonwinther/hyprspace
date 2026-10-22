@@ -1,9 +1,12 @@
 # Releasing hyprspace
 
 Published GitHub releases are the stable-version list. Each contains source and
-SHA-256 checksums. Release Please opens a version PR and creates a draft and tag
-after it is merged. The artifact workflow checks the exact tagged commit before
-attaching files. A maintainer reviews and publishes the draft separately.
+SHA-256 checksums. Ordinary pushes to `main` run Checks only; they do not prepare
+a release, open a release PR or create a tag. A maintainer must run **Release
+Please** manually from `main` to prepare a version PR, and run it again after
+merging that PR to create its draft and tag. The artifact workflow checks the
+exact tagged commit before attaching files. A maintainer reviews and publishes
+the draft separately.
 
 ## Repository setup
 
@@ -18,6 +21,10 @@ review and publish a release after its checks and compatibility review pass.
 No workflow publishes releases.
 
 ## Review the version PR
+
+When ready to prepare a release, select **Actions > Release Please > Run
+workflow**, choose `main`, and start the workflow. It always targets `main`.
+Do not run it as part of an ordinary development push.
 
 The single package uses the existing `type(scope): subject` commit convention.
 Release Please starts at `1.0.0`; later feature and fix commits produce ordinary
@@ -39,7 +46,9 @@ release headings. Include the supported compositor commit and validation evidenc
 Update the README's selected installation tag only to the version being reviewed;
 remove its first-release availability notice when preparing the initial public
 release. Verify that any proposed compatibility change has the evidence below.
-Review all changes and wait for Checks before merging.
+Review all changes and wait for Checks before merging. After the release PR is
+merged, run **Release Please** manually again from `main` to create the draft
+and tag; merging the PR alone does not start release automation.
 
 The [Release Please configuration](https://github.com/googleapis/release-please/blob/main/docs/manifest-releaser.md)
 sets `draft` and `force-tag-creation`. The latter creates the tag immediately,

@@ -46,7 +46,9 @@ namespace hyprspace {
         uint64_t    key     = 0;
         int64_t     monitor = 0, workspace = 0;
         std::string monitorName, workspaceName, appId, appName, appClass, title;
-        size_t      recent                                    = std::numeric_limits<size_t>::max();
+        size_t      recent = std::numeric_limits<size_t>::max();
+        std::string workspaceDisplay;
+        int64_t     workspaceOrder                            = 0;
         bool        operator==(const SWindowViewInput&) const = default;
     };
 
@@ -69,12 +71,13 @@ namespace hyprspace {
         if (!term.empty())
             terms.push_back(term);
 
-        auto                location = [&](size_t i) { return std::tuple{input[i].monitor, input[i].workspace, input[i].key}; };
+        auto location = [&](size_t i) { return std::tuple{input[i].monitor, input[i].workspaceOrder ? input[i].workspaceOrder : input[i].workspace, input[i].key}; };
         std::vector<size_t> ordered;
         for (size_t i = 0; i < input.size(); ++i) {
             const auto& window   = input[i];
-            const auto  haystack = foldWindowSearch(window.title + " " + window.appName + " " + window.appClass + " " + window.workspaceName + " " +
-                                                    std::to_string(window.workspace) + " " + window.monitorName);
+            const auto  haystack = foldWindowSearch(
+                window.title + " " + window.appName + " " + window.appClass + " " +
+                (window.workspaceDisplay.empty() ? window.workspaceName + " " + std::to_string(window.workspace) : window.workspaceDisplay) + " " + window.monitorName);
             if (std::ranges::all_of(terms, [&](const auto& word) { return haystack.find(word) != std::string::npos; }))
                 ordered.push_back(i);
         }
@@ -95,7 +98,7 @@ namespace hyprspace {
                 break;
             case EWindowGrouping::WORKSPACE:
                 key   = std::to_string(window.monitor) + ":" + std::to_string(window.workspace);
-                label = workspaceLabel(window.workspace, window.workspaceName) + " · " + window.monitorName;
+                label = (window.workspaceDisplay.empty() ? workspaceLabel(window.workspace, window.workspaceName) : window.workspaceDisplay) + " · " + window.monitorName;
                 break;
             case EWindowGrouping::MONITOR:
                 key   = std::to_string(window.monitor);

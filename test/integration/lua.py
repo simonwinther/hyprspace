@@ -253,6 +253,13 @@ def lifecycle(s, wait_for):
         s.ctl("eval", 'local result = hl.plugin.hyprspace.help(); assert(not result.ok and result.error:find("overview"))')
         s.check(f"Lua {phase} help opens searchable controls, preserves selection and rejects invalid or inactive calls")
 
+    def retired_exports_absent(phase):
+        for function in ("navigate", "history"):
+            s.ctl("eval", f'local ok, value = pcall(function() return hl.plugin.hyprspace.{function} end); '
+                  'assert(not ok or value == nil, "retired function is still exported")')
+        assert "history" not in s.status()
+        s.check(f"Lua {phase} has no retired visit functions")
+
     try:
         for phase in ("startup", "reload-1", "reload-2"):
             if phase != "startup":
@@ -263,6 +270,7 @@ def lifecycle(s, wait_for):
             toggle_selection(phase)
             window_views(phase)
             help_overlay(phase)
+            retired_exports_absent(phase)
         # Invalid configurations must not poison the next valid Lua state.
         reload("local invalid = )\n", error="syntax")
         reload()

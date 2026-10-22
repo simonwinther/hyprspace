@@ -1,10 +1,15 @@
 """Close empty workspace cards without dismissing the overview or losing windows."""
 
-from empty_workspaces import button, native, opened, press, reset, selected, view
+from empty_workspaces import button, native, opened, press, reset, selected, tap, view
 from launch_regressions import delayed
 from zoom import center, tile
 
-Q, X, Z = 16, 45, 44
+Q, X, Z, SPACE = 16, 45, 44, 57
+
+
+def close_key(s):
+    tap(s, SPACE)
+    tap(s, X)
 
 
 def select(s, wait_for, workspace, monitor):
@@ -42,27 +47,27 @@ def run(s, wait_for):
         before = native(s)
         geometry = s.geometry()
         cursor = s.data("cursorpos")
-        press(s, Q)
+        close_key(s)
         gone(s, wait_for, workspace, 0)
         wait_for(lambda: not any(w["id"] == workspace for w in s.data("workspaces")))
         assert native(s) == before and s.geometry() == geometry and s.data("cursorpos") == cursor
         assert s.status()["target"]["workspace"] == 11
-        s.check("Q closes a prepared empty workspace, keeps the overview open, and preserves the active desktop, cursor and windows")
+        s.check("Space x closes a prepared empty workspace, keeps the overview open, and preserves the active desktop, cursor and windows")
 
         reset(s, wait_for)
         opened(s, wait_for)
         select(s, wait_for, 11, 0)
         before = native(s)
         geometry = s.geometry()
-        press(s, Q)
+        close_key(s)
         assert s.geometry() == geometry and native(s) == before
         assert any(t["workspace"] == 11 for t in view(s, 0)["tiles"])
         assert "only empty workspaces" in s.ctl("dispatch", "hyprspace:closeworkspace")
-        s.check("Q and the dispatcher protect populated workspaces")
+        s.check("Space x and the dispatcher protect populated workspaces")
 
         select(s, wait_for, 13, 2)
         before = native(s)
-        press(s, Q)
+        close_key(s)
         assert native(s) == before and active(s, 2) == 13
         assert "last workspace" in s.ctl("dispatch", "hyprspace:closeworkspace")
         assert any(t["workspace"] == 13 for t in view(s, 2)["tiles"])
@@ -79,7 +84,7 @@ def run(s, wait_for):
         replacement = nearest(s, 31, 0)
         geometry = s.geometry()
         s.run("grim", "-s", "1", "-c", "-o", s.names[0], str(s.root / "close-workspace-before.png"))
-        press(s, Q)
+        close_key(s)
         gone(s, wait_for, 31, 0)
         wait_for(lambda: not any(w["id"] == 31 for w in s.data("workspaces")))
         assert active(s, 0) == replacement and s.status()["target"]["workspace"] == replacement
@@ -87,8 +92,14 @@ def run(s, wait_for):
         s.run("grim", "-s", "1", "-c", "-o", s.names[0], str(s.root / "close-workspace-after.png"))
         s.check("closing an active empty workspace activates its nearest remaining tile and keeps the overview open")
 
-        assert replacement == 32
-        press(s, Q)
+        # Grid column count changes with the responsive canvas. The nearest
+        # neighbor above is asserted geometrically; activate the remaining
+        # empty workspace explicitly for the populated-neighbor focus case.
+        if replacement != 32:
+            s.ctl("dispatch", "workspace", "32")
+            wait_for(lambda: active(s, 0) == 32)
+            select(s, wait_for, 32, 0)
+        close_key(s)
         gone(s, wait_for, 32, 0)
         assert active(s, 0) == 11 and s.data("activewindow")["address"] == s.windows()["hs-A"]["address"]
         assert s.geometry() == geometry
@@ -102,27 +113,28 @@ def run(s, wait_for):
         opened(s, wait_for)
         select(s, wait_for, 31, 0)
         before = active(s, 0)
-        s.key(Q, 1)
+        tap(s, SPACE)
+        s.key(X, 1)
         gone(s, wait_for, 31, 0)
         select(s, wait_for, 32, 0)
         for _ in range(3):
-            s.key(Q, 1)
+            s.key(X, 1)
         assert any(t["workspace"] == 32 for t in view(s, 0)["tiles"]) and active(s, 0) == before
-        s.key(Q, 0)
-        press(s, Q)
+        s.key(X, 0)
+        close_key(s)
         gone(s, wait_for, 32, 0)
-        s.check("holding Q closes once; a new physical press can close the next empty workspace")
+        s.check("holding the final Space x key closes once; a new physical press can close the next empty workspace")
 
         reset(s, wait_for)
         opened(s, wait_for)
         workspace = prepare(s, wait_for)
         s.key(Z, 1)
         wait_for(lambda: s.status()["zoom"]["held"])
-        press(s, Q)
+        s.ctl("dispatch", "hyprspace:closeworkspace")
         gone(s, wait_for, workspace, 0)
         s.key(Z, 0)
         assert not s.status()["zoom"]["held"]
-        s.check("Q can close an inspected empty workspace without closing the overview or leaving zoom held")
+        s.check("the close dispatcher can close an inspected empty workspace without closing the overview or leaving zoom held")
 
         reset(s, wait_for)
         opened(s, wait_for)
@@ -134,17 +146,17 @@ def run(s, wait_for):
         assert s.status()["target"]["workspace"] == workspace
         s.move(center(tile(s, 13, s.names[2])))
         before = native(s)
-        press(s, Q)
+        close_key(s)
         gone(s, wait_for, workspace, 0)
         assert native(s) == before and active(s, 2) == 13
-        s.check("Q acts on the keyboard selection with follow_mouse disabled, independently of the pointer's output")
+        s.check("Space x acts on the keyboard selection with follow_mouse disabled, independently of the pointer's output")
 
         reset(s, wait_for)
         s.ctl("keyword", "workspace", f"name:hs-close-named,monitor:{s.names[0]},persistent:true")
         workspace = wait_for(lambda: next((w["id"] for w in s.data("workspaces") if w["name"] == "hs-close-named"), None))
         opened(s, wait_for)
         select(s, wait_for, workspace, 0)
-        press(s, Q)
+        close_key(s)
         gone(s, wait_for, workspace, 0)
         wait_for(lambda: not any(w["id"] == workspace for w in s.data("workspaces")))
         s.check("empty named normal workspaces can be closed")
@@ -155,10 +167,10 @@ def run(s, wait_for):
         opened(s, wait_for)
         select(s, wait_for, workspace, 0)
         before = native(s)
-        press(s, Q)
+        close_key(s)
         assert native(s) == before and any(t["workspace"] == workspace for t in view(s, 0)["tiles"])
         assert "normal workspace" in s.ctl("dispatch", "hyprspace:closeworkspace")
-        s.check("Q protects special workspaces")
+        s.check("Space x protects special workspaces")
 
         reset(s, wait_for)
         opened(s, wait_for)
@@ -168,7 +180,7 @@ def run(s, wait_for):
         if not s.status()["live"]:
             opened(s, wait_for)
             assert prepare(s, wait_for) == workspace
-        press(s, Q)
+        close_key(s)
         gone(s, wait_for, workspace, 0)
         gate.touch()
         wait_for(lambda: s.windows().get("hs-close-delayed", {}).get("workspace", {}).get("id") == workspace)
@@ -181,22 +193,26 @@ def run(s, wait_for):
         workspace = prepare(s, wait_for)
         s.ctl("dispatch", "hyprspace:help", "on")
         help_entry = next(e for e in s.status()["help"]["entries"] if e["id"] == "close-workspace")
-        assert help_entry["keys"] == "Q" and help_entry["title"] == "Close an empty workspace"
+        assert help_entry["keys"] == "Space → x" and help_entry["title"] == "Close an empty workspace"
         s.ctl("keyword", "plugin:hyprspace:overview:close_workspace_key", "x")
-        wait_for(lambda: next(e for e in s.status()["help"]["entries"] if e["id"] == "close-workspace")["keys"] == "X")
+        assert next(e for e in s.status()["help"]["entries"] if e["id"] == "close-workspace")["keys"] == "Space → x"
         s.ctl("dispatch", "hyprspace:help", "off")
-        press(s, Q)
+        tap(s, Q)
+        tap(s, X)
         assert any(t["workspace"] == workspace for t in view(s, 0)["tiles"])
-        press(s, X)
+        close_key(s)
         gone(s, wait_for, workspace, 0)
         workspace = prepare(s, wait_for)
         s.ctl("keyword", "plugin:hyprspace:overview:close_workspace_key", "")
-        press(s, Q)
-        press(s, X)
+        tap(s, Q)
+        tap(s, X)
         assert any(t["workspace"] == workspace for t in view(s, 0)["tiles"])
+        close_key(s)
+        gone(s, wait_for, workspace, 0)
+        workspace = prepare(s, wait_for)
         assert s.ctl("dispatch", "hyprspace:closeworkspace") == "ok"
         gone(s, wait_for, workspace, 0)
-        s.check("the close shortcut appears in help, can be remapped or disabled, and leaves the dispatcher available")
+        s.check("help advertises fixed Space x; deprecated remapping/disable settings leave bare letters inert and retain the leader action and dispatcher")
 
         workspace = prepare(s, wait_for)
         s.ctl("keyword", "plugin:hyprspace:overview:close_workspace_key", "q")
@@ -205,9 +221,11 @@ def run(s, wait_for):
         wait_for(lambda: s.status()["zoom"]["held"])
         s.key(Q, 0)
         assert any(t["workspace"] == workspace for t in view(s, 0)["tiles"])
-        s.check("an existing Q zoom binding takes precedence over the new close shortcut")
+        s.check("a nonreserved Q zoom alias remains available independently of the deprecated close-key setting")
     finally:
         s.key(Q, 0)
+        s.key(X, 0)
+        s.key(SPACE, 0)
         s.key(Z, 0)
         s.close()
         s.ctl("reload")

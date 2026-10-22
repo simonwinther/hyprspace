@@ -18,6 +18,21 @@ def tap(s, code):
     s.key(code, 0)
 
 
+def leader(s, code):
+    tap(s, SPACE)
+    assert s.status()["input"]["prefix"] == "space", s.status()["input"]
+    tap(s, code)
+
+
+def clear_search(s):
+    # Escape finishes Insert without erasing; clearing is an explicit edit.
+    if not board(s)["search_focused"]:
+        tap(s, 23)  # i
+    s.run("wtype", "-M", "ctrl", "u", "-m", "ctrl")
+    tap(s, 1)
+    assert board(s)["query"] == "" and not board(s)["search_focused"]
+
+
 def opened(s, wait_for, mode="flat"):
     s.ctl("dispatch", "hyprspace:overview", "on")
     wait_for(lambda: s.status()["live"])
@@ -76,6 +91,9 @@ def overview_search(s, wait_for):
         assert placement(s) == original and s.data("activewindow")["address"] == original_focus
         assert not log.read_text(), log.read_text()
         s.run("wtype", "-k", "Return")
+        assert board(s)["active"] and not board(s)["search_focused"]
+        assert board(s)["query"] == "CHROME project" and s.status()["live"]
+        s.run("wtype", "-k", "Return")
         wait_for(lambda: not s.status()["views"])
         assert s.data("activewindow")["address"] == project
         assert s.data("activeworkspace")["id"] == 12 and placement(s) == original
@@ -88,13 +106,13 @@ def overview_search(s, wait_for):
         assert board(s)["grouping"] == "flat"
         assert board(s)["selected_window"] == s.windows()["hs-Release notes"]["address"]
         s.run("wtype", "-k", "Escape")
-        assert board(s)["active"] and not board(s)["search_focused"] and board(s)["query"] == ""
-        assert board(s)["count"] == 5
+        assert board(s)["active"] and not board(s)["search_focused"] and board(s)["query"] == "release notes"
+        assert board(s)["count"] == 1
         s.run("wtype", "-k", "Escape")
         assert s.status()["live"] and not board(s)["active"]
         s.run("wtype", "-k", "Escape")
         wait_for(lambda: not s.status()["views"])
-        s.check("/ from workspaces searches app names and titles across outputs; Enter focuses the native window and Escape unwinds search and views")
+        s.check("/ searches app names and titles across outputs; Enter finishes Insert, the next Enter opens, and Escape retains results before returning to workspaces")
         s.check("the search opener acts once through repeats and close/reopen, without typing a slash or leaking input")
     finally:
         s.key(53, 0)
@@ -240,9 +258,11 @@ def danish_search(s, wait_for):
         assert board(s)["query"] == "/æøåG7", board(s)
         assert board(s)["active"] and board(s)["count"] == 0
         assert not log.read_text(), log.read_text()
-        press(1)  # Escape clears the search without leaving the board.
-        assert not board(s)["search_focused"] and board(s)["query"] == ""
-        assert board(s)["count"] == 3 and placement(s) == before
+        press(1)  # Escape retains the query in Normal mode.
+        assert not board(s)["search_focused"] and board(s)["query"] == "/æøåG7"
+        assert board(s)["count"] == 0 and placement(s) == before
+        clear_search(s)
+        assert board(s)["count"] == 3
 
         # A modified slash must still reach Hyprland's native binding matcher.
         s.ctl("keyword", "bind", "CTRL SHIFT,7,togglefloating")
@@ -304,6 +324,7 @@ def search_field(s, wait_for):
     s.run("wtype", "-k", "Tab")
     assert board(s)["selected_window"] != before["selected_window"]
     assert board(s)["query"] == before["query"] and board(s)["search_cursor"] == before["search_cursor"]
+    assert board(s)["search_focused"] and s.status()["input"]["mode"] == "insert"
     s.run("wtype", "-M", "ctrl", "a", "-m", "ctrl", "æøå", "-k", "Home", "-k", "Right")
     caret = board(s)["search_caret"]
     host = next(m for m in s.data("monitors") if m["name"] == board(s)["monitor"])
@@ -399,10 +420,10 @@ def cursor_follow(s, wait_for):
         assert abs(followed["y"] - (fitted["y"] * 4 - pointer["y"] * 3)) < .1
         assert followed["x"] < before["x"] and followed["y"] < before["y"]
         assert board(s)["selected_window"] == selected and placement(s) == native
-        s.check("G-view inspection shares bounded follow, its calm zone and settled status without changing selection or native placement")
+        s.check("window-board inspection shares bounded follow, its calm zone and settled status without changing selection or native placement")
 
         follow_corners(s, wait_for, host, fitted, chosen, "cursor-follow-board")
-        s.check("G-view follow also reaches all full-output corners and resumes inward immediately")
+        s.check("window-board follow also reaches all full-output corners and resumes inward immediately")
         monitor = next(m for m in s.data("monitors") if m["name"] == host)
         namespace = "waybar-cursor-follow-board"
         panel = s.spawn(["python3", str(s.artifact("layer.py")), str(s.root / namespace), namespace, "pointer", f'{monitor["x"]},{monitor["y"]}'])
@@ -418,7 +439,7 @@ def cursor_follow(s, wait_for):
         panel.terminate()
         panel.wait(timeout=3)
         panel = None
-        s.check("Waybar cannot interrupt G-view follow, and hiding its hint retains the saved mode")
+        s.check("Waybar cannot interrupt window-board follow, and hiding its hint retains the saved mode")
 
         s.move(center(fitted))
         s.scroll(delta=480, discrete=32)
@@ -426,14 +447,14 @@ def cursor_follow(s, wait_for):
         s.scroll(delta=-480, discrete=-32)
         inspection(s, wait_for, 4)
         follow_during_zoom(s, wait_for, fitted, chosen)
-        s.check("a single immediate mouse movement steers an unfinished G-view zoom without freezing magnification or requiring another motion")
+        s.check("a single immediate mouse movement steers an unfinished window-board zoom without freezing magnification or requiring another motion")
         s.key(PLUS, 1)
         s.motion(20, 10)
         assert s.status()["zoom"]["cursor_follow_settling"] and s.status()["zoom"]["inspection_transitioning"]
         s.key(PLUS, 0)
         inspection(s, wait_for, 4 / 1.15)
         assert_follow_framing(fitted, chosen(), s.data("cursorpos"), 4 / 1.15)
-        s.check("G-view follows during a held keyboard zoom key and reaches the requested scale")
+        s.check("window-board follows during a held keyboard zoom key and reaches the requested scale")
         s.ctl("keyword", "animations:enabled", "false")
         s.scroll(delta=480, discrete=32)
         inspection(s, wait_for, 1)
@@ -470,12 +491,12 @@ def cursor_follow(s, wait_for):
         inspection(s, wait_for, 1)
         assert same_geometry({0: fitted}, {0: chosen()})
         s.key(Z, 0)
-        tap(s, G)
+        leader(s, 17)  # Space w
         assert not board(s)["active"] and s.status()["zoom"]["cursor_follow_enabled"]
-        tap(s, G)
+        leader(s, 47)  # Space v
         assert board(s)["active"] and s.status()["zoom"]["cursor_follow_enabled"]
         assert not s.status()["zoom"]["cursor_follow_settling"]
-        s.check("G-view manual grabs override follow, wheel-out restores the exact fit and view changes retain only the toggle")
+        s.check("window-board manual grabs override follow, wheel-out restores the exact fit and leader view changes retain only the toggle")
 
         # Inspect a window whose native output differs from the presentation host.
         monitors = {m["id"]: m["name"] for m in s.data("monitors")}
@@ -512,6 +533,8 @@ def cursor_follow(s, wait_for):
         assert board(s)["query"] == "f" and s.status()["zoom"]["cursor_follow_enabled"]
         s.check("a new board opening retains enabled follow while F remains ordinary text in search")
         s.run("wtype", "-k", "Escape")
+        assert board(s)["query"] == "f" and not board(s)["search_focused"]
+        clear_search(s)
         s.key(Z, 1)
         inspection(s, wait_for, 1)
         tap(s, F)
@@ -544,11 +567,12 @@ def run(s, wait_for):
     s.ctl("dispatch", "hyprspace:overview", "on")
     wait_for(lambda: len(s.status()["views"]) == 3)
     s.move(s.preview_point("hs-A"))
-    s.key(G, 1)
+    tap(s, SPACE)
+    s.key(47, 1)  # Space v opens the board.
     wait_for(lambda: board(s)["active"])
-    s.key(G, 1)  # A repeated press must not toggle a second time.
-    assert board(s)["active"]
-    s.key(G, 0)
+    s.key(47, 1)  # A held leader suffix must not act again.
+    assert board(s)["active"] and s.status()["input"]["prefix"] == ""
+    s.key(47, 0)
     assert {p["window"] for p in board(s)["previews"]} == addresses
     assert board(s)["monitor"] == s.names[0]
     assert s.data("activewindow")["address"] == original_focus
@@ -560,11 +584,9 @@ def run(s, wait_for):
         assert {p["window"] for p in board(s)["previews"]} == addresses
         assert placement(s) == original
         assert s.data("activewindow")["address"] == original_focus
-    s.key(SHIFT, 1)
-    tap(s, G)
-    s.key(SHIFT, 0)
+    leader(s, G)  # Space g
     assert board(s)["grouping"] == "app"
-    tap(s, 19)  # R
+    leader(s, 19)  # Space r
     assert board(s)["sort"] == "recent"
     order = [p["window"] for p in board(s)["previews"]]
     for _ in range(4):
@@ -582,6 +604,9 @@ def run(s, wait_for):
     assert board(s)["query"] == "HS-b g rs 2", board(s)
     assert board(s)["count"] == 0
     s.run("wtype", "-k", "Return")
+    assert s.status()["live"] and board(s)["active"] and not board(s)["search_focused"]
+    assert board(s)["query"] == "HS-b g rs 2" and s.status()["input"]["mode"] == "normal"
+    tap(s, 28)  # An empty Normal result set also cannot commit a hidden target.
     assert s.status()["live"] and board(s)["active"]
     assert not log.read_text(), log.read_text()
     s.run("wtype", "-k", "Escape")
@@ -593,7 +618,7 @@ def run(s, wait_for):
     assert placement(s) == original
     s.run("wtype", "g")
     wait_for(lambda: " 103" in log.read_text())
-    s.check("search owns ordinary letters, spaces and digits; empty results cannot commit; Escape unwinds search and views")
+    s.check("Insert owns letters, spaces and digits; empty Normal results cannot commit, and Back restores the prior board before returning to workspaces")
 
     danish_search(s, wait_for)
     search_field(s, wait_for)
@@ -639,6 +664,8 @@ def run(s, wait_for):
         wait_for(lambda: not s.windows()["hs-B"]["floating"])
     finally:
         s.ctl("keyword", "unbind", "CTRL,F6")
+    s.run("wtype", "-k", "Return")
+    assert board(s)["active"] and not board(s)["search_focused"] and board(s)["query"] == "hs-B"
     s.run("wtype", "-k", "Return")
     wait_for(lambda: not s.status()["views"])
     assert s.data("activewindow")["address"] == selected["address"]
@@ -698,6 +725,8 @@ def run(s, wait_for):
     wait_for(lambda: board(s)["count"] == 0)
     assert s.status()["live"]
     s.run("wtype", "-k", "Escape")
+    assert board(s)["query"] == "hs-B" and board(s)["count"] == 0
+    clear_search(s)
     assert board(s)["count"] == 2
     s.close()
     s.check("destroying a selected window removes its card without stale selection or focus")
@@ -706,19 +735,23 @@ def run(s, wait_for):
     s.ctl("keyword", "plugin:hyprspace:overview:window_view_key", "x")
     s.ctl("dispatch", "hyprspace:overview", "on")
     tap(s, G)
-    assert not board(s)["active"]
-    s.key(45, 1)
+    assert not board(s)["active"] and s.status()["input"]["prefix"] == "g"
+    tap(s, 1)  # Cancel gg's prefix without leaving the canvas.
+    tap(s, 45)  # The deprecated x remap cannot replace the shared grammar.
+    assert not board(s)["active"] and s.status()["live"]
+    tap(s, SPACE)
+    s.key(47, 1)
     assert board(s)["active"]
     s.close()
     s.ctl("dispatch", "hyprspace:overview", "on")
-    s.key(45, 1)
+    s.key(47, 1)
     assert not board(s)["active"]
-    s.key(45, 0)
-    tap(s, 45)
+    s.key(47, 0)
+    leader(s, 47)
     assert board(s)["active"]
     s.close()
     s.ctl("keyword", "plugin:hyprspace:overview:window_view_key", "g")
-    s.check("remapped toggle keys act once and their held repeats remain captured across close/reopen")
+    s.check("deprecated view remaps leave gg and Space v intact; a held leader suffix stays captured across close/reopen")
 
     scrolling(s, wait_for)
     lifecycle(s, wait_for)
@@ -783,6 +816,37 @@ def lifecycle(s, wait_for):
             foreground.wait(timeout=3)
         s.close()
     s.check("foreground layers own typing and Escape; closing them restores board search without leaking keys")
+
+    # A physical hold is invalidated as soon as a launcher owns the keyboard.
+    opened(s, wait_for)
+    search(s, "foreground hold abcdefghijklmnop")
+    initial = board(s)["query"]
+    s.key(14, 1)
+    wait_for(lambda: board(s)["query"] != initial)
+    foreground = s.spawn(["python3", str(s.artifact("layer.py")), str(s.root / "board-held-foreground")])
+    try:
+        wait_for(lambda: s.layer("hs-foreground") and not s.status()["keyboard_owned"])
+        query = board(s)["query"]
+        assert query and board(s)["search_focused"]
+        time.sleep(.75)  # Pass the ordinary repeat delay while the launcher owns input.
+        assert board(s)["query"] == query
+        foreground.terminate()
+        foreground.wait(timeout=3)
+        wait_for(lambda: s.status()["keyboard_owned"])
+        assert board(s)["query"] == query and board(s)["search_focused"]
+        s.key(14, 1)  # Same physical hold, without an intervening release.
+        time.sleep(.75)
+        assert board(s)["query"] == query, board(s)
+        s.key(14, 0)
+        tap(s, 14)  # A fresh press after release edits normally.
+        assert board(s)["query"] == query[:-1] and board(s)["search_focused"]
+    finally:
+        s.key(14, 0)
+        if foreground.poll() is None:
+            foreground.terminate()
+            foreground.wait(timeout=3)
+        s.close()
+    s.check("foreground handoff stops held Backspace; its unreleased replay cannot edit on return, while release and a fresh press resume editing")
 
     # Removing the board's output must relocate its presentation and cancel a lens hold.
     s.ctl("dispatch", "focusmonitor", s.names[1])
@@ -851,26 +915,26 @@ def lifecycle(s, wait_for):
     s.close()
     s.check("unloading an inspected board restores input and resources; reload starts with clean preferences")
 
-    # A conflicting grouping shortcut yields to both existing configurable keys.
-    for name, code in (("zoom_key", Z), ("empty_workspace_key", 49)):
-        key = "z" if name == "zoom_key" else "n"
-        s.ctl("keyword", "plugin:hyprspace:overview:window_view_key", key)
+    # Deprecated view-key values cannot shadow shared leader commands or zoom.
+    for value in ("z", "n", ""):
+        s.ctl("keyword", "plugin:hyprspace:overview:window_view_key", value)
         s.ctl("dispatch", "hyprspace:overview", "on")
-        s.key(code, 1)
-        assert not board(s)["active"]
-        if name == "zoom_key":
-            assert s.status()["zoom"]["held"]
-        s.key(code, 0)
+        if value == "z":
+            s.key(Z, 1)
+            assert not board(s)["active"] and s.status()["zoom"]["held"]
+            s.key(Z, 0)
+        else:
+            tap(s, 49)  # n is Normal result navigation, never a view toggle.
+            assert not board(s)["active"] and s.status()["live"]
+        leader(s, 47)
+        assert board(s)["active"]
         s.close()
-    s.ctl("keyword", "plugin:hyprspace:overview:window_view_key", "")
     s.ctl("dispatch", "hyprspace:overview", "on")
-    tap(s, G)
-    assert not board(s)["active"]
     s.ctl("dispatch", "hyprspace:windowview", "app")
-    assert board(s)["active"]
+    assert board(s)["active"] and board(s)["grouping"] == "app"
     s.close()
     s.ctl("keyword", "plugin:hyprspace:overview:window_view_key", "g")
-    s.check("zoom and empty-workspace keys retain precedence; disabling the shortcut keeps dispatchers available")
+    s.check("deprecated view keys cannot shadow inspection or the fixed Space v command; explicit view dispatchers remain available")
 
 
 def workspace_controls(s, wait_for):
@@ -884,7 +948,7 @@ def workspace_controls(s, wait_for):
             s.button(1, 274)
             s.button(0, 274)
         else:
-            tap(s, 49)  # N
+            leader(s, 49)  # Space n
         assert s.status()["live"] and not board(s)["active"]
         assert s.status()["target"]["window"] == "0x0"
         assert placement(s) == before
@@ -893,7 +957,7 @@ def workspace_controls(s, wait_for):
     s.run("wtype", "2")
     wait_for(lambda: not s.status()["views"])
     assert s.data("activeworkspace")["id"] == 2
-    s.check("N, middle-click and workspace digits return to the native workspace controls")
+    s.check("Space n, middle-click and workspace digits return to the native workspace controls")
 
     s.setup("dwindle", 0, 1)
     s.ctl("keyword", "plugin:hyprspace:overview:all_monitors", "false")

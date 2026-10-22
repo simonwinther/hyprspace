@@ -88,7 +88,7 @@ static void testZoomGeometry() {
         CHECK_NEAR(midway.box.x, (snapshot.box.x + endpoint.box.x) / 2, 1e-8);
         CHECK_NEAR(midway.clip.h, (snapshot.clip.h + endpoint.clip.h) / 2, 1e-8);
         for (bool oldAnchor : {false, true}) {
-            const auto style   = workspacePreviewStyle(oldAnchor, false, opening);
+            const auto style   = workspacePreviewStyle(oldAnchor, opening);
             const auto initial = closingWorkspacePreviewStyle(style, !oldAnchor, 1);
             CHECK_NEAR(initial.visibility, style.visibility, 1e-8);
             CHECK_NEAR(initial.windowVisibility, style.windowVisibility, 1e-8);
