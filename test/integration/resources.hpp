@@ -2,9 +2,12 @@
 #pragma once
 
 #include "../../src/Capture.hpp"
+#include "../../src/Config.hpp"
+#include "../../src/PreviewFilter.hpp"
 #include "../../src/Texture.hpp"
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/gl/GLFramebuffer.hpp>
 #include <nlohmann/json.hpp>
@@ -71,6 +74,83 @@ namespace {
                                {"hits", counts.hits - before.hits},
                                {"misses", counts.misses - before.misses},
                                {"failures", counts.failures - before.failures}});
+            } else if (mode == "filter-accounting") {
+                const auto monitor = Desktop::focusState()->monitor();
+                requireResource(monitor != nullptr, "probe needs a private output");
+                clearPreviewFilters();
+                const auto before = previewFilterResources();
+                struct SRestoreFilter {
+                    std::string mode;
+                    ~SRestoreFilter() {
+                        clearPreviewFilters();
+                        HyprlandAPI::invokeHyprctlCommand("keyword", "plugin:hyprspace:overview:preview_filter " + mode);
+                    }
+                } restore{config::overviewPreviewFilter()};
+                const auto filterMode = [](const std::string& value) {
+                    HyprlandAPI::invokeHyprctlCommand("keyword", "plugin:hyprspace:overview:preview_filter " + value);
+                    requireResource(config::overviewPreviewFilter() == value, "filter mode did not change");
+                };
+                const auto source = [&] {
+                    auto fb = createCaptureFramebuffer();
+                    requireResource(fb && fb->alloc(512, 384, DRM_FORMAT_ABGR8888), "filter source allocation failed");
+                    fb->setImageDescription(monitor->workBufferImageDescription());
+                    return fb;
+                };
+                auto first = source(), second = source();
+                auto firstTexture = first->getTexture();
+                filterMode("sharp");
+                auto filtered = previewFilteredTexture(firstTexture, {128, 96});
+                requireResource(filtered != firstTexture, "sharp filter was bypassed");
+                requireResource(previewFilterResources().entries == 1 && previewFilterResources().bytes == 128 * 96 * 8, "first filter bytes are inaccurate");
+                const auto hits = previewFilterResources().hits;
+                requireResource(previewFilteredTexture(firstTexture, {128, 96}) == filtered && previewFilterResources().hits == hits + 1,
+                                "filter hit changed its allocation or missed the cache");
+                previewFilterCaptured(firstTexture);
+                requireResource(previewFilteredTexture(firstTexture, {128, 96}) == filtered && previewFilterResources().bytes == 128 * 96 * 8,
+                                "recapture counted reused filter buffers twice");
+                filtered = previewFilteredTexture(firstTexture, {64, 48});
+                requireResource(previewFilterResources().bytes == 64 * 48 * 8, "resized filter retained old byte accounting");
+                filterMode("area");
+                filtered = previewFilteredTexture(firstTexture, {64, 48});
+                requireResource(previewFilterResources().bytes == 64 * 48 * 4, "area mode retained sharpening bytes");
+                requireResource(previewFilteredTexture(second->getTexture(), {128, 96}) != second->getTexture(), "second filter was bypassed");
+                requireResource(previewFilterResources().entries == 2 && previewFilterResources().bytes == (64 * 48 + 128 * 96) * 4,
+                                "multiple filter byte totals are inaccurate");
+                first.reset();
+                firstTexture.reset();
+                const auto pruned = previewFilterResources();
+                requireResource(pruned.entries == 1 && pruned.bytes == 128 * 96 * 4, "expired source retained filter bytes");
+                requireResource(pruned.peakBytes == std::max(before.peakBytes, size_t{128 * 96 * 8}), "peak filter bytes lost an earlier buffer size");
+                // Exhaust the shared framebuffer entry limit with tiny buffers,
+                // then fail just the additional sharpening buffer. Retaining
+                // the existing area buffer must not subtract or count it twice.
+                std::vector<SP<Render::IFramebuffer>> leases;
+                for (size_t i = 0; i <= SCaptureResources::MAX_CAPTURES; ++i) {
+                    auto fb = createCaptureFramebuffer();
+                    if (!fb->alloc(1, 1, DRM_FORMAT_ABGR8888))
+                        break;
+                    leases.push_back(std::move(fb));
+                }
+                filterMode("sharp");
+                const auto failures = previewFilterResources().failures;
+                requireResource(previewFilteredTexture(second->getTexture(), {128, 96}) == second->getTexture(), "buffer exhaustion did not use source fallback");
+                requireResource(previewFilterResources().bytes == 128 * 96 * 4 && previewFilterResources().failures == failures + 1,
+                                "partial allocation failure changed retained filter byte accounting");
+                requireResource(previewFilteredTexture(second->getTexture(), {128, 96}) == second->getTexture() && previewFilterResources().failures == failures + 1,
+                                "allocation failure retried before its cooldown");
+                leases.clear();
+                clearPreviewFilters();
+                requireResource(previewFilteredTexture(second->getTexture(), {128, 96}) != second->getTexture() && previewFilterResources().bytes == 128 * 96 * 8,
+                                "filter did not recover after clearing failed allocations");
+                clearPreviewFilters();
+                requireResource(previewFilterResources().entries == 0 && previewFilterResources().bytes == 0, "filter clear retained byte accounting");
+                requireResource(glGetError() == GL_NO_ERROR, "filter accounting probe left a GL error");
+                result = {{"resized", true},
+                          {"mode_changed", true},
+                          {"expired_source_pruned", true},
+                          {"allocation_failure_recovered", true},
+                          {"cache_hits", pruned.hits - before.hits},
+                          {"peak_bytes", pruned.peakBytes}};
             } else if (mode == "allocation") {
                 const auto before = captureResources();
                 // Invalid GL dimensions force an incomplete FBO without consuming

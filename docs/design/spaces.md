@@ -55,9 +55,11 @@ contrast against the configured overview background.
 
 `SpaceStyle.hpp` provides opaque semantic surface, text, metadata, hover,
 selection, focus, and action colors for Spaces, Help, window-board controls, and
-the corner command guide. Control surfaces use neutral dark
-`#1b1c1f` and light `#f4f5f7`; window-title colors do not tint them. Configured
-label and action colors are contrast-corrected. Text targets 7:1 contrast in the
+the corner command guide. Control surfaces follow the overview background's
+hue, balanced with a neutral anchor in both themes; window-title colors do not
+tint them. Focused rows use a faint accent wash, and header controls use
+translucent fills so the desktop remains visible. Configured label and action
+colors are contrast-corrected. Text targets 7:1 contrast in the
 standard themes; secondary text has a 4.5:1 floor. Mid-gray custom backgrounds use the best available
 foreground contrast, with a 4.5:1 floor. Icon strokes and field focus rings target
 3:1. Pastel identity colors are darkened for light surfaces while the stored

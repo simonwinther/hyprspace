@@ -1809,19 +1809,18 @@ namespace hyprspace {
             const auto background = rgba(config::overviewBgColor()), label = rgba(config::overviewLabelColor()), accent = rgba(config::overviewActiveBorder());
             const std::array<double, 12> colors{background.r, background.g, background.b, background.a, label.r,  label.g,
                                                 label.b,      label.a,      accent.r,     accent.g,     accent.b, accent.a};
-            const auto                   theme = config::spacesTheme();
             struct SStyle {
                 std::array<double, 12> colors;
-                std::string            theme;
                 spaceStyle::SPalette   palette;
             };
             static std::optional<SStyle> cached;
-            if (!cached || cached->colors != colors || cached->theme != theme)
-                cached = SStyle{colors, theme, spaceStyle::palette(background, {}, label, accent, theme)};
+            if (!cached || cached->colors != colors)
+                cached = SStyle{colors, spaceStyle::palette(background, {}, label, accent)};
             const auto&  palette = cached->palette;
-            const auto   ink = color(palette.text), bg = color(hover ? palette.hover : palette.surface);
+            const auto   ink = color(palette.text), tint = color(palette.focus);
             const double rounding = std::min(10.0, button->h / 2.0);
-            rect(*button, bg.modifyA(PROGRESS), rounding);
+            rect(*button, tint.modifyA(PROGRESS * (hover ? .16F : .075F)), rounding);
+            renderPass::appendOutline(out, *button, tint.modifyA(PROGRESS * (hover ? .32F : .16F)), SCALE, 1, rounding);
 
             const auto& text       = emptyWorkspaceButtonText(SCALE);
             double      keyWidth   = 0;
@@ -1838,7 +1837,7 @@ namespace hyprspace {
             const bool   showPlus   = m_emptyWorkspaceError.empty() && button->w >= 24;
             const double titleInset = showPlus ? 30 : 12;
             if (showPlus) {
-                const auto   color = ink.modifyA(ink.a * PROGRESS * (hover ? 1.F : 0.7F));
+                const auto   color = tint.modifyA(PROGRESS * (hover ? 1.F : .85F));
                 const double left  = button->w < 80 ? button->cx() - 5 : button->x + 12;
                 rect({left, button->cy() - 0.75, 10, 1.5}, color, 0.75);
                 rect({left + 4.25, button->cy() - 5, 1.5, 10}, color, 0.75);

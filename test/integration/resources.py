@@ -9,7 +9,7 @@ def limits(s, wait_for):
     s.ctl("plugin", "load", str(fixture))
     try:
         measurements = {}
-        for mode in ("churn", "allocation"):
+        for mode in ("churn", "allocation", "filter-accounting"):
             response = s.run("hyprctl", "dispatch", "hyprspace-test:resources", mode)
             (s.root / f"resources-{mode}.txt").write_text(response)
             measurements[mode] = json.loads(response)

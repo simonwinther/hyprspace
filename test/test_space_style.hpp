@@ -32,21 +32,20 @@ static void testSpaceStyle() {
     CHECK_NEAR(custom.background.g, customBackground.g, 1e-7);
     CHECK_NEAR(custom.background.b, customBackground.b, 1e-7);
 
-    section("space style: control surfaces stay neutral independently of window-title colors");
-    const auto checkSurface = [&](const SPalette& style, uint32_t expected) {
-        const auto value = rgb(expected);
-        CHECK_NEAR(style.surface.r, value.r, 1e-7);
-        CHECK_NEAR(style.surface.g, value.g, 1e-7);
-        CHECK_NEAR(style.surface.b, value.b, 1e-7);
-    };
-    checkSurface(dark, 0x1b1c1f);
-    checkSurface(light, 0xf4f5f7);
-    checkSurface(forcedDark, 0x1b1c1f);
-    checkSurface(forcedLight, 0xf4f5f7);
+    section("space style: controls follow the overview hue without inheriting window-title colors");
+    const auto blue = palette(rgb(0x11111b), rgb(0x6030c0), rgb(0xcdd6f4), rgb(0x89b4fa));
+    const auto warm = palette(rgb(0x1b1111), rgb(0x40d080), rgb(0xcdd6f4), rgb(0x89b4fa));
+    CHECK(blue.surface.b > blue.surface.r && blue.surface.b > blue.surface.g);
+    CHECK(warm.surface.r > warm.surface.g && warm.surface.r > warm.surface.b);
+    CHECK(luminance(blue.surface) < .025 && luminance(warm.surface) < .025);
+    CHECK(luminance(light.surface) > .8);
+    CHECK(blue.selected.b > blue.hover.b);
     const auto purpleTitle = palette(rgb(0x141518), rgb(0x6030c0), rgb(0xcdd6f4), rgb(0x89b4fa));
     const auto greenTitle  = palette(rgb(0x141518), rgb(0x40d080), rgb(0xcdd6f4), rgb(0x89b4fa));
     for (const auto& style : {purpleTitle, greenTitle}) {
-        checkSurface(style, 0x1b1c1f);
+        CHECK_NEAR(style.surface.r, dark.surface.r, 1e-7);
+        CHECK_NEAR(style.surface.g, dark.surface.g, 1e-7);
+        CHECK_NEAR(style.surface.b, dark.surface.b, 1e-7);
         CHECK_NEAR(style.hover.r, dark.hover.r, 1e-7);
         CHECK_NEAR(style.hover.g, dark.hover.g, 1e-7);
         CHECK_NEAR(style.hover.b, dark.hover.b, 1e-7);
@@ -57,7 +56,7 @@ static void testSpaceStyle() {
 
     section("space style: opaque text, actions and colored symbols remain legible in both themes");
     const auto checkPalette = [&](const SPalette& style, double textMinimum) {
-        for (const auto background : {style.background, style.surface, style.raised}) {
+        for (const auto background : {style.background, style.surface, style.raised, style.hover, style.selected}) {
             CHECK(contrast(style.text, background) >= textMinimum - 1e-5);
             CHECK(contrast(style.muted, background) >= 4.5 - 1e-5);
             CHECK(contrast(style.subtle, background) >= 4.5 - 1e-5);
@@ -75,7 +74,7 @@ static void testSpaceStyle() {
                 CHECK(contrast(symbol, surface) >= 3 - 1e-5);
         }
     };
-    for (const auto& style : {dark, light, forcedLight, forcedDark, custom})
+    for (const auto& style : {dark, light, forcedLight, forcedDark, custom, blue, warm})
         checkPalette(style, 7);
     // A user-provided gray theme near the auto threshold still needs readable
     // text after hover/raised surfaces are derived from its background.

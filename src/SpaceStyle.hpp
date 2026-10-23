@@ -74,16 +74,18 @@ namespace hyprspace::spaceStyle {
         if ((luminance(background) >= .18) != result.light)
             background = result.light ? rgb(0xfff4f5f7) : rgb(0xff141518);
         result.background = opaque(background);
-        // The overview decides brightness; window-title styling must not tint
-        // every control surface. Keep identity and action accents separate.
-        result.surface     = result.light ? rgb(0xf4f5f7) : rgb(0x1b1c1f);
-        result.raised      = mix(result.surface, foreground, result.light ? .025 : .04);
-        result.text        = readableOn(label, {result.background, result.surface, result.raised}, 7);
-        result.muted       = readableOn(mix(result.surface, result.text, .66), {result.background, result.surface, result.raised}, 4.5);
-        result.subtle      = readableOn(mix(result.surface, result.text, .54), {result.background, result.surface, result.raised}, 4.5);
-        result.border      = mix(result.surface, foreground, result.light ? .15 : .13);
-        result.hover       = mix(result.surface, foreground, result.light ? .055 : .065);
-        result.selected    = mix(result.surface, foreground, result.light ? .085 : .10);
+        // Carry the overview's hue into controls instead of placing unrelated
+        // charcoal cards over it. A neutral anchor keeps unusual backgrounds
+        // readable; title-label backgrounds do not influence the controls.
+        result.surface     = mix(result.light ? white : rgb(0x0c0c12), result.background, .65);
+        result.surface     = mix(result.surface, foreground, result.light ? .015 : .02);
+        result.raised      = mix(result.surface, foreground, .025);
+        result.border      = mix(result.surface, foreground, result.light ? .12 : .10);
+        result.hover       = mix(result.surface, foreground, .035);
+        result.selected    = mix(result.surface, accent, result.light ? .08 : .09);
+        result.text        = readableOn(label, {result.background, result.surface, result.raised, result.hover, result.selected}, 7);
+        result.muted       = readableOn(mix(result.surface, result.text, .66), {result.background, result.surface, result.raised, result.hover, result.selected}, 4.5);
+        result.subtle      = readableOn(mix(result.surface, result.text, .54), {result.background, result.surface, result.raised, result.hover, result.selected}, 4.5);
         result.focus       = readableOn(accent, {result.surface, result.hover, result.selected}, 3);
         result.primary     = readable(accent, result.surface, 3);
         result.primaryText = readable(result.text, result.primary, 4.5);

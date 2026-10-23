@@ -342,14 +342,19 @@ void main() {
             ++resources.passes;
         }
 
-        void account() {
-            resources.entries = entries.size();
-            resources.bytes   = 0;
-            for (const auto& [_, entry] : entries) {
-                for (const auto& fb : {entry.area, entry.sharp})
-                    if (fb)
-                        resources.bytes += static_cast<size_t>(fb->m_size.x) * static_cast<size_t>(fb->m_size.y) * 4;
-            }
+        size_t entryBytes(const SEntry& entry) {
+            const auto bytes = [](const SP<Render::IFramebuffer>& fb) {
+                return fb ? static_cast<size_t>(fb->m_size.x) * static_cast<size_t>(fb->m_size.y) * 4 : size_t{0};
+            };
+            return bytes(entry.area) + bytes(entry.sharp);
+        }
+
+        void accountEntry(const SEntry& entry, size_t previousBytes) {
+            // Captures update every visible preview. Recounting the entire
+            // filter cache after each one made this bookkeeping quadratic in
+            // the number of windows, even when every buffer was reused.
+            resources.entries   = entries.size();
+            resources.bytes     = resources.bytes - previousBytes + entryBytes(entry);
             resources.peakBytes = std::max(resources.peakBytes, resources.bytes);
         }
 
@@ -400,8 +405,10 @@ void main() {
         const bool sharpen = mode == "sharp" || mode == "linear-sharp";
         auto&      entry   = entries[source.get()];
         if (entry.source.lock() != source) {
-            entry        = {};
-            entry.source = source;
+            const auto previousBytes = entryBytes(entry);
+            entry                    = {};
+            entry.source             = source;
+            accountEntry(entry, previousBytes);
         }
         if (std::chrono::steady_clock::now() < entry.retryAfter)
             return source;
@@ -411,11 +418,12 @@ void main() {
             ++resources.hits;
             return sharpen ? entry.sharp->getTexture() : entry.area->getTexture();
         }
+        const auto previousBytes = entryBytes(entry);
         const SGLState state;
         if (!prepareShader() || !framebuffer(entry.area, width, height, source) || (sharpen && !framebuffer(entry.sharp, width, height, source))) {
             ++resources.failures;
             entry.retryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-            account();
+            accountEntry(entry, previousBytes);
             return source;
         }
         render(source, entry.area, mode == "linear-sharp" ? 0 : 1, *transfer);
@@ -426,7 +434,7 @@ void main() {
         entry.renderedRevision = entry.revision;
         entry.renderedMode     = mode;
         entry.renderedTransfer = *transfer;
-        account();
+        accountEntry(entry, previousBytes);
         return sharpen ? entry.sharp->getTexture() : entry.area->getTexture();
     }
 
@@ -437,13 +445,20 @@ void main() {
     }
 
     void prunePreviewFilters() {
-        std::erase_if(entries, [](const auto& entry) { return entry.second.source.expired(); });
-        account();
+        for (auto entry = entries.begin(); entry != entries.end();) {
+            if (!entry->second.source.expired()) {
+                ++entry;
+                continue;
+            }
+            resources.bytes -= entryBytes(entry->second);
+            entry = entries.erase(entry);
+        }
+        resources.entries = entries.size();
     }
 
     void clearPreviewFilters() {
         entries.clear();
-        account();
+        resources.entries = resources.bytes = 0;
     }
 
     void destroyPreviewFilters() {

@@ -91,6 +91,14 @@ def run(s, wait_for):
         assert help_state(s)["count"] == 1
         s.check("/keybinds finds configuration and controls; Enter browses results and a new / search replaces the query across topics")
 
+        for separator in ("\u00a0", "\u2003", "\u3000"):
+            s.key(29, 1); tap(s, 30); s.key(29, 0)
+            query = "resize" + separator + "window"
+            s.run("wtype", query)
+            wait_for(lambda: help_state(s)["query"] == query)
+            assert help_state(s)["count"] == 1 and help_state(s)["selected_id"] == "resize-window"
+        s.check("non-breaking, em and ideographic spaces separate help search terms through real keyboard input")
+
         s.key(29, 1); tap(s, 30); s.key(29, 0)
         s.run("wtype", "æøå")
         assert help_state(s)["query"] == "æøå" and help_state(s)["query_cursor"] == 6

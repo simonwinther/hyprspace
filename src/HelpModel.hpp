@@ -4,8 +4,7 @@
 
 #include <glib.h>
 #include <array>
-#include <sstream>
-#include <numeric>
+#include <utility>
 
 namespace hyprspace {
     inline constexpr std::array<const char*, 6> HELP_TOPICS{"All help", "Navigation", "Zoom & follow", "Window board", "Window gestures", "Settings"};
@@ -29,11 +28,14 @@ namespace hyprspace {
         void setEntries(std::vector<SHelpEntry> entries) {
             const auto selected = selection() ? selection()->id : "";
             m_entries           = std::move(entries);
-            m_haystacks.clear();
+            m_search.clear();
+            m_search.reserve(m_entries.size());
             for (const auto& entry : m_entries)
-                m_haystacks.push_back(foldHelpSearch(
-                    std::string(HELP_TOPICS.at(entry.topic)) + " " + entry.title + " " + entry.keys + " " + entry.description + " " + entry.tags + " " + entry.setting +
-                    (entry.keys.empty() || entry.topic == 5 ? "" : " keys keybind keybinds keybinding keybindings bindings shortcuts controls keyboard")));
+                m_search.push_back(
+                    {foldHelpSearch(std::string(HELP_TOPICS.at(entry.topic)) + " " + entry.title + " " + entry.keys + " " + entry.description + " " + entry.tags + " " +
+                                    entry.setting +
+                                    (entry.keys.empty() || entry.topic == 5 ? "" : " keys keybind keybinds keybinding keybindings bindings shortcuts controls keyboard")),
+                     foldHelpSearch(entry.title), foldHelpSearch(entry.tags)});
             filter(selected);
         }
         void setQuery(std::string query) {
@@ -81,23 +83,38 @@ namespace hyprspace {
       private:
         void filter(const std::string& selected = "") {
             const auto               query = foldHelpSearch(m_query);
-            std::istringstream       words(query);
             std::vector<std::string> tokens;
-            for (std::string token; words >> token;)
+            std::string              token;
+            for (const char* p = query.c_str(); *p; p = g_utf8_next_char(p)) {
+                if (g_unichar_isspace(g_utf8_get_char(p))) {
+                    if (!token.empty())
+                        tokens.push_back(std::exchange(token, {}));
+                } else
+                    token.append(p, g_utf8_next_char(p) - p);
+            }
+            if (!token.empty())
                 tokens.push_back(std::move(token));
             m_results.clear();
+            std::array<std::vector<size_t>, 5> ranked;
             for (size_t i = 0; i < m_entries.size(); ++i)
                 if ((tokens.empty() ? m_topic == 0 || m_entries[i].topic == m_topic : true) &&
-                    std::ranges::all_of(tokens, [&](const auto& token) { return m_haystacks[i].find(token) != std::string::npos; }))
-                    m_results.push_back(i);
-            if (!tokens.empty()) {
-                const auto score = [&](size_t i) {
-                    const auto title = foldHelpSearch(m_entries[i].title);
-                    const auto tags  = foldHelpSearch(m_entries[i].tags);
-                    return title == query ? 0 : title.starts_with(query) ? 1 : title.find(query) != std::string::npos ? 2 : tags.find(query) != std::string::npos ? 3 : 4;
-                };
-                std::stable_sort(m_results.begin(), m_results.end(), [&](size_t a, size_t b) { return score(a) < score(b); });
-            }
+                    std::ranges::all_of(tokens, [&](const auto& token) { return m_search[i].haystack.find(token) != std::string::npos; })) {
+                    if (tokens.empty())
+                        m_results.push_back(i);
+                    else {
+                        const auto&  cached = m_search[i];
+                        const size_t score  = cached.title == query                           ? 0
+                                              : cached.title.starts_with(query)               ? 1
+                                              : cached.title.find(query) != std::string::npos ? 2
+                                              : cached.tags.find(query) != std::string::npos  ? 3
+                                                                                              : 4;
+                        ranked[score].push_back(i);
+                    }
+                }
+            // Fixed rank buckets retain catalog order for ties without sorting
+            // or repeatedly folding the same text during comparisons.
+            for (const auto& bucket : ranked)
+                m_results.insert(m_results.end(), bucket.begin(), bucket.end());
             m_selected = 0;
             for (size_t i = 0; i < m_results.size(); ++i)
                 if (m_entries[m_results[i]].id == selected) {
@@ -105,11 +122,14 @@ namespace hyprspace {
                     break;
                 }
         }
-        std::vector<SHelpEntry>  m_entries;
-        std::vector<std::string> m_haystacks;
-        std::vector<size_t>      m_results;
-        std::string              m_query;
-        size_t                   m_topic = 0, m_selected = 0;
+        struct SSearchEntry {
+            std::string haystack, title, tags;
+        };
+        std::vector<SHelpEntry>   m_entries;
+        std::vector<SSearchEntry> m_search;
+        std::vector<size_t>       m_results;
+        std::string               m_query;
+        size_t                    m_topic = 0, m_selected = 0;
     };
 
     struct SHelpLayout {

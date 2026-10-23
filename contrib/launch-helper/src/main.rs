@@ -4,7 +4,7 @@ use std::{
     env,
     ffi::{CString, OsStr, OsString},
     fs, io,
-    os::unix::{ffi::OsStrExt, process::CommandExt},
+    os::unix::{ffi::OsStrExt, fs::MetadataExt, process::CommandExt},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -53,13 +53,30 @@ fn launch_command(args: &[OsString], token: &OsStr, helper: &Path) -> io::Result
 
 fn original_service(name: &OsStr, helper: &Path) -> io::Result<PathBuf> {
     let paths = env::var_os("PATH").unwrap_or_else(|| "/bin:/usr/bin".into());
-    let cwd = env::current_dir()?;
+    let cwd = env::current_dir().ok();
+    let helper_identity = fs::metadata(helper).ok();
     for directory in env::split_paths(&paths) {
-        let candidate = cwd.join(directory).join(name);
-        let Some(resolved) = fs::canonicalize(&candidate).ok().filter(|p| p != helper) else {
+        let candidate = if directory.is_absolute() {
+            directory.join(name)
+        } else if let Some(cwd) = &cwd {
+            cwd.join(directory).join(name)
+        } else {
             continue;
         };
-        if !resolved.is_file() {
+        let Some(resolved) = fs::canonicalize(&candidate).ok().filter(|p| {
+            // Another installation's shims must not forward back into this one.
+            p != helper && p.file_name() != Some(OsStr::new("hyprspace-launch"))
+        }) else {
+            continue;
+        };
+        let Ok(identity) = fs::metadata(resolved) else {
+            continue;
+        };
+        if !identity.is_file()
+            || helper_identity.as_ref().is_some_and(|helper| {
+                (identity.dev(), identity.ino()) == (helper.dev(), helper.ino())
+            })
+        {
             continue;
         }
         let Ok(path) = CString::new(candidate.as_os_str().as_bytes()) else {
@@ -123,6 +140,14 @@ fn forward_service(name: &OsStr, args: Vec<OsString>, helper: &Path) -> io::Resu
     Err(command.exec())
 }
 
+fn consume_context(context: &OsStr) -> OsString {
+    if valid_token(context) {
+        ipc::request(&format!("consume {}", context.to_string_lossy())).into()
+    } else {
+        OsString::new()
+    }
+}
+
 fn run() -> io::Result<()> {
     let mut argv = env::args_os();
     let invoked = argv.next().unwrap_or_default();
@@ -149,21 +174,28 @@ fn run() -> io::Result<()> {
             _ => (),
         }
     }
-    let mut payload = &args[..];
+    // Reject malformed command lines before capturing or consuming a one-shot
+    // destination. Failed usage must not alter a launcher's pending context.
+    let payload = if args
+        .first()
+        .is_some_and(|arg| arg == "--context" || arg == "--launch-token")
+    {
+        args.get(2..).unwrap_or_default()
+    } else {
+        &args[..]
+    };
+    if payload.len() < 2 || payload[0] != "--" || payload[1].is_empty() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, USAGE));
+    }
     let token = if args.len() >= 2 && args[0] == "--context" {
-        payload = &args[2..];
-        ipc::request(&format!("consume {}", args[1].to_string_lossy())).into()
+        consume_context(&args[1])
     } else if args.len() >= 2 && args[0] == "--launch-token" {
-        payload = &args[2..];
         args[1].clone()
     } else if args.first().is_some_and(|s| s == "--") {
-        ipc::request(&format!("consume {}", ipc::request("capture"))).into()
+        consume_context(OsStr::new(&ipc::request("capture")))
     } else {
         OsString::new()
     };
-    if payload.len() < 2 || payload[0] != "--" {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, USAGE));
-    }
     Err(launch_command(&payload[1..], &token, &helper)?.exec())
 }
 

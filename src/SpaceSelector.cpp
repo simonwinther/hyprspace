@@ -1377,7 +1377,7 @@ namespace hyprspace {
             if (value.action == EAction::SIDEBAR) {
                 const auto active = std::ranges::find(all, true, &SSpaceSummary::active);
                 if (hover || sidebarVisible())
-                    rect(value.box, color(overviewStyle.hover), 6);
+                    rect(value.box, overviewInk.modifyA(hover ? .07F : .035F), 6);
                 icon(active == all.end() ? "grid" : active->icon, active == all.end() ? overviewMuted : overviewIdentity(active->color),
                      {value.box.x + 10, value.box.cy() - 10, 20, 20});
                 text(value.label, {value.box.x + 42, value.box.y, value.box.w - 80, value.box.h}, overviewInk, false, 1.15);
@@ -1443,7 +1443,7 @@ namespace hyprspace {
                 std::format("{} workspace{} · {} window{}", active->occupied, active->occupied == 1 ? "" : "s", active->windows, active->windows == 1 ? "" : "s");
             text(subtitle, {chrome.header.x + 42, chrome.header.y + 41, std::max(1.0, chrome.header.w - actions - 42), 22}, overviewMuted, false, .8);
         }
-        rect({chrome.header.x, chrome.header.y + 72, chrome.header.w, 1}, color(spaceStyle::mix(overviewStyle.background, overviewStyle.text, .075)), 0);
+        rect({chrome.header.x, chrome.header.y + 72, chrome.header.w, 1}, overviewInk.modifyA(.075F), 0);
         for (const auto& value : chrome.buttons)
             if (value.action != EAction::ENTER)
                 drawButton(value, true);

@@ -232,6 +232,65 @@ class LaunchHelperTests(unittest.TestCase):
                 self.assertEqual(received, [b"capture", b"consume opaque-context"])
                 self.assertEqual(json.loads(result), ["launch-token", "launch-token", ""])
 
+    def test_invalid_command_lines_do_not_capture_or_consume_contexts(self):
+        for arguments in (
+            ["--"],
+            ["--context", "context"],
+            ["--context", "context", "--"],
+            ["--context", "context", "bad-separator", "printf"],
+            ["--context", "context", "--", ""],
+        ):
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "hypr/instance"
+                path.mkdir(parents=True)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as server:
+                    server.bind(str(path / "hyprspace.sock"))
+                    server.listen(1)
+                    server.settimeout(.05)
+                    env = dict(os.environ, XDG_RUNTIME_DIR=directory, HYPRLAND_INSTANCE_SIGNATURE="instance")
+                    result = subprocess.run([str(HELPER), *arguments], env=env, text=True, capture_output=True, timeout=2)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("usage:", result.stderr)
+                    with self.assertRaises(socket.timeout):
+                        server.accept()
+
+    def test_failed_automatic_capture_does_not_request_consumption(self):
+        for response in (b"", b"\xff", b"invalid context", b"a" * 129, None):
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "hypr/instance"
+                path.mkdir(parents=True)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as server:
+                    server.bind(str(path / "hyprspace.sock"))
+                    server.listen(2)
+                    server.settimeout(2)
+                    received = []
+
+                    def serve():
+                        peer, _ = server.accept()
+                        with peer:
+                            received.append(peer.recv(256))
+                            if response is None:
+                                time.sleep(.4)
+                            else:
+                                peer.sendall(response)
+                        server.settimeout(.1)
+                        try:
+                            peer, _ = server.accept()
+                        except socket.timeout:
+                            return
+                        with peer:
+                            received.append(peer.recv(256))
+                            peer.sendall(b"")
+
+                    worker = threading.Thread(target=serve)
+                    worker.start()
+                    env = dict(os.environ, XDG_RUNTIME_DIR=directory, HYPRLAND_INSTANCE_SIGNATURE="instance")
+                    result = subprocess.check_output([str(HELPER), "--", "printf", "%s", "native"], env=env, text=True, timeout=2)
+                    worker.join(timeout=2)
+                    self.assertFalse(worker.is_alive())
+                    self.assertEqual(result, "native")
+                    self.assertEqual(received, [b"capture"])
+
     def test_invalid_and_unresponsive_socket_replies_keep_normal_launching(self):
         for response in (b"\xff", b"a" * 65537, None):
             with self.subTest(reply=None if response is None else len(response)), tempfile.TemporaryDirectory() as directory:
@@ -331,6 +390,64 @@ class LaunchHelperTests(unittest.TestCase):
                 timeout=3,
             )
             self.assertEqual(json.loads(result), args)
+
+    def test_service_search_skips_hard_linked_shims(self):
+        # Keep the temporary link on the helper's filesystem.
+        with tempfile.TemporaryDirectory(dir=HELPER.parent) as directory:
+            root = Path(directory)
+            shim = root / "shim"
+            shim.mkdir()
+            os.link(HELPER, shim / "app2unit")
+            original = root / "app2unit"
+            original.write_text(
+                "#!/usr/bin/python3\nimport sys,json\nprint(json.dumps(sys.argv[1:]))\n"
+            )
+            original.chmod(0o755)
+            env = dict(os.environ, PATH=f"{shim}:{root}:/usr/bin")
+            args = ["--", "org.example.App.desktop"]
+            result = subprocess.check_output(
+                [str(HELPER), "--launch-token", "service-token", "--", "app2unit", *args],
+                env=env, text=True, timeout=3,
+            )
+            self.assertEqual(json.loads(result), args)
+
+    def test_service_search_skips_other_installations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            other = root / "other"
+            shim = other / "launch-bin"
+            shim.mkdir(parents=True)
+            (other / "hyprspace-launch").write_bytes(HELPER.read_bytes())
+            (other / "hyprspace-launch").chmod(0o755)
+            (shim / "app2unit").symlink_to("../hyprspace-launch")
+            original = root / "app2unit"
+            original.write_text(
+                "#!/usr/bin/python3\nimport sys,json\nprint(json.dumps(sys.argv[1:]))\n"
+            )
+            original.chmod(0o755)
+            env = dict(os.environ, PATH=f"{shim}:{root}:/usr/bin")
+            args = ["--", "org.example.App.desktop"]
+            result = subprocess.check_output(
+                [str(HELPER), "--launch-token", "service-token", "--", "app2unit", *args],
+                env=env, text=True, timeout=3,
+            )
+            self.assertEqual(json.loads(result), args)
+
+    def test_service_search_works_from_a_deleted_working_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            working = root / "deleted"
+            working.mkdir()
+            original = root / "app2unit"
+            original.symlink_to("/usr/bin/printf")
+            env = dict(os.environ, PATH=f"{root}:/usr/bin")
+            args = ["--", "org.example.App.desktop"]
+            program = "import os,sys; os.rmdir(os.getcwd()); os.execv(sys.argv[1],sys.argv[1:])"
+            result = subprocess.check_output(
+                ["/usr/bin/python3", "-c", program, str(HELPER), "--launch-token", "service-token", "--", "app2unit", *args],
+                cwd=working, env=env, text=True, timeout=3,
+            )
+            self.assertEqual(result, args[1])
 
 
 if __name__ == "__main__":

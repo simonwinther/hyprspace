@@ -23,6 +23,12 @@ static void testHelp() {
     CHECK(browser.count() == 1 && browser.selection()->id == "resize");
     browser.setQuery("CURSOR enabled");
     CHECK(browser.count() == 1 && browser.selection()->id == "follow");
+    for (const auto* separator : {"\t", "\u00a0", "\u2003", "\u3000"}) {
+        browser.setQuery(std::string("CURSOR") + separator + "enabled");
+        CHECK(browser.count() == 1 && browser.selection()->id == "follow");
+    }
+    browser.setQuery("\u00a0\u2003\u3000");
+    CHECK(browser.count() == 1 && browser.selection()->id == "resize");
     browser.setQuery("keybinds");
     CHECK(browser.count() == 5);
     CHECK(browser.selection()->id == "bindings");
@@ -51,6 +57,34 @@ static void testHelp() {
     CHECK(browser.count() == 0);
     browser.setQuery("  cursor   disabled  ");
     CHECK(browser.count() == 1 && browser.selection()->id == "follow");
+
+    section("help: cached search ranks remain stable and refresh after catalog edits");
+    CHelpBrowser            ranked;
+    std::vector<SHelpEntry> ranking{
+        {"details", "An unrelated tool", "", "Inspect its contents", "", "", 1},
+        {"tags", "Another tool", "", "", "inspect", "", 1},
+        {"inside", "How to inspect a window", "", "", "", "", 1},
+        {"prefix", "Inspect further", "", "", "", "", 1},
+        {"first", "Inspect", "", "", "", "", 1},
+        {"second", "INSPECT", "", "", "", "", 1},
+    };
+    ranked.setEntries(ranking);
+    ranked.setQuery("inspect");
+    const std::array expected{"first", "second", "prefix", "inside", "tags", "details"};
+    CHECK(ranked.count() == expected.size());
+    for (size_t row = 0; row < std::min(ranked.count(), expected.size()); ++row)
+        CHECK(ranked.entry(row).id == expected[row]);
+    ranked.select(4);
+    ranking[1].title = "Inspect";
+    ranking[1].tags.clear();
+    ranked.setEntries(ranking);
+    CHECK(ranked.count() == 6 && ranked.entry(0).id == "tags");
+    CHECK(ranked.selection() && ranked.selection()->id == "tags" && ranked.selected() == 0);
+    ranking[1].title = "Unrelated";
+    ranked.setEntries(ranking);
+    CHECK(ranked.count() == 5 && ranked.selection()->id == "first");
+    ranked.setEntries({});
+    CHECK(ranked.count() == 0 && ranked.selection() == nullptr);
 
     section("help: responsive geometry respects reserved space and keeps list/detail separate");
     const auto inside = [](const SBoxF& box, const SBoxF& bounds) {

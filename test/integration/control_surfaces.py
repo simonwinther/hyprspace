@@ -80,8 +80,8 @@ def run(s, wait_for):
         s.ctl("keyword", "animations:enabled", "false")
         s.move((1800, 950))  # Keep the pointer outside the first output's cards.
         for theme, background, label, surface in (
-            ("light", "111119ff", "cdd6f4ff", (244, 245, 247)),
-            ("dark", "eff1f5ff", "303446ff", (27, 28, 31)),
+            ("light", "111119ff", "cdd6f4ff", (244, 245, 246)),
+            ("dark", "eff1f5ff", "303446ff", (22, 23, 27)),
         ):
             s.close()
             s.ctl("keyword", "plugin:hyprspace:overview:bg_color", f"rgba({background})")
