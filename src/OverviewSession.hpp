@@ -259,8 +259,9 @@ namespace hyprspace {
         PHLANIMVAR<float>                                  m_workspaceSettleProgress;
         std::vector<SPreparedWorkspace>                    m_preparedWorkspaces;
         std::vector<PHLWORKSPACEREF>                        m_dismissedWorkspaces;
-        bool                                               m_emptyButtonPressed = false;
-        bool                                               m_cursorOwned        = false;
+        bool                                                m_emptyButtonPressed    = false;
+        bool                                                m_cursorOwned           = false;
+        bool                                                m_pointerRestorePending = false;
         Vector2D                                           m_pointer;
         Vector2D                                           m_initialPointer;
         std::optional<SOverviewTarget>                     m_initialTarget;

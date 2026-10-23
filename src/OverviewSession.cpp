@@ -203,6 +203,7 @@ namespace hyprspace {
     }
 
     void COverviewSession::begin() {
+        m_pointerRestorePending = true;
         inputController().reset();
         closeHelp();
         cancelWorkspaceSettle();
@@ -268,8 +269,14 @@ namespace hyprspace {
         // committed desktop/window or captured launch owns any used workspace.
         if (views.empty())
             m_preparedWorkspaces.clear();
-        if (g_overviewSession.get() == this && !live() && overlaysAllowed())
-            g_pInputManager->simulateMouseMovement();
+        // Only a real overview needs to return its pointer focus to the
+        // desktop. Idle teardown must preserve deliberate keyboard focus on a
+        // different window, especially transient dialogs that close on blur.
+        if (g_overviewSession.get() == this && !live() && m_pointerRestorePending) {
+            m_pointerRestorePending = false;
+            if (overlaysAllowed())
+                g_pInputManager->simulateMouseMovement();
+        }
     }
 
     bool COverviewSession::covers(PHLMONITOR monitor) const {

@@ -1,6 +1,8 @@
 """Initial selection, empty layout and rapid toggles in the private compositor."""
 
+import json
 import time
+from pathlib import Path
 
 
 def startup_selection(s, wait_for):
@@ -193,3 +195,90 @@ def lifecycle(s, wait_for):
     s.run("wtype", "z")
     wait_for(lambda: " 122" in log.read_text())
     s.check("application keyboard input works after rapid overview toggles")
+    idle_reload_focus(s, wait_for)
+
+
+def idle_reload_focus(s, wait_for):
+    """An idle teardown cannot re-run focus-follows-mouse over another window."""
+    s.setup("dwindle", 0, 1)
+    first = s.windows()["hs-A"]["address"]
+    focused = s.windows()["hs-B"]["address"]
+    maps = Path(f"/proc/{s.compositor_pid}/maps")
+    fixture = s.artifact("test-overview.so")
+    assert str(fixture) not in maps.read_text(), "unload the dependent fixture before testing production unload"
+    config = s.root / "hyprland.conf"
+    original_config = config.read_text()
+    config.write_text(original_config + "\ninput:follow_mouse = 1\ncursor:no_warps = true\n")
+    phase = "setup"
+    try:
+        for prior in ("idle", "closed overview", "closed switcher", "open switcher"):
+            phase = "warmup"
+            s.ctl("keyword", "input:follow_mouse", "1")
+            s.ctl("keyword", "cursor:no_warps", "true")
+            if prior == "closed overview":
+                s.ctl("dispatch", "hyprspace:overview", "on")
+                wait_for(lambda: s.status()["live"])
+                s.close()
+            elif prior == "closed switcher":
+                s.ctl("dispatch", "hyprspace:switch")
+                wait_for(lambda: s.status()["cursor_owned"])
+                s.close()
+                wait_for(lambda: not s.status()["cursor_owned"])
+            s.move(s.point(s.windows()["hs-A"], .5, .5))
+            s.ctl("dispatch", "focuswindow", "address:" + focused)
+            time.sleep(.1)
+            assert s.data("activewindow")["address"] == focused
+            assert not s.status()["live"]
+            if prior == "open switcher":
+                s.ctl("dispatch", "hyprspace:switch")
+                wait_for(lambda: s.status()["cursor_owned"])
+            cursor = s.data("cursorpos")
+            windows = {window["address"] for window in s.data("clients")}
+            phase = "unload"
+            s.ctl("plugin", "unload", str(s.plugin))
+            wait_for(lambda: str(s.plugin) not in maps.read_text())
+            time.sleep(.1)
+            assert s.data("activewindow")["address"] == focused, prior
+            assert s.data("cursorpos") == cursor, prior
+            assert {window["address"] for window in s.data("clients")} == windows, prior
+            phase = "native input recovery"
+            log = s.root / "input.log"
+            log.write_text("")
+            s.run("wtype", "z")
+            wait_for(lambda: any(line.startswith("hs-B ") and line.endswith(" 122") for line in log.read_text().splitlines()))
+            # Native refocus can retain an explicitly selected window during
+            # small movements within an already-entered surface. Cross the
+            # window boundary with real device events to verify input recovery.
+            s.absolute_motion(s.point(s.windows()["hs-B"], .5, .5))
+            wait_for(lambda: s.data("activewindow").get("address") == focused)
+            s.absolute_motion(s.point(s.windows()["hs-A"], .5, .5))
+            wait_for(lambda: s.data("activewindow").get("address") == first)
+            s.ctl("dispatch", "focuswindow", "address:" + focused)
+            reload_cursor = s.data("cursorpos")
+            assert s.data("activewindow")["address"] == focused
+            phase = "reload"
+            s.ctl("plugin", "load", str(s.plugin))
+            wait_for(lambda: not s.status()["live"] and not s.status()["cursor_owned"])
+            s.ctl("reload")
+            time.sleep(.1)
+            assert s.data("activewindow")["address"] == focused, prior
+            assert s.data("cursorpos") == reload_cursor, prior
+            assert {window["address"] for window in s.data("clients")} == windows, prior
+            s.check(f"{prior} reload preserves deliberate focus and every client; native keyboard and pointer input resume")
+    except AssertionError as error:
+        context = {"prior": prior, "phase": phase, "error": str(error)}
+        try:
+            context.update({"active_window": s.data("activewindow"), "cursor": s.data("cursorpos"),
+                            "options": {name: json.loads(s.run("hyprctl", "-j", "getoption", name))
+                                        for name in ("input:follow_mouse", "input:mouse_refocus", "cursor:no_warps")}})
+        except Exception as diagnostic_error:
+            context["diagnostic_error"] = str(diagnostic_error)
+        (s.root / "idle-reload-focus-failure.json").write_text(json.dumps(context, indent=2))
+        raise AssertionError(context) from error
+    finally:
+        config.write_text(original_config)
+        if str(s.plugin) not in maps.read_text():
+            s.ctl("plugin", "load", str(s.plugin))
+        s.ctl("reload")
+        s.ctl("keyword", "input:follow_mouse", "0")
+        s.ctl("keyword", "cursor:no_warps", "false")
