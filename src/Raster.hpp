@@ -61,6 +61,10 @@ namespace hyprspace {
     // scaled to fit size x size, centred, preserving aspect ratio.
     SImage loadIcon(const std::string& path, int size);
 
+    // Uppercase the first Unicode character without splitting its UTF-8 bytes.
+    // Empty, malformed or invisible initials use a question mark.
+    std::string placeholderInitial(const std::string& name);
+
     // Flat rounded rectangle, used as a fallback when no icon can be resolved.
     SImage placeholderIcon(const std::string& letters, const std::string& font, int size, const SRgba& fg, const SRgba& bg);
 

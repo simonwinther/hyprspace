@@ -201,6 +201,42 @@ namespace hyprspace {
         index(e.wmClass, EAliasStrength::WM_CLASS);
     }
 
+    // Exported application and icon trees (for example package profiles) can
+    // contain directory symlinks. Follow those using their logical paths, but
+    // never descend into a directory already on the current ancestry chain.
+    // A global visited set would lose valid aliases such as 48x48/apps pointing
+    // to another size's directory, whose logical size affects icon selection.
+    template <typename F>
+    static void forEachRegularFile(const fs::path& root, F&& visit) {
+        std::error_code ec;
+        const auto      canonicalRoot = fs::canonical(root, ec);
+        if (ec)
+            return;
+        std::vector<fs::path> ancestry{canonicalRoot};
+        const auto options = fs::directory_options::skip_permission_denied | fs::directory_options::follow_directory_symlink;
+        for (auto it = fs::recursive_directory_iterator(root, options, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec)
+                break;
+            ancestry.resize(static_cast<size_t>(it.depth()) + 1);
+            const auto status = it->status(ec);
+            if (ec) {
+                // Broken links and inaccessible entries do not hide siblings.
+                it.disable_recursion_pending();
+                ec.clear();
+                continue;
+            }
+            if (fs::is_directory(status)) {
+                const auto canonical = fs::canonical(it->path(), ec);
+                if (ec || std::ranges::find(ancestry, canonical) != ancestry.end()) {
+                    it.disable_recursion_pending();
+                    ec.clear();
+                } else
+                    ancestry.push_back(canonical);
+            } else if (fs::is_regular_file(status))
+                visit(it->path());
+        }
+    }
+
     void CDesktopDb::scan() {
         m_entries.clear();
         m_canonicalIds.clear();
@@ -218,16 +254,10 @@ namespace hyprspace {
             const fs::path apps = fs::path(base) / "applications";
             if (fs::is_directory(apps, ec)) {
                 std::vector<fs::path> files;
-                for (auto it = fs::recursive_directory_iterator(apps, fs::directory_options::skip_permission_denied, ec); it != fs::recursive_directory_iterator();
-                     it.increment(ec)) {
-                    if (ec)
-                        break;
-                    if (!it->is_regular_file(ec))
-                        continue;
-                    if (it->path().extension() != ".desktop")
-                        continue;
-                    files.push_back(it->path());
-                }
+                forEachRegularFile(apps, [&](const fs::path& path) {
+                    if (path.extension() == ".desktop")
+                        files.push_back(path);
+                });
                 // XDG leaves foo-bar.desktop vs foo/bar.desktop unspecified;
                 // a lexical path tie-break makes even that collision repeatable.
                 std::ranges::sort(files);
@@ -339,17 +369,10 @@ namespace hyprspace {
             if (!fs::is_directory(root, ec))
                 continue;
 
-            for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec); it != fs::recursive_directory_iterator();
-                 it.increment(ec)) {
-                if (ec)
-                    break;
-                if (!it->is_regular_file(ec))
-                    continue;
-
-                const auto& p   = it->path();
-                const auto  ext = p.extension().string();
+            forEachRegularFile(root, [&](const fs::path& p) {
+                const auto ext = p.extension().string();
                 if (std::ranges::find(EXTS, ext) == EXTS.end())
-                    continue;
+                    return;
 
                 bool      scalable = false;
                 const int size     = sizeFromPath(p, scalable);
@@ -361,7 +384,7 @@ namespace hyprspace {
                     .scalable = scalable,
                     .svg      = ext == ".svg" || ext == ".svgz",
                 });
-            }
+            });
         }
 
         m_iconIndexReady = true;

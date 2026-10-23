@@ -32,7 +32,7 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y g++ clang make pkg-config libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev librsvg2-dev nlohmann-json3-dev jq python3 ripgrep cargo
+          sudo apt-get install --no-install-recommends -y g++ clang make pkg-config libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev librsvg2-dev libxkbcommon-dev nlohmann-json3-dev jq python3 ripgrep cargo
       - name: Run host and build tests
         env:
           CXX: ${{ matrix.compiler }}

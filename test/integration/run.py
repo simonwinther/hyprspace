@@ -1708,6 +1708,7 @@ def main():
             "overview",
             "window_views",
             "spaces",
+            "space-aliases",
             "space-selector",
             "space-transfers",
             "space-ipc",
@@ -1971,6 +1972,17 @@ def main():
                     isolated.finish()
             else:
                 spaces.run(suite, wait_for)
+        if args.only in ("all", "space-aliases"):
+            import spaces
+
+            if args.only == "all" or args.runtime:
+                isolated = Suite(snapshot=suite.snapshot, group="space-aliases")
+                try:
+                    spaces.alias_adoption(isolated, wait_for)
+                finally:
+                    isolated.finish()
+            else:
+                spaces.alias_adoption(suite, wait_for)
         if args.only in ("all", "space-selector"):
             import space_selector
 

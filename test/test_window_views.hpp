@@ -64,6 +64,20 @@ static void testWindowViews() {
     CHECK(matched.size() == 1 && matched[0].windows == std::vector<size_t>({1}));
     CHECK(groupWindowViews(input, EWindowGrouping::FLAT, false, "definitely missing").empty());
     CHECK(groupWindowViews(input, EWindowGrouping::FLAT, false, "\xff").empty());
+    // Blank searches take the unfiltered path, including Unicode whitespace,
+    // without changing either group order or frozen recency order.
+    for (const auto grouping : {EWindowGrouping::FLAT, EWindowGrouping::APP, EWindowGrouping::WORKSPACE, EWindowGrouping::MONITOR}) {
+        for (bool useRecent : {false, true}) {
+            const auto unfiltered = groupWindowViews(input, grouping, useRecent, "");
+            const auto whitespace = groupWindowViews(input, grouping, useRecent, " \t\n　");
+            CHECK(unfiltered.size() == whitespace.size());
+            for (size_t i = 0; i < std::min(unfiltered.size(), whitespace.size()); ++i) {
+                CHECK(unfiltered[i].key == whitespace[i].key);
+                CHECK(unfiltered[i].label == whitespace[i].label);
+                CHECK(unfiltered[i].windows == whitespace[i].windows);
+            }
+        }
+    }
     input[0].appId.clear();
     input[1].appId.clear();
     CHECK(groupWindowViews(input, EWindowGrouping::APP, false, "").size() == 4);
@@ -75,6 +89,22 @@ static void testWindowViews() {
     windowSearchBackspace(query);
     windowSearchBackspace(query);
     CHECK(query.empty());
+
+    section("window views: Unicode app-label ordering and distinct identities");
+    input = {{.key = 1, .appId = "z", .appName = "Straße", .recent = 3},
+             {.key = 2, .appId = "a", .appName = "STRASSE", .recent = 2},
+             {.key = 3, .appId = "m", .appName = "alpha", .recent = 1},
+             {.key = 4, .appId = "z", .appName = "Straße", .recent = 0}};
+    apps = groupWindowViews(input, EWindowGrouping::APP, false, "");
+    CHECK(apps.size() == 3);
+    CHECK(apps[0].key == "m" && apps[1].key == "a" && apps[2].key == "z");
+    CHECK(apps[2].windows == std::vector<size_t>({0, 3}));
+    apps = groupWindowViews(input, EWindowGrouping::APP, true, "");
+    CHECK(apps.size() == 3);
+    CHECK(apps[0].key == "z" && apps[1].key == "m" && apps[2].key == "a");
+    CHECK(apps[0].windows == std::vector<size_t>({3, 0}));
+    CHECK(groupWindowViews({}, EWindowGrouping::FLAT, false, "").empty());
+    CHECK(groupWindowViews(input, EWindowGrouping::FLAT, false, "missing").empty());
 
     input.clear();
     for (size_t i = 0; i < 6; ++i)

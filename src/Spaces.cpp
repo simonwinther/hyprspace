@@ -154,11 +154,7 @@ namespace hyprspace::spaces {
                 const auto other = model->named(item.space, name, item.special);
                 if (!other || other->id == item.id)
                     break;
-                const auto tail   = " (" + std::to_string(suffix) + ")";
-                size_t     length = std::min(base.size(), 256 - tail.size());
-                while (length < base.size() && length && (static_cast<unsigned char>(base[length]) & 0xc0) == 0x80)
-                    --length;
-                name = base.substr(0, length) + tail;
+                name = suffixedWorkspaceName(base, suffix);
             }
             item.name = std::move(name);
         }
@@ -210,7 +206,7 @@ namespace hyprspace::spaces {
                     local = model->lowestNumber(owner);
                 const auto original = name;
                 for (unsigned suffix = 2; model->named(owner, name, workspace->m_isSpecialWorkspace); ++suffix)
-                    name = original + " (" + std::to_string(suffix) + ")";
+                    name = suffixedWorkspaceName(original, suffix);
                 const auto id =
                     model->addWorkspace(owner, local, name, workspace->m_isSpecialWorkspace, workspace->m_id, workspace->m_name, monitorKey(workspace->m_monitor.lock()));
                 if (id)

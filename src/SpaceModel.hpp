@@ -85,6 +85,14 @@ namespace hyprspace::spaces {
                trimName(name) == name;
     }
 
+    inline std::string suffixedWorkspaceName(std::string_view base, size_t suffix) {
+        const auto tail   = " (" + std::to_string(suffix) + ")";
+        size_t     length = std::min(base.size(), 256 - tail.size());
+        while (length < base.size() && length && (static_cast<unsigned char>(base[length]) & 0xc0) == 0x80)
+            --length;
+        return std::string(base.substr(0, length)) + tail;
+    }
+
     inline std::string managedWorkspaceName(std::string_view workspaceId) {
         return "hyprspace:" + std::string(workspaceId);
     }
@@ -329,14 +337,20 @@ namespace hyprspace::spaces {
         bool validate(std::string* error = nullptr) const {
             if (spaces.empty() || !space(active) || !space(defaultSpace))
                 return fail(error, "state must contain active and default spaces");
-            std::set<std::string> ids, names, nativeNames, logical;
-            std::set<int64_t>     nativeIds;
+            // Build indexes once: saved state may contain many dormant
+            // workspaces and output selections. Repeated vector lookups here
+            // made validating a complete state graph quadratic.
+            std::set<std::string_view>                         spaceIds, names, nativeNames;
+            std::map<std::string_view, const SSpaceWorkspace*> workspaceIds;
+            std::set<std::string>                              logical;
+            std::set<int64_t>                                  nativeIds;
             for (const auto& owner : spaces)
                 if (!validId(owner.id) || !validName(owner.name) || !validSpaceIcon(owner.icon) || normalizeSpaceColor(owner.color) != owner.color ||
-                    !ids.insert(owner.id).second || !names.insert(owner.name).second)
+                    !spaceIds.insert(owner.id).second || !names.insert(owner.name).second)
                     return fail(error, "invalid or duplicate space identity");
             for (const auto& ws : workspaces) {
-                if (!validId(ws.id) || !ids.insert(ws.id).second || !space(ws.space) || !validName(ws.name) || ws.number < 0 || (ws.special && ws.number != 0))
+                if (!validId(ws.id) || spaceIds.contains(ws.id) || !workspaceIds.emplace(ws.id, &ws).second || !spaceIds.contains(ws.space) || !validName(ws.name) ||
+                    ws.number < 0 || (ws.special && ws.number != 0))
                     return fail(error, "invalid workspace identity");
                 const auto key = ws.space + (ws.special ? "/special/" : "/name/") + ws.name;
                 if (!logical.insert(key).second || (ws.number > 0 && !logical.insert(ws.space + "/number/" + std::to_string(ws.number)).second))
@@ -346,7 +360,8 @@ namespace hyprspace::spaces {
             }
             for (const auto& owner : spaces)
                 for (const auto& [monitor, selected] : owner.selections) {
-                    const auto* ws = workspace(selected);
+                    const auto  found = workspaceIds.find(selected);
+                    const auto* ws    = found == workspaceIds.end() ? nullptr : found->second;
                     if (monitor.empty() || !ws || ws->space != owner.id || ws->special != monitor.starts_with("special:"))
                         return fail(error, "invalid monitor selection");
                 }
@@ -421,11 +436,7 @@ namespace hyprspace::spaces {
                     const auto base   = ws->name;
                     size_t     suffix = 2;
                     do {
-                        const auto tail   = " (" + std::to_string(suffix++) + ")";
-                        size_t     length = std::min(base.size(), 256 - tail.size());
-                        while (length < base.size() && length && (static_cast<unsigned char>(base[length]) & 0xc0) == 0x80)
-                            --length;
-                        ws->name = base.substr(0, length) + tail;
+                        ws->name = suffixedWorkspaceName(base, suffix++);
                     } while (!names.emplace(ws->special, ws->name).second);
                 }
                 ws->space = destination;

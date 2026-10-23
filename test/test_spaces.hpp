@@ -164,6 +164,56 @@ static void testSpaces() {
     CHECK(transfers.erase(destination, replacement));
     CHECK(transfers.defaultSpace == replacement && transfers.active == replacement && transfers.validate());
 
+    section("spaces: colliding maximum-length aliases retain valid UTF-8 names");
+    for (const std::string glyph : {"a", "æ", "あ", "😀"}) {
+        std::string base = "x";
+        while (base.size() + glyph.size() <= 256)
+            base += glyph;
+        base.append(256 - base.size(), 'x');
+        CHECK(validName(base) && base.size() == 256);
+        for (const auto suffix : {2, 10, 100, 1000}) {
+            const auto alias = suffixedWorkspaceName(base, suffix);
+            CHECK(validName(alias) && alias.size() <= 256 && alias.ends_with(" (" + std::to_string(suffix) + ")"));
+        }
+        CSpaceModel aliases;
+        const auto  owner    = aliases.defaultSpace;
+        const auto  incoming = aliases.create("Incoming").value();
+        CHECK(aliases.addWorkspace(owner, 0, base, false));
+        CHECK(aliases.addWorkspace(owner, 0, suffixedWorkspaceName(base, 2), false));
+        const auto moved = aliases.addWorkspace(incoming, 0, base, false).value();
+        CHECK(aliases.moveWorkspace(moved, owner));
+        CHECK(aliases.workspace(moved)->name == suffixedWorkspaceName(base, 3) && aliases.validate());
+    }
+
+    section("spaces: indexed validation checks large graphs without confusing space and workspace identities");
+    CSpaceModel graph;
+    graph.spaces.clear();
+    for (size_t owner = 0; owner < 64; ++owner) {
+        const auto identity = newId();
+        graph.spaces.push_back({.id = identity, .name = "Space " + std::to_string(owner), .selections = {}});
+        for (int64_t number = 1; number <= 32; ++number) {
+            const auto workspace = newId();
+            graph.workspaces.push_back({.id = workspace, .space = identity, .number = number, .name = std::to_string(number)});
+            graph.spaces.back().selections["Output " + std::to_string(number)] = workspace;
+        }
+    }
+    graph.active = graph.defaultSpace = graph.spaces.front().id;
+    CHECK(graph.validate());
+    const auto graphState = serialize(graph);
+    CHECK(deserialize(graphState));
+    auto badGraph                      = graphState;
+    badGraph["workspaces"][0]["space"] = graph.workspaces.back().id;
+    CHECK(!deserialize(badGraph));
+    badGraph                        = graphState;
+    badGraph["workspaces"][0]["id"] = graph.spaces.back().id;
+    CHECK(!deserialize(badGraph));
+    badGraph                                        = graphState;
+    badGraph["spaces"][0]["selections"]["Output 1"] = graph.spaces.back().id;
+    CHECK(!deserialize(badGraph));
+    badGraph                                        = graphState;
+    badGraph["spaces"][0]["selections"]["Output 1"] = graph.workspaces.back().id;
+    CHECK(!deserialize(badGraph));
+
     section("spaces: persistence validates complete graphs and rejects unsupported state");
     CHECK(model.update(work, std::nullopt, "palette", "#F9E2AF"));
     model.runtimePins["instance-signature/0x1234"] = true;

@@ -8,6 +8,7 @@
 #include <tuple>
 #include <limits>
 #include <utility>
+#include <unordered_map>
 
 namespace hyprspace {
 
@@ -59,7 +60,7 @@ namespace hyprspace {
 
     inline std::vector<SWindowViewGroup> groupWindowViews(std::span<const SWindowViewInput> input, EWindowGrouping grouping, bool recent, const std::string& query) {
         std::vector<std::string> terms;
-        const auto               folded = foldWindowSearch(query);
+        const auto               folded = query.empty() ? std::string{} : foldWindowSearch(query);
         std::string              term;
         for (const char* p = folded.c_str(); *p; p = g_utf8_next_char(p)) {
             if (g_unichar_isspace(g_utf8_get_char(p))) {
@@ -73,7 +74,14 @@ namespace hyprspace {
 
         auto location = [&](size_t i) { return std::tuple{input[i].monitor, input[i].workspaceOrder ? input[i].workspaceOrder : input[i].workspace, input[i].key}; };
         std::vector<size_t> ordered;
+        ordered.reserve(input.size());
         for (size_t i = 0; i < input.size(); ++i) {
+            // Opening or regrouping the board normally has no search terms.
+            // Avoid allocating and Unicode-folding every title in that path.
+            if (terms.empty()) {
+                ordered.push_back(i);
+                continue;
+            }
             const auto& window   = input[i];
             const auto  haystack = foldWindowSearch(
                 window.title + " " + window.appName + " " + window.appClass + " " +
@@ -87,7 +95,17 @@ namespace hyprspace {
             return location(a) < location(b);
         });
 
-        std::vector<SWindowViewGroup> result;
+        if (ordered.empty())
+            return {};
+        if (grouping == EWindowGrouping::FLAT)
+            return {{"", "", std::move(ordered)}};
+
+        struct SGroup {
+            SWindowViewGroup view;
+            std::string      sortLabel;
+        };
+        std::vector<SGroup>                      groups;
+        std::unordered_map<std::string, size_t> byKey;
         for (size_t i : ordered) {
             const auto& window = input[i];
             std::string key, label;
@@ -107,20 +125,22 @@ namespace hyprspace {
             default:
                 break;
             }
-            auto found = std::ranges::find(result, key, &SWindowViewGroup::key);
-            if (found == result.end()) {
-                result.push_back({key, label, {}});
-                found = result.end() - 1;
-            }
-            found->windows.push_back(i);
+            const auto [found, inserted] = byKey.try_emplace(key, groups.size());
+            if (inserted)
+                groups.push_back({{std::move(key), label, {}}, grouping == EWindowGrouping::APP ? foldWindowSearch(label) : std::string{}});
+            groups[found->second].view.windows.push_back(i);
         }
-        std::ranges::sort(result, [&](const auto& a, const auto& b) {
-            if (recent && input[a.windows.front()].recent != input[b.windows.front()].recent)
-                return input[a.windows.front()].recent < input[b.windows.front()].recent;
+        std::ranges::sort(groups, [&](const auto& a, const auto& b) {
+            if (recent && input[a.view.windows.front()].recent != input[b.view.windows.front()].recent)
+                return input[a.view.windows.front()].recent < input[b.view.windows.front()].recent;
             if (grouping == EWindowGrouping::APP)
-                return std::tuple{foldWindowSearch(a.label), a.key} < std::tuple{foldWindowSearch(b.label), b.key};
-            return location(a.windows.front()) < location(b.windows.front());
+                return std::tie(a.sortLabel, a.view.key) < std::tie(b.sortLabel, b.view.key);
+            return location(a.view.windows.front()) < location(b.view.windows.front());
         });
+        std::vector<SWindowViewGroup> result;
+        result.reserve(groups.size());
+        for (auto& group : groups)
+            result.push_back(std::move(group.view));
         return result;
     }
 

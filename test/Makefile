@@ -1,8 +1,8 @@
 BIN  := test_hyprspace
-PKGS := cairo pangocairo gdk-pixbuf-2.0 librsvg-2.0
+PKGS := cairo pangocairo gdk-pixbuf-2.0 librsvg-2.0 xkbcommon
 
 CXXFLAGS ?= -O1 -g
-CXXFLAGS += -std=c++23 -Wall -Wextra -Wno-unused-parameter -pthread $(shell pkg-config --cflags $(PKGS))
+override CXXFLAGS += -std=c++23 -Wall -Wextra -Wno-unused-parameter -pthread $(shell pkg-config --cflags $(PKGS))
 LDLIBS   += $(shell pkg-config --libs $(PKGS))
 
 SRCS := test_hyprspace.cpp ../src/DesktopDb.cpp ../src/Raster.cpp ../src/SpaceStore.cpp ../src/SpaceIcons.cpp

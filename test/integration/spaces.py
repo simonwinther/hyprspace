@@ -270,6 +270,51 @@ def metadata_events(s, wait_for):
         s.check("window membership publishes count updates, while steady overview frames and status queries publish no change events")
 
 
+def alias_adoption(s, wait_for):
+    """Native workspaces created by another plugin can collide with an alias."""
+    s.setup("dwindle", 0, 1)
+    original = state(s)["active"]
+    create(s, wait_for, "Independent alias test")
+    switch(s, wait_for, original)
+    # 1 + 85 * 3 = 256 bytes. The suffix must also avoid splitting a glyph.
+    long_name = "x" + "あ" * 85
+    expected_alias = (long_name.encode()[:252].decode(errors="ignore") + " (2)")
+    s.ctl("dispatch", "renameworkspace", "11 " + long_name)
+    assert local(s, original, 11)["name"] == long_name
+
+    # Create a genuinely native workspace while the hooks are unavailable.
+    # Unload the dependent fixture before unmapping its production symbols.
+    maps = Path(f"/proc/{s.compositor_pid}/maps")
+    fixture = s.artifact("test-overview.so")
+    fixture_loaded = str(fixture) in maps.read_text()
+    if fixture_loaded:
+        s.ctl("plugin", "unload", str(fixture))
+        wait_for(lambda: str(fixture) not in maps.read_text())
+    s.ctl("plugin", "unload", str(s.plugin))
+    wait_for(lambda: str(s.plugin) not in maps.read_text())
+    s.ctl("dispatch", "workspace", "name:" + long_name)
+    s.spawn(["python3", str(s.client), "hs-space-alias-adoption"])
+    window = wait_for(lambda: s.windows().get("hs-space-alias-adoption"))
+    native_id = window["workspace"]["id"]
+    assert window["workspace"]["name"] == long_name
+    s.ctl("plugin", "load", str(s.plugin))
+    wait_for(lambda: str(s.plugin) in maps.read_text())
+    s.ctl("reload")
+    wait_for(lambda: state(s)["active"] == original and all_outputs(s, original))
+    adopted = next(ws for ws in space(s, original)["workspaces"]
+                   if ws["native_id"] == native_id)
+    assert adopted["name"] == expected_alias
+    assert len(adopted["name"].encode()) <= 256
+    assert owner(s, native_id) == original and not state(s)["error"]
+    if fixture_loaded:
+        s.ctl("plugin", "load", str(fixture))
+    s.ctl("dispatch", "hyprspace:overview", "on")
+    wait_for(lambda: any(tile["workspace"] == native_id
+                         for view in s.status()["views"] for tile in view["tiles"]))
+    s.close()
+    s.check("native adoption disambiguates a maximum-length UTF-8 alias without losing ownership or hiding its window")
+
+
 def run(s, wait_for):
     s.setup("dwindle", 0, 1)
     original = state(s)["active"]

@@ -151,6 +151,8 @@ namespace hyprspace {
             return it->second.texture;
         }
         ++resourceCounts.misses;
+        if (std::chrono::steady_clock::now() < m_retryAfter)
+            return nullptr;
         return store(key, renderInputText(text, font, toRgba(color), width, offset, scale, selectionStart, selectionEnd, toRgba(selectionColor)));
     }
 
@@ -202,11 +204,7 @@ namespace hyprspace {
         }
 
         SImage placeholderFor(const std::string& windowClass, int size) {
-            std::string initial = windowClass.empty() ? "?" : windowClass.substr(0, 1);
-            for (auto& c : initial)
-                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-
-            return placeholderIcon(initial, std::format("Sans Bold {}", std::max(8, size / 2)), size, toRgba(config::switcherTextColor()),
+            return placeholderIcon(placeholderInitial(windowClass), std::format("Sans Bold {}", std::max(8, size / 2)), size, toRgba(config::switcherTextColor()),
                                    toRgba(config::switcherHighlightColor()));
         }
     } // namespace

@@ -514,8 +514,21 @@ static void testDesktopPrecedence() {
             fs::create_directories(path.parent_path());
             std::ofstream(path) << "[Desktop Entry]\n" << content;
         }
+        // Package profiles may export complete application directories as
+        // symlinks. Preserve the exported path in their desktop IDs and stop
+        // cycles without preventing a sibling alias to the same package.
+        fs::create_directories(root / "exported-apps");
+        std::ofstream(root / "exported-apps/tool.desktop") << "[Desktop Entry]\nIcon=linked-app\n";
+        fs::create_directory_symlink(root / "exported-apps", root / "user/applications/linked");
+        fs::create_directory_symlink(root / "exported-apps", root / "user/applications/alias");
+        if (!fs::is_symlink(root / "exported-apps/cycle"))
+            fs::create_directory_symlink(root / "exported-apps", root / "exported-apps/cycle");
+        fs::create_symlink(root / "missing-apps", root / "user/applications/broken");
         CDesktopDb db;
         db.scan();
+        CHECK(db.iconNameForClass("linked-tool") == "linked-app");
+        CHECK(db.iconNameForClass("alias-tool") == "linked-app");
+        CHECK(db.iconNameForClass("linked-cycle-tool").empty());
         CHECK(db.iconNameForClass("same") == "user");
         CHECK(db.iconNameForClass("system-only").empty());
         CHECK(db.iconNameForClass("masked").empty());
@@ -642,8 +655,18 @@ static void testIconResolution() {
         touch(root / "hicolor" / "64x64" / "apps" / ("invalid-scale-" + scale + ".png"));
     }
 
+    // Size directories are often symlinks into exported package trees. Keep
+    // their logical size when selecting a raster, and handle symlink cycles.
+    fs::create_directories(root / "package-icons");
+    touch(root / "package-icons" / "linked.png");
+    fs::create_directory_symlink(root / "package-icons", root / "hicolor" / "64x64" / "apps" / "linked");
+    fs::create_directory_symlink(root, root / "package-icons" / "cycle");
+    fs::create_symlink(root / "missing-icons", root / "broken");
+
     CDesktopDb db;
     db.setIconRoots({root.string(), fallback.string()});
+    const auto linked = db.resolveIconPath("linked", 64);
+    CHECK(linked && linked->ends_with("64x64/apps/linked/linked.png"));
 
     // SVG is preferred because it scales to any tile size.
     const auto vec = db.resolveIconPath("vector", 64);
@@ -748,6 +771,16 @@ static void testTextRaster() {
 
 static void testPlaceholderIcon() {
     section("raster: placeholder icon fallback");
+
+    CHECK(placeholderInitial("firefox") == "F");
+    CHECK(placeholderInitial("éclair") == "É");
+    CHECK(placeholderInitial("æther") == "Æ");
+    CHECK(placeholderInitial("θεωρία") == "Θ");
+    CHECK(placeholderInitial("学校") == "学");
+    CHECK(placeholderInitial("🎮games") == "🎮");
+    for (const auto& name : {std::string{}, std::string(" app"), std::string("\napp"), std::string("\0app", 4), std::string("\xc3"), std::string("\xff"),
+                             std::string("\xc0\xaf")})
+        CHECK(placeholderInitial(name) == "?");
 
     const auto img = placeholderIcon("F", "Sans Bold 32", 64, SRgba{1, 1, 1, 1}, SRgba{0.3, 0.4, 0.9, 1});
     CHECK(img.ok());

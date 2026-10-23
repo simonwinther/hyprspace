@@ -343,6 +343,17 @@ namespace hyprspace {
         cairo_close_path(cr);
     }
 
+    std::string placeholderInitial(const std::string& name) {
+        if (name.empty())
+            return "?";
+        const auto initial = g_utf8_get_char_validated(name.data(), std::min<size_t>(name.size(), 6));
+        if (initial == static_cast<gunichar>(-1) || initial == static_cast<gunichar>(-2) || !g_unichar_isgraph(initial))
+            return "?";
+        char       bytes[6];
+        const auto length = g_unichar_to_utf8(g_unichar_toupper(initial), bytes);
+        return {bytes, static_cast<size_t>(length)};
+    }
+
     SImage placeholderIcon(const std::string& letters, const std::string& font, int size, const SRgba& fg, const SRgba& bg) {
         if (!boundedRaster(size, size))
             return {};
