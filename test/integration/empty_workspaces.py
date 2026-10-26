@@ -56,6 +56,12 @@ def button(s, index):
     return box
 
 
+def output_point(s, index):
+    monitor = next(m for m in s.data("monitors") if m["name"] == s.names[index])
+    work = area(monitor)
+    return work["x"] + work["w"] - 36, work["y"] + 36
+
+
 def identities(s):
     return {(w["id"], w["name"], w["monitor"]) for w in s.data("workspaces")}
 
@@ -100,7 +106,7 @@ def allocation(s, wait_for):
         press(s, 102)  # Home
         assert s.status()["target"]["workspace"] == 11
         cursor = s.data("cursorpos")
-        point = center(button(s, 1))
+        point = output_point(s, 1)
         s.motion(point[0] - cursor["x"], point[1] - cursor["y"])
         if not follow:
             assert s.status()["target"]["workspace"] == 11
@@ -134,7 +140,7 @@ def allocation(s, wait_for):
     s.ctl("keyword", "workspace", f"r[2-4],monitor:{s.names[1]}")
     s.ctl("keyword", "workspace", f"5,monitor:{s.names[2]}")
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     before = identities(s)
     expected = unused(s, range(1, 6))
     s.ctl("dispatch", "hyprspace:emptyworkspace")
@@ -149,7 +155,7 @@ def allocation(s, wait_for):
     assert s.ctl("keyword", "workspace", f"name:hs-empty-reserved,monitor:{s.names[1]}") == "ok"
     assert not s.ctl("configerrors")
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     expected = unused(s, range(1, 4))
     press(s)
     selected(s, wait_for, 0, expected)
@@ -160,7 +166,7 @@ def allocation(s, wait_for):
     assert s.ctl("keyword", "workspace", f"w[0],monitor:{s.names[1]}") == "ok"
     assert not s.ctl("configerrors")
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     before = identities(s)
     response = s.run("hyprctl", "dispatch", "hyprspace:emptyworkspace")
     assert "conditional workspace monitor binding" in response, response
@@ -174,7 +180,7 @@ def allocation(s, wait_for):
     # unrenderable-layout rollback with its uncapped geometry explicitly.
     s.ctl("keyword", "plugin:hyprspace:spaces:enabled", "false")
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     before = identities(s)
     focused = native(s)
     target = s.status()["target"]
@@ -199,7 +205,7 @@ def reuse(s, wait_for):
     s.ctl("keyword", "workspace", f"31,monitor:{s.names[2]},persistent:true")
     wait_for(lambda: any(w["id"] == 31 for w in s.data("workspaces")))
     opened(s, wait_for)
-    s.move(center(button(s, 2)))
+    s.move(output_point(s, 2))
     before = identities(s)
     press(s)
     selected(s, wait_for, 2, 13)
@@ -212,7 +218,7 @@ def reuse(s, wait_for):
         s.ctl("keyword", "workspace", f"{workspace},monitor:{s.names[0]},persistent:true")
     wait_for(lambda: {31, 32} <= {w["id"] for w in s.data("workspaces")})
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     before = identities(s)
     press(s)
     selected(s, wait_for, 0, 31)
@@ -224,7 +230,7 @@ def reuse(s, wait_for):
     s.ctl("keyword", "workspace", f"name:hs-empty-named,monitor:{s.names[0]},persistent:true")
     workspace = wait_for(lambda: next((w for w in s.data("workspaces") if w["name"] == "hs-empty-named"), None))
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     before = identities(s)
     press(s)
     selected(s, wait_for, 0, workspace["id"])
@@ -240,7 +246,7 @@ def reuse(s, wait_for):
     s.ctl("dispatch", "togglespecialworkspace", "hs-empty-special")
     special = next(w["id"] for w in s.data("workspaces") if w["name"] == "special:hs-empty-special")
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     expected = unused(s)
     press(s)
     selected(s, wait_for, 0, expected)
@@ -253,7 +259,7 @@ def reuse(s, wait_for):
 def commit_and_launch(s, wait_for):
     reset(s, wait_for)
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     press(s)
     workspace = selected(s, wait_for, 0)
     # Keep the cursor on the header as the grid rearranges. Native commands
@@ -268,7 +274,7 @@ def commit_and_launch(s, wait_for):
 
     reset(s, wait_for)
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     press(s)
     workspace = selected(s, wait_for, 0)
     token = s.request("capture")
@@ -290,23 +296,16 @@ def buttons_and_drops(s, wait_for):
         reset(s, wait_for, source=(index + 1) % 3, destination=index)
         opened(s, wait_for)
         for other in range(3):
-            box = button(s, other)
-            monitor = next(m for m in s.data("monitors") if m["name"] == s.names[other])
-            work = area(monitor)
-            assert inside(box, work), (box, work)
-            # Narrow outputs use the responsive plus-only header action.
-            assert box["w"] >= 32 and box["h"] >= 32, box
-            workspace_tiles = [t for t in view(s, other)["tiles"] if t["window"] == "0x0"]
-            assert all(t["y"] >= box["y"] + box["h"] for t in workspace_tiles), (box, workspace_tiles)
-        s.move(center(button(s, index)))
+            assert view(s, other)["empty_workspace_button"] is None
+        s.move(output_point(s, index))
         before = native(s)
-        s.button(1)
-        s.button(0)
+        press(s)
         workspace = selected(s, wait_for, index)
         assert native(s) == before
         s.run("grim", "-s", "1", "-o", s.names[index], str(s.root / f"empty-workspace-overview-{index}.png"))
         assert any(t["workspace"] == workspace for t in view(s, index)["tiles"])
-        s.check(f"the empty-workspace button renders inside {s.names[index]}'s usable area, reserves grid space and selects without closing")
+        assert view(s, index)["empty_workspace_button"] is None
+        s.check(f"{s.names[index]}'s overview hides the workspace button while Space n selects an empty destination without closing")
 
     for index in (1, 2):
         reset(s, wait_for, source=0, destination=index)
@@ -318,12 +317,19 @@ def buttons_and_drops(s, wait_for):
         # Hovering a button during a move must leave the grid and workspace
         # collection intact until a valid release commits the destination.
         source = s.preview_point("hs-A", .8, .8)
-        destination = center(button(s, index))
+        destination = output_point(s, index)
         s.move(source)
         s.key(SUPER, 1)
         try:
             s.button(1)
             assert s.status()["dragging"]
+            for other in range(3):
+                box = button(s, other)
+                monitor = next(m for m in s.data("monitors") if m["name"] == s.names[other])
+                assert inside(box, area(monitor)), (box, monitor)
+                assert box["w"] >= 32 and box["h"] >= 32, box
+                workspace_tiles = [t for t in view(s, other)["tiles"] if t["window"] == "0x0"]
+                assert all(t["y"] >= box["y"] + box["h"] for t in workspace_tiles), (box, workspace_tiles)
             s.move(destination)
             time.sleep(.15)
             assert identities(s) == old
@@ -345,7 +351,7 @@ def buttons_and_drops(s, wait_for):
     reset(s, wait_for)
     opened(s, wait_for)
     expected = unused(s)
-    s.drag(s.preview_point("hs-A"), center(button(s, 0)), True)
+    s.drag(s.preview_point("hs-A"), output_point(s, 0), True)
     wait_for(lambda: s.windows()["hs-A"]["workspace"]["id"] == expected)
     assert not s.windows()["hs-A"]["floating"] and s.status()["layout_targets_unique"]
     assert s.status()["target"]["workspace"] == expected
@@ -353,7 +359,7 @@ def buttons_and_drops(s, wait_for):
 
     reset(s, wait_for)
     opened(s, wait_for)
-    destination = center(button(s, 1))
+    destination = output_point(s, 1)
     s.move(s.preview_point("hs-A"))
     s.key(Z, 1)
     try:
@@ -376,7 +382,7 @@ def buttons_and_drops(s, wait_for):
         window = wait_for(lambda: s.windows()["hs-A"] if s.windows()["hs-A"]["workspace"]["id"] != 11 else None)
         assert window["monitor"] == next(m["id"] for m in s.data("monitors") if m["name"] == s.names[1])
         wait_for(lambda: not s.status()["zoom"]["held"] and not s.status()["zoom"]["returning"])
-        assert button(s, 1) and s.status()["layout_targets_unique"]
+        assert view(s, 1)["empty_workspace_button"] is None and s.status()["layout_targets_unique"]
     finally:
         s.key(Z, 0)
     s.check("a move started in zoom reveals the button, allocates only on release and returns the destination to the grid")
@@ -386,10 +392,10 @@ def cancellation(s, wait_for):
     reset(s, wait_for)
     opened(s, wait_for)
     original = identities(s)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     time.sleep(.2)
     assert identities(s) == original
-    for point in (center(button(s, 1)), (2000, 50)):
+    for point in (output_point(s, 1), (2000, 50)):
         s.drag(s.preview_point("hs-A"), point, True, cancel=True)
         assert identities(s) == original
         assert s.windows()["hs-A"]["workspace"]["id"] == 11
@@ -399,7 +405,7 @@ def cancellation(s, wait_for):
     s.check("button hover, cancelled button drops and releases in monitor gaps allocate nothing")
 
     source = s.preview_point("hs-A", .8, .8)
-    destination = center(button(s, 1))
+    destination = output_point(s, 1)
     s.move(source)
     s.key(SUPER, 1)
     try:
@@ -426,12 +432,12 @@ def keys(s, wait_for):
     opened(s, wait_for)
     invalid = s.run("hyprctl", "dispatch", "hyprspace:emptyworkspace", "extra")
     assert "takes no arguments" in invalid, invalid
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     begin_new_workspace(s)
     try:
         workspace = selected(s, wait_for, 0)
         before = identities(s)
-        s.move(center(button(s, 1)))
+        s.move(output_point(s, 1))
         time.sleep(.75)
         assert identities(s) == before and s.status()["target"]["workspace"] == workspace
         # A second raw down models a repeat independently of compositor timing.
@@ -445,13 +451,13 @@ def keys(s, wait_for):
 
     reset(s, wait_for)
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     begin_new_workspace(s)
     try:
         selected(s, wait_for, 0)
         s.close()
         opened(s, wait_for)
-        s.move(center(button(s, 1)))
+        s.move(output_point(s, 1))
         before = identities(s)
         s.key(N, 1)
         time.sleep(.15)
@@ -473,7 +479,7 @@ def keys(s, wait_for):
     reset(s, wait_for)
     s.ctl("keyword", "plugin:hyprspace:overview:empty_workspace_key", "x")
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     before = identities(s)
     tap(s, N)
     tap(s, X)
@@ -481,7 +487,7 @@ def keys(s, wait_for):
     press(s)
     selected(s, wait_for, 0)
     s.ctl("keyword", "plugin:hyprspace:overview:empty_workspace_key", "")
-    s.move(center(button(s, 1)))
+    s.move(output_point(s, 1))
     before = identities(s)
     tap(s, X)
     tap(s, N)
@@ -496,7 +502,7 @@ def keys(s, wait_for):
     marker.unlink(missing_ok=True)
     s.ctl("keyword", "bind", f"CTRL,N,exec,touch {marker}")
     opened(s, wait_for)
-    s.move(center(button(s, 0)))
+    s.move(output_point(s, 0))
     before = identities(s)
     s.run("wtype", "-M", "ctrl", "-k", "n", "-m", "ctrl")
     wait_for(marker.exists)
@@ -540,10 +546,10 @@ def zoom(s, wait_for):
         s.ctl("dispatch", "hyprspace:emptyworkspace")
         selected(s, wait_for, 0)
         wait_for(lambda: not s.status()["zoom"]["held"] and not s.status()["zoom"]["returning"])
-        assert button(s, 0)
+        assert view(s, 0)["empty_workspace_button"] is None
     finally:
         s.key(Z, 0)
-    s.check("the button hides during inspection and the workspace dispatcher returns zoom to the grid before selecting the destination")
+    s.check("the button stays hidden through inspection and the workspace dispatcher returns zoom to the grid before selecting the destination")
 
 
 def mouse_shortcut(s, wait_for):

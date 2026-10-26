@@ -95,7 +95,7 @@ namespace hyprspace {
     SBoxF CSpaceSelector::workspaceButtonBounds(PHLMONITOR monitor) const {
         const auto   content = contentBounds(monitor), usable = usableSpace(monitor);
         const double width = content.w >= 560 ? 220 : 36;
-        return {content.x + content.w - width - 48, usable.y + 25, width, 34};
+        return {content.x + content.w - width, usable.y + 25, width, 34};
     }
 
     const std::vector<CSpaceSelector::SSpaceSummary>& CSpaceSelector::summaries() const {
@@ -157,8 +157,7 @@ namespace hyprspace {
     }
 
     SInputContext CSpaceSelector::inputContext() const {
-        const auto context = m_mode == EMode::MENU                                ? EInputContext::SpaceMenu
-                             : m_mode == EMode::PICK                              ? EInputContext::SpacePicker
+        const auto context = m_mode == EMode::PICK                                ? EInputContext::SpacePicker
                              : m_mode == EMode::CREATE || m_mode == EMode::RENAME ? EInputContext::SpaceEditor
                              : m_mode == EMode::REMOVE                            ? EInputContext::SpaceRemove
                              : m_mode == EMode::MOVE                              ? EInputContext::SpaceMove
@@ -168,8 +167,8 @@ namespace hyprspace {
     }
 
     CSpaceSelector::SFrame CSpaceSelector::frame() const {
-        return {m_mode,  m_monitor,          m_window, m_workspace, m_source,    m_destination, m_error,      m_icon,     m_color,
-                m_focus, m_iconSearchOrigin, m_input,  m_query,     m_editField, m_inputMode,   m_moveWindow, m_menuIndex};
+        return {m_mode,  m_monitor, m_window,           m_workspace, m_source, m_destination, m_error,     m_icon,
+                m_color, m_focus,   m_iconSearchOrigin, m_input,     m_query,  m_editField,   m_inputMode, m_moveWindow};
     }
 
     void CSpaceSelector::restore(SFrame saved) {
@@ -189,7 +188,6 @@ namespace hyprspace {
         m_editField        = saved.editField;
         m_inputMode        = saved.inputMode;
         m_moveWindow       = saved.moveWindow;
-        m_menuIndex        = saved.menuIndex;
         ++m_generation;
         ensureChoice();
         session().damage();
@@ -336,7 +334,7 @@ namespace hyprspace {
                 m_icon = icons.front()->id;
             return;
         }
-        if (m_mode == EMode::MENU || m_mode == EMode::NONE)
+        if (m_mode == EMode::NONE)
             return;
         const auto& values = choices();
         if (std::ranges::find(values, m_destination, &SChoice::id) == values.end())
@@ -443,7 +441,7 @@ namespace hyprspace {
         // Capture the command before closing overlays or cancelling inspection.
         // Modal pointer positions and native desktop focus are not replacements.
         const auto target        = session().selection.command();
-        const bool keepSelection = (m_mode == EMode::MENU || m_mode == EMode::PICK || m_mode == EMode::SIDEBAR) && mode == EMode::MOVE;
+        const bool keepSelection = (m_mode == EMode::PICK || m_mode == EMode::SIDEBAR) && mode == EMode::MOVE;
         const auto source        = mode == EMode::RENAME || mode == EMode::REMOVE ? selectedSpace() : spaces::activeId();
         if (modal()) {
             if (m_parents.size() == 16)
@@ -455,8 +453,7 @@ namespace hyprspace {
         session().cancelDrag();
         session().closeHelp();
         hooks::suspendOverviewKeys();
-        m_mode      = mode;
-        m_menuIndex = 0;
+        m_mode = mode;
         ++m_generation;
         m_monitor = monitor;
         m_source  = source;
@@ -613,17 +610,12 @@ namespace hyprspace {
             return true;
         case EInputAction::NextField:
         case EInputAction::PrevField:
-            if (m_mode == EMode::MENU)
-                m_menuIndex = (m_menuIndex + (action == EInputAction::NextField ? 1 : 2)) % 3;
-            else
-                tabFocus(action == EInputAction::NextField ? 1 : -1);
+            tabFocus(action == EInputAction::NextField ? 1 : -1);
             break;
         case EInputAction::Accept:
             if (m_inputMode == EInputMode::Insert)
                 return perform(EInputAction::FinishEditing);
-            if (m_mode == EMode::MENU) {
-                open(m_menuIndex == 0 ? EMode::RENAME : m_menuIndex == 1 ? EMode::MOVE : EMode::REMOVE, m_monitor.lock());
-            } else if (m_focus == "cancel") {
+            if (m_focus == "cancel") {
                 back();
             } else if (m_focus == "confirm") {
                 submit();
@@ -653,9 +645,7 @@ namespace hyprspace {
             const bool previous =
                 action == EInputAction::MoveLeft || action == EInputAction::MoveUp || action == EInputAction::PrevMatch || action == EInputAction::PagePrevious;
             const int step = previous ? -1 : 1;
-            if (m_mode == EMode::MENU)
-                m_menuIndex = std::clamp(m_menuIndex + step, 0, 2);
-            else if (editing) {
+            if (editing) {
                 if (m_focus == "icon" || m_focus == "color") {
                     const auto grid     = layout(m_monitor.lock());
                     const bool vertical = action == EInputAction::MoveUp || action == EInputAction::MoveDown;
@@ -675,9 +665,7 @@ namespace hyprspace {
         case EInputAction::First:
         case EInputAction::Last: {
             const bool last = action == EInputAction::Last;
-            if (m_mode == EMode::MENU)
-                m_menuIndex = last ? 2 : 0;
-            else if (editing && m_focus == "icon") {
+            if (editing && m_focus == "icon") {
                 const auto icons = iconChoices();
                 if (!icons.empty())
                     m_icon = std::string(last ? icons.back()->id : icons.front()->id);
@@ -800,14 +788,16 @@ namespace hyprspace {
         result.content        = contentBounds(monitor);
         result.header         = {result.content.x, usable.y + 16, result.content.w, 64};
         if (!modal() || chromeOnly) {
+            for (const auto& view : session().views)
+                if (view->monitor() == monitor)
+                    if (const auto button = view->emptyWorkspaceButton())
+                        result.actionsWidth = button->w + 12;
             const auto&  all          = summaries();
             const auto   active       = std::ranges::find(all, true, &SSpaceSummary::active);
             const auto   name         = active == all.end() ? std::string("Spaces") : active->name;
-            const double actions      = result.content.w >= 560 ? 292 : 104;
-            const double maximum      = std::min(280.0, std::max(96.0, result.header.w - actions - 12));
+            const double maximum      = std::min(280.0, std::max(96.0, result.header.w - result.actionsWidth - 12));
             const double triggerWidth = std::min(maximum, std::max(144.0, contextNameWidth(name, monitor->m_scale) + 80));
             result.buttons.push_back({{result.header.x, result.header.y + 2, triggerWidth, 38}, EAction::SIDEBAR, "", name});
-            result.buttons.push_back({{result.header.x + result.header.w - 36, result.header.y + 9, 36, 34}, EAction::MENU, "", "···"});
             if (emptySpace() && !session().windowViewActive()) {
                 const auto&  c = result.content;
                 const double w = std::min(440.0, c.w - 24), h = std::min(220.0, c.h - 24);
@@ -843,14 +833,6 @@ namespace hyprspace {
                                           value.detail,
                                           m_focus == "list" && value.id == m_destination});
             }
-            return result;
-        }
-        if (m_mode == EMode::MENU) {
-            result.panel  = {result.header.x + std::max(0.0, result.header.w - 240), result.header.y + 50, std::min(240.0, result.header.w), 166};
-            const auto& p = result.panel;
-            result.buttons.push_back({{p.x + 8, p.y + 8, p.w - 16, 44}, EAction::RENAME, "", "Edit space", m_menuIndex == 0});
-            result.buttons.push_back({{p.x + 8, p.y + 58, p.w - 16, 44}, EAction::MOVE, "", "Move selection to…", m_menuIndex == 1});
-            result.buttons.push_back({{p.x + 8, p.y + 108, p.w - 16, 44}, EAction::REMOVE, "", "Remove space…", m_menuIndex == 2});
             return result;
         }
         const double usableHeight = monitor->m_size.y - reserved.top() - reserved.bottom();
@@ -1028,9 +1010,6 @@ namespace hyprspace {
         case EAction::SIDEBAR:
             toggleSidebar(monitor);
             break;
-        case EAction::MENU:
-            open(EMode::MENU, monitor);
-            break;
         case EAction::PICK:
             open(EMode::PICK, monitor);
             break;
@@ -1118,11 +1097,12 @@ namespace hyprspace {
                     activate(value, monitor);
                 return true;
             }
-        if (!modal())
-            return positions.rail.contains(local.x, local.y) ||
-                   (positions.header.contains(local.x, local.y) && !workspaceButtonBounds(monitor).contains(local.x, local.y)) ||
+        if (!modal()) {
+            const bool workspaceButton = std::ranges::any_of(session().views, [&](const auto& view) { return view->emptyWorkspaceButtonHit(point); });
+            return positions.rail.contains(local.x, local.y) || (positions.header.contains(local.x, local.y) && !workspaceButton) ||
                    (emptySpace() && positions.content.contains(local.x, local.y));
-        if ((m_mode == EMode::MENU || m_mode == EMode::SIDEBAR) && pressed && button == 0x110 && !positions.panel.contains(local.x, local.y)) {
+        }
+        if (m_mode == EMode::SIDEBAR && pressed && button == 0x110 && !positions.panel.contains(local.x, local.y)) {
             m_inputMode = EInputMode::Normal;
             back();
             return true;
@@ -1155,7 +1135,6 @@ namespace hyprspace {
                               : m_mode == EMode::REMOVE  ? "remove"
                               : m_mode == EMode::MOVE    ? "move"
                               : m_mode == EMode::PICK    ? "pick"
-                              : m_mode == EMode::MENU    ? "menu"
                               : m_mode == EMode::SIDEBAR ? "sidebar"
                                                          : "none";
         nlohmann::json result{
@@ -1198,8 +1177,6 @@ namespace hyprspace {
                 return "switch";
             case EAction::SIDEBAR:
                 return "sidebar";
-            case EAction::MENU:
-                return "menu";
             case EAction::PICK:
                 return "pick";
             case EAction::CREATE:
@@ -1310,21 +1287,21 @@ namespace hyprspace {
         const auto  px               = [&](SBoxF box) { return CBox{box.x * scale, box.y * scale, box.w * scale, box.h * scale}; };
         const auto  rect             = [&](SBoxF box, CHyprColor color, int round = 7) { renderPass::appendSolidFill(output, box, color, scale, round); };
         const auto  text             = [&](const std::string& content, SBoxF box, CHyprColor color, bool paragraph = false, double factor = 1, bool centered = false,
-                                           bool rightAligned = false) {
+                              bool rightAligned = false) {
             if (content.empty() || box.w < 1 || box.h < 1)
                 return;
             const auto texture = paragraph ? textures().paragraph(content, config::overviewFont(), color, box.w, box.h, scale)
-                                           : textures().text(content, config::overviewFont(), color, box.w / factor, scale * factor);
+                                                        : textures().text(content, config::overviewFont(), color, box.w / factor, scale * factor);
             if (!texture)
                 return;
             const auto size = texture->m_size / scale;
             output.emplace_back(makeUnique<CTexPassElement>(CTexPassElement::SRenderData{.tex     = texture,
-                                                                                         .box     = px({rightAligned ? box.x + box.w - size.x
-                                                                                                        : centered   ? box.cx() - size.x / 2
-                                                                                                                     : box.x,
-                                                                                                        paragraph ? box.y : box.cy() - size.y / 2, size.x, size.y}),
-                                                                                         .a       = 1,
-                                                                                         .clipBox = px(box)}));
+                                                                                                      .box     = px({rightAligned ? box.x + box.w - size.x
+                                                                                                                     : centered   ? box.cx() - size.x / 2
+                                                                                                                                  : box.x,
+                                                                                                    paragraph ? box.y : box.cy() - size.y / 2, size.x, size.y}),
+                                                                                                      .a       = 1,
+                                                                                                      .clipBox = px(box)}));
         };
         const auto icon = [&](const std::string& key, CHyprColor color, SBoxF box) {
             if (const auto texture = textures().spaceIcon(key, color, static_cast<int>(std::ceil(std::min(box.w, box.h) * scale))))
@@ -1396,18 +1373,18 @@ namespace hyprspace {
                 buttonStyle.primary, spaceStyle::luminance(buttonStyle.primaryText) > .5 ? spaceStyle::rgb(0xff000000) : spaceStyle::rgb(0xffffffff), .08);
             if (primary || value.active || hover || value.focused)
                 rect(value.box,
-                     color(primary                         ? (hover ? primaryHover : buttonStyle.primary)
-                           : value.active || value.focused ? buttonStyle.selected
-                                                           : buttonStyle.hover),
-                     7);
+                       color(primary                         ? (hover ? primaryHover : buttonStyle.primary)
+                             : value.active || value.focused ? buttonStyle.selected
+                                                             : buttonStyle.hover),
+                       7);
             if (value.focused)
                 rect({value.box.x + 10, value.box.y + value.box.h - 3, value.box.w - 20, 2}, accent, 1);
             const auto buttonInk = primary                           ? color(buttonStyle.primaryText)
-                                   : overview                        ? overviewInk
-                                   : value.action == EAction::CREATE ? accent
-                                   : value.action == EAction::REMOVE ? muted
-                                                                     : ink;
-            text(value.label, {value.box.x + 10, value.box.y, value.box.w - 20, value.box.h}, buttonInk, false, 1, primary || value.action == EAction::MENU);
+                                     : overview                        ? overviewInk
+                                     : value.action == EAction::CREATE ? accent
+                                     : value.action == EAction::REMOVE ? muted
+                                                                       : ink;
+            text(value.label, {value.box.x + 10, value.box.y, value.box.w - 20, value.box.h}, buttonInk, false, 1, primary);
         };
 
         const auto drawSearch = [&] {
@@ -1438,10 +1415,9 @@ namespace hyprspace {
 
         const auto active = std::ranges::find(all, true, &SSpaceSummary::active);
         if (active != all.end()) {
-            const double actions = chrome.content.w >= 560 ? 292 : 104;
-            const auto   subtitle =
+            const auto subtitle =
                 std::format("{} workspace{} · {} window{}", active->occupied, active->occupied == 1 ? "" : "s", active->windows, active->windows == 1 ? "" : "s");
-            text(subtitle, {chrome.header.x + 42, chrome.header.y + 41, std::max(1.0, chrome.header.w - actions - 42), 22}, overviewMuted, false, .8);
+            text(subtitle, {chrome.header.x + 42, chrome.header.y + 41, std::max(1.0, chrome.header.w - chrome.actionsWidth - 42), 22}, overviewMuted, false, .8);
         }
         rect({chrome.header.x, chrome.header.y + 72, chrome.header.w, 1}, overviewInk.modifyA(.075F), 0);
         for (const auto& value : chrome.buttons)
@@ -1458,7 +1434,7 @@ namespace hyprspace {
                     drawButton(value, true);
         }
         if (modal()) {
-            if (m_mode != EMode::MENU && m_mode != EMode::SIDEBAR)
+            if (m_mode != EMode::SIDEBAR)
                 rect({0, 0, monitor->m_size.x, monitor->m_size.y}, color(style.veil), 0);
             if (monitor != m_monitor.lock())
                 return output;
@@ -1477,11 +1453,6 @@ namespace hyprspace {
                 text("Shift + J/K to reorder", {positions.rail.x + 16, positions.rail.y + positions.rail.h - 34, positions.rail.w - 32, 20}, subtle, false, .64);
                 if (listChoices.empty())
                     text("No matches", {positions.search.x + 4, positions.rail.y + 50, positions.search.w - 8, 32}, subtle, false, .85);
-                for (const auto& value : positions.buttons)
-                    drawButton(value);
-                return output;
-            }
-            if (m_mode == EMode::MENU) {
                 for (const auto& value : positions.buttons)
                     drawButton(value);
                 return output;

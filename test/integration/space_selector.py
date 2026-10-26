@@ -68,9 +68,18 @@ def button(s, action, identity=None, monitor=None):
         choices = [value for value in selector(s)["buttons"] if value["action"] == action
                    and value["monitor"] == target_monitor and (identity is None or value["id"] == identity)]
     if not choices and action in ("rename", "remove", "move"):
-        button(s, "menu", monitor=monitor)
-        choices = [value for value in selector(s)["buttons"] if value["action"] == action
-                   and value["monitor"] == target_monitor]
+        if selector(s)["input_mode"] == "insert":
+            tap(s, 1)
+        tap(s, 57)
+        if action == "move":
+            s.key(42, 1)
+        try:
+            tap(s, {"rename": 18, "remove": 32, "move": 50}[action])
+        finally:
+            if action == "move":
+                s.key(42, 0)
+        assert selector(s)["mode"] == action, selector(s)
+        return
     assert choices, (action, identity, selector(s))
     box = choices[0]["box"]
     s.move((box["x"] + box["w"] / 2, box["y"] + box["h"] / 2))
@@ -280,7 +289,8 @@ def run(s, wait_for, check_drag=True):
         context = next(value for value in selector(s)["buttons"] if value["action"] == "sidebar" and value["monitor"] == s.names[0])
         assert context["label"] == next(space["name"] for space in model(s)["spaces"] if space["id"] == baseline)
         assert geometry["header"]["y"] + geometry["header"]["h"] < geometry["content"]["y"]
-        assert not any(value["action"] in ("rename", "remove", "move") for value in selector(s)["buttons"])
+        assert not any(value["action"] in ("menu", "rename", "remove", "move") for value in selector(s)["buttons"])
+        assert all(view["empty_workspace_button"] is None for view in s.status()["views"])
         canvas = [{"monitor": view["monitor"], "tiles": view["tiles"]} for view in s.status()["views"]]
         s.key(29, 1)
         s.key(57, 1)
@@ -466,7 +476,7 @@ def run(s, wait_for, check_drag=True):
         assert len(contents) == 2
         other_windows = {window["address"]: window["workspace"]["id"] for window in s.windows().values() if window["address"] not in contents}
         button(s, "move")
-        assert not selector(s)["move_window"], "grid context-menu default must be Whole workspace, even over a window preview"
+        assert not selector(s)["move_window"], "Space Shift+M must select Whole workspace, even over a window preview"
         button(s, "window")
         assert selector(s)["move_window"], "explicit single-window toggle is still available from the grid"
         button(s, "cancel")
@@ -488,7 +498,7 @@ def run(s, wait_for, check_drag=True):
         assert {window["address"] for window in s.windows().values() if window["workspace"]["id"] == workspace} == contents
         assert all(window["workspace"]["id"] == other_windows[window["address"]] for window in s.windows().values() if window["address"] in other_windows)
         assert model(s)["active"] == baseline and all_outputs(s, baseline) and s.status()["live"]
-        s.check("grid Space Shift+M moves the whole workspace with stable logical/native identity across three outputs; the menu retains an explicit window-transfer toggle")
+        s.check("grid Space Shift+M moves the whole workspace with stable logical/native identity across three outputs; the picker retains an explicit window-transfer toggle")
 
         select_space(s, wait_for, first)
         button(s, "remove")

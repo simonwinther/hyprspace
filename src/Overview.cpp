@@ -1256,6 +1256,10 @@ namespace hyprspace {
         if (!mon || m_closing || session().workspaceDrag || session().pendingResize || drag.mode == SOverviewDrag::RESIZE ||
             (session().zoomLocked() && drag.mode != SOverviewDrag::MOVE))
             return std::nullopt;
+        // The leader guide owns workspace creation in the normal overview.
+        // Keep this control for window drops and allocation error feedback.
+        if (drag.mode != SOverviewDrag::MOVE && m_emptyWorkspaceError.empty())
+            return std::nullopt;
         if (spaces::enabled()) {
             auto box = spaceSelector().workspaceButtonBounds(mon);
             box.x += mon->m_position.x;

@@ -130,8 +130,9 @@ count, or **Empty**. A new space shows **This space is empty** and an
 **Enter space** action to close the overview onto its first workspace. Other
 spaces stay available through the current space name even when it has no windows.
 
-Open **···** beside the space title for **Edit space**, **Move selection to…**
-and **Remove space…**. Removing requires a destination and previews
+Press **Space** to see the command guide: **e** edits the space, **m** moves the
+selected window, **Shift+M** moves its workspace, and **d** removes the space.
+Removing requires a destination and previews
 the workspace transfers before confirmation. Every workspace moves intact;
 existing destination workspaces remain separate. Conflicting numbers receive
 the lowest free numbers and conflicting names receive a numeric suffix. Default
@@ -274,7 +275,7 @@ and disappears when it completes or is cancelled.
 | `Super` + `Alt` + drag left | Move a regular workspace to another monitor |
 | Wheel / two-finger scroll | Pan the scrolling workspace under the pointer; other layouts step the workspace selection |
 | Edge arrows inside a scrolling tile | Reveal the next hidden column and keep the overview open |
-| + New workspace | Prepare an empty workspace on this output, or accept a Super-dragged window |
+| + New workspace (during a window drag) | Drop to prepare an empty workspace on this output and move the window into it |
 
 Press **?** in the workspace overview or window board to open an on-the-fly
 guide. It shows the shared Normal-mode commands and configured inspection keys, the
@@ -424,7 +425,7 @@ it does not remap the `Space x` command.
 The same action is available as `hyprspace:closeworkspace` or
 `hl.plugin.hyprspace.closeworkspace()` in Lua.
 
-Middle-click without modifiers, press **Space, then n**, or click **+ New workspace** on a
+Middle-click without modifiers or press **Space, then n** on a
 monitor to prepare an empty destination there. This uses the pointer's monitor
 even when keyboard navigation selected a tile on another output or `follow_mouse = false`.
 It reuses a prepared or active empty normal workspace first, then another empty
@@ -440,13 +441,14 @@ The destination is selected and highlighted while the overview stays open.
 Workspace tiles stay in numeric order, and preparation does not move the cursor.
 Preparing it leaves the active desktop and focus unchanged. Press Enter to open
 it, launch an application there, or Super-drag a window into its tile. You can
-drop directly onto **+ New workspace** to prepare and move in one gesture;
+drop directly onto **+ New workspace**, which appears during window move drags,
+to prepare and move in one gesture;
 allocation happens only on a valid release. Escape cancels a provisional drag,
 and dismissing an unused prepared workspace releases it without changing your
 desktop. Existing persistent workspace settings are retained.
 
-The button hides during held zoom and panning, and reappears for window move
-drags, including ones started from zoom. It is unavailable during resizing.
+The drop target appears only during window move drags, including ones started
+from zoom. Allocation failures show an error and a retry control.
 `Space n` or middle-clicking returns to the grid; while a window drag, pan or
 released resize is in progress, these shortcuts do nothing. The keyboard command acts once.
 Foreground launcher typing, modified native bindings and typing outside the overview

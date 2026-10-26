@@ -109,8 +109,8 @@ static void testInputModel() {
         CHECK(input.key(XKB_KEY_J, InputShift, "J").text == "J");
         CHECK(input.key(XKB_KEY_K, InputShift, "K").text == "K");
     }
-    for (const auto context : {EInputContext::SpaceMenu, EInputContext::SpaceEditor, EInputContext::SpaceMove, EInputContext::SpaceRemove,
-                               EInputContext::Workspaces, EInputContext::Windows, EInputContext::Help}) {
+    for (const auto context :
+         {EInputContext::SpaceEditor, EInputContext::SpaceMove, EInputContext::SpaceRemove, EInputContext::Workspaces, EInputContext::Windows, EInputContext::Help}) {
         input.sync({.context = context, .mode = EInputMode::Normal});
         CHECK(!input.key(XKB_KEY_J, InputShift, "J").handled());
         CHECK(!input.key(XKB_KEY_K, InputShift, "K").handled());
@@ -149,9 +149,8 @@ static void testInputModel() {
         CHECK(input.key(XKB_KEY_M, 0, "M").text == "M");
         CHECK(input.prefix() == CInputModel::EPrefix::None);
     }
-    for (const auto context : {EInputContext::Spaces, EInputContext::SpaceMenu, EInputContext::SpacePicker,
-                               EInputContext::SpaceEditor, EInputContext::SpaceRemove, EInputContext::SpaceMove, EInputContext::Help,
-                               EInputContext::Switcher}) {
+    for (const auto context : {EInputContext::Spaces, EInputContext::SpacePicker, EInputContext::SpaceEditor, EInputContext::SpaceRemove, EInputContext::SpaceMove,
+                               EInputContext::Help, EInputContext::Switcher}) {
         input.sync({.context = context});
         for (const auto action : {EInputAction::MoveWindow, EInputAction::MoveWorkspace})
             CHECK(!inputActionAvailable(action, input.context()));
@@ -168,9 +167,8 @@ static void testInputModel() {
     for (const auto& binding : INPUT_LEADER_BINDINGS)
         CHECK(binding.action != EInputAction::Move);
     section("input: history shortcuts removed without changing navigation or text editing");
-    for (const auto context : {EInputContext::Workspaces, EInputContext::Windows, EInputContext::Spaces, EInputContext::SpaceMenu,
-                               EInputContext::SpacePicker, EInputContext::SpaceEditor, EInputContext::SpaceRemove, EInputContext::SpaceMove,
-                               EInputContext::Help, EInputContext::Switcher}) {
+    for (const auto context : {EInputContext::Workspaces, EInputContext::Windows, EInputContext::Spaces, EInputContext::SpacePicker, EInputContext::SpaceEditor,
+                               EInputContext::SpaceRemove, EInputContext::SpaceMove, EInputContext::Help, EInputContext::Switcher}) {
         input.sync({.context = context, .textEditable = true});
         CHECK(!input.key(XKB_KEY_o, InputCtrl, "").handled());
         CHECK(!input.key(XKB_KEY_i, InputCtrl, "").handled());

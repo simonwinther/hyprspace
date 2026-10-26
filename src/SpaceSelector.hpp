@@ -47,13 +47,12 @@ namespace hyprspace {
         std::vector<UP<IPassElement>> buildPass(PHLMONITOR monitor) const;
 
       private:
-        enum class EMode { NONE, SIDEBAR, MENU, PICK, CREATE, RENAME, REMOVE, MOVE };
+        enum class EMode { NONE, SIDEBAR, PICK, CREATE, RENAME, REMOVE, MOVE };
         enum class EAction {
             PREV,
             NEXT,
             SWITCH,
             SIDEBAR,
-            MENU,
             PICK,
             CREATE,
             RENAME,
@@ -81,6 +80,7 @@ namespace hyprspace {
         };
         struct SLayout {
             SBoxF                rail, header, content, empty, panel, input, search, details, iconGrid, iconLabel, colorLabel, hint;
+            double               actionsWidth = 0;
             size_t               iconColumns = 6, iconRows = 1, iconFirst = 0, iconTotal = 0;
             std::vector<SButton> buttons;
         };
@@ -108,7 +108,6 @@ namespace hyprspace {
             EEditField      editField;
             EInputMode      inputMode;
             bool            moveWindow;
-            int             menuIndex;
         };
         const std::vector<SSpaceSummary>&      summaries() const;
         const std::vector<SChoice>&            choices() const;
@@ -141,7 +140,6 @@ namespace hyprspace {
         PHLWORKSPACEREF                    m_workspace;
         std::string                        m_source, m_destination, m_error;
         bool                               m_moveWindow = false;
-        int                                m_menuIndex  = 0;
         EEditField                         m_editField  = EEditField::NAME;
         std::string                        m_icon = "grid", m_color = "#89b4fa", m_iconSearchOrigin = "grid";
         CSearchInput                       m_input;

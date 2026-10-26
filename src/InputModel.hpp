@@ -10,7 +10,7 @@
 
 namespace hyprspace {
     enum class EInputMode { Normal, Insert };
-    enum class EInputContext { Workspaces, Windows, Spaces, SpaceMenu, SpacePicker, SpaceEditor, SpaceRemove, SpaceMove, Help, Switcher };
+    enum class EInputContext { Workspaces, Windows, Spaces, SpacePicker, SpaceEditor, SpaceRemove, SpaceMove, Help, Switcher };
     enum class ETextAction { Backspace, Delete, Left, Right, Home, End, SelectAll, Clear };
     enum class EInputAction {
         None,
@@ -78,8 +78,6 @@ namespace hyprspace {
             return "windows";
         case EInputContext::Spaces:
             return "spaces";
-        case EInputContext::SpaceMenu:
-            return "space-menu";
         case EInputContext::SpacePicker:
             return "space-picker";
         case EInputContext::SpaceEditor:

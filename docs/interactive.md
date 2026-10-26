@@ -37,12 +37,14 @@ switches intentionally return to the workspace canvas in Normal mode.
 The spaces chooser supports Unicode filtering and Normal/Insert editing.
 Escape traverses UI parents while preserving their search and selection state.
 
-Middle-click, `Space n`, or **+ New workspace** selects an empty normal
+Middle-click or `Space n` selects an empty normal
 workspace on the pointer's output, reusing an empty workspace before allocating
 a free local number. It leaves the overview open and native desktop unchanged
 until a commit, launch or drop establishes that destination. Prepared workspaces
 stay alive until dismissal. Special workspaces and incompatible monitor rules
 are excluded.
+The **+ New workspace** drop target appears only while moving a window;
+the normal overview keeps creation and space management in the Space command guide.
 
 The window board displays the active space's windows from all covered outputs
 on one presentation output. Its display host is independent of source monitors

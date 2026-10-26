@@ -155,8 +155,9 @@ The drawer overlays the canvas without moving previews and shows each space's
 window count. Choose from 48 searchable Lucide icons and eight colors when
 creating or editing a space; names keep their normal text color. **i** edits Name, **Tab** selects Icon or Color, **/** or **i** searches icons, **hjkl** chooses, and **Ctrl+Enter** saves. An empty space offers
 **Enter space** so you can start opening applications, while the other spaces
-remain available through the current space name. Space management lives in the **···** menu
-beside its title. Drawer clicks also work while Super is still held.
+remain available through the current space name. Press **Space** to see the
+commands for creating, editing, moving and removing spaces. Drawer clicks also
+work while Super is still held.
 
 **Move to…** transfers a selected window or a complete workspace to another
 space. **Remove** previews the transfer of every workspace into a destination
@@ -205,12 +206,13 @@ panels, monitor gaps or outputs without an overview leave placement unchanged.
 Set `overview:workspace_drag_modifiers` to customize the exact modifiers, or
 leave it empty to disable workspace dragging.
 
-Inside the overview, **middle-click**, press **Space, then n** or click **+ New workspace**
+Inside the overview, **middle-click** or press **Space, then n**
 to prepare a destination on the monitor under the pointer. Hyprspace reuses an
 empty workspace there before creating another. The overview stays open and
 highlights the tile: launch an application, drag a window into it, or press Enter
 to open it. The pointer stays where it is and workspace tiles stay in numeric
-order. You can also Super-drag a window directly onto the button. Preparing a destination leaves
+order. While Super-dragging a window, **+ New workspace** appears as a drop target.
+Preparing a destination leaves
 the desktop unchanged until you commit an action, so Escape still dismisses it.
 `overview:empty_workspace_key` is a deprecated compatibility option; it does
 not remap the `Space n` command.
